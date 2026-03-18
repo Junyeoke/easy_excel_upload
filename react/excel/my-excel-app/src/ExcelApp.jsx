@@ -519,6 +519,20 @@ function ExcelApp() {
           const el2 = document.getElementById('adminUploadFileInput'); if (el2) el2.value = '';
         }
       } else {
+        // ── JEUS 타임아웃 대응: HTTP 500이지만 SSE done을 이미 받은 경우 ──
+        // fetch는 500으로 끊겼어도 서버는 정상 완료된 것이므로 성공 처리합니다.
+        if (sseCompletedRef.current) {
+          setProgress(p => ({ ...p, percent: 100 }));
+          setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
+          toast.update(tid, { render: '🎉 업로드 완료', type: 'success', isLoading: false, autoClose: 3000 });
+          setFailedRows({});
+          setUploadResult({ status: 'ok' });
+          setFile(null); setPreviewData([]); setEditedCells({});
+          const el = document.getElementById('fileInput'); if (el) el.value = '';
+          const el2 = document.getElementById('adminUploadFileInput'); if (el2) el2.value = '';
+          loadHistory();
+          return;
+        }
         // err: 파일 유지, 오류 메시지 + 행 강조
         toast.update(tid, { render: '❌ 실패', type: 'error', isLoading: false, autoClose: 3000 });
         const { friendlyMsg, solution } = translateError(res.msg);

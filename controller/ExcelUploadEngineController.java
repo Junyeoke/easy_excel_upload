@@ -822,12 +822,26 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         }
 
         log.info("[ExcelUpload] 메모리에 엑셀 파일 로딩 및 파싱 시작...");
+
+        // ── Streaming 분기 판단 ──────────────────────────────────────────────
+        // edited_rows_b64가 있으면 시트에 직접 셀 값을 써야 하므로 XSSFWorkbook 경로 사용
+        // 없으면 SAX Streaming 경로 (메모리 최적화 — 대용량 동시 업로드 대응)
+        String editedRowsB64 = (String) params.get("edited_rows_b64");
+        boolean hasEdits = editedRowsB64 != null && !editedRowsB64.trim().isEmpty();
+
+        if (!hasEdits) {
+            log.info("[ExcelUpload] SAX Streaming 경로 선택 (수정 셀 없음 - 메모리 최적화)");
+            handleUploadStreaming(ds, fileBytes, params, request, result, response,
+                headerIdx, structs, allMaps, preSqls, postSqls, rowSqls);
+            return;
+        }
+
+        log.info("[ExcelUpload] XSSFWorkbook 경로 선택 (수정 셀 존재 - 편집값 적용 필요)");
         org.apache.poi.ss.usermodel.Workbook wb = service.createWorkbook(fileBytes);
         org.apache.poi.ss.usermodel.Sheet sheet = wb.getSheetAt(0);
 
         // 미리보기에서 수정된 셀 값 적용
-        String editedRowsB64 = (String) params.get("edited_rows_b64");
-        if (editedRowsB64 != null && !editedRowsB64.trim().isEmpty()) {
+        if (hasEdits) {
             try {
                 Map<?, ?> editedMap = (Map<?, ?>) service.parseJson(service.decodeSafeBase64(editedRowsB64));
                 int applyCount = 0;
@@ -857,6 +871,19 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         int totalRows = sheet.getLastRowNum();
         int actualTotalRows = Math.max(totalRows - startRow + 1, 0);
         log.info("[ExcelUpload] 파싱 완료 - 대상 데이터 총 {}행 감지 ({}행부터 시작)", actualTotalRows, startRow + 1);
+
+        // ✅ [Perf] DataFormatter / FormulaEvaluator를 Workbook당 1회만 생성합니다.
+        // 기존에는 getCellValue() 내부에서 셀마다 new DataFormatter() / createFormulaEvaluator()를
+        // 생성하여, 10만 행 처리 시 수백만 번 객체 생성 → GC 폭주 및 심각한 성능 저하가 있었습니다.
+        final org.apache.poi.ss.usermodel.DataFormatter uploadDf =
+            new org.apache.poi.ss.usermodel.DataFormatter();
+        org.apache.poi.ss.usermodel.FormulaEvaluator uploadEvaluatorTmp = null;
+        try {
+            uploadEvaluatorTmp = wb.getCreationHelper().createFormulaEvaluator();
+        } catch (Throwable ignore) {
+            log.info("[ExcelUpload] FormulaEvaluator 초기화 실패 (수식 셀 폴백 처리됨)");
+        }
+        final org.apache.poi.ss.usermodel.FormulaEvaluator uploadEvaluator = uploadEvaluatorTmp;
 
         Connection conn = null;
         int currentRowForLog = headerIdx + 1;
@@ -959,7 +986,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                 // 기존: 0번 셀만 체크 → 0번 셀이 비거나 서식만 있으면 데이터 행 전체 스킵
                 boolean rowHasValue = false;
                 for (int ci = 0; ci < row.getLastCellNum(); ci++) {
-                    if (!service.getCellValue(row.getCell(ci)).trim().isEmpty()) {
+                    if (!service.getCellValue(row.getCell(ci), uploadDf, uploadEvaluator).trim().isEmpty()) {
                         rowHasValue = true;
                         break;
                     }
@@ -970,7 +997,8 @@ private void handleClone(DataSource ds, Map<String, Object> params,
 
                 try {
                     service.cascadeExcelInsert(conn, row, structs, allMaps, "ROOT", null,
-                            iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr);
+                            iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr,
+                            uploadDf, uploadEvaluator);
                 } catch (Exception rowEx) {
                     errorRows.add(row);
                     errorMsgs.add(rowEx.getMessage());
@@ -1130,19 +1158,288 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             addLog.accept("💣 치명적 오류 (" + currentRowForLog + "행): " + e.getMessage());
             if (jobId != null) {
                 ProgressStore.error(jobId, e.getMessage()); // SSE에 오류 신호
-
                         }if (conn != null) try {
                 conn.rollback();
             } catch (Throwable ex) {
             }
-            service.closeCache(psCache);
-            service.closeWorkbook(wb);
             throw new Exception("엑셀 [ " + currentRowForLog + " 번째 행 ] 처리 중 오류 발생:\n" + e.getMessage());
         } finally {
+            service.closeCache(psCache);
+            service.closeWorkbook(wb);
             if (conn != null) try {
                 conn.close();
             } catch (Throwable e) {
             }
+        }
+    }
+
+    // =====================================================================
+    // SAX Streaming 업로드 핸들러
+    // =====================================================================
+    /**
+     * 수정 셀(edited_rows_b64)이 없는 경우 SAX Streaming으로 처리합니다.
+     * 파일 전체를 메모리에 올리지 않으므로 동시 대용량 업로드 시 OOM을 방지합니다.
+     */
+    @SuppressWarnings("unchecked")
+    private void handleUploadStreaming(
+            DataSource ds, byte[] fileBytes, Map<String, Object> params,
+            HttpServletRequest request, Map<String, Object> result,
+            HttpServletResponse response,
+            int headerIdx, List<?> structs, Map<?, ?> allMaps,
+            List<?> preSqls, List<?> postSqls, List<?> rowSqls) throws Exception {
+
+        long processStartTime = System.currentTimeMillis();
+        String jobId = (String) params.get("job_id");
+
+        List<String> uploadLogs = java.util.Collections.synchronizedList(new ArrayList<>());
+        if (jobId != null) request.getSession().setAttribute("EXCEL_LOGS_" + jobId, uploadLogs);
+
+        final String _jobId = jobId;
+        java.util.function.Consumer<String> addLog = (msg) -> {
+            uploadLogs.add(msg);
+            if (_jobId != null) ProgressStore.addLog(_jobId, msg);
+        };
+
+        // ── 사전 분석: 헤더명 수집 + 총 행 수 카운팅 (1회 SAX 패스) ──────────
+        log.info("[ExcelUpload][Streaming] 사전 분석 시작...");
+        ExcelUploadEngineService.StreamingPrep prep = service.prepareStreaming(fileBytes, headerIdx);
+        int actualTotalRows = prep.totalRows;
+        List<String> headerNames = new ArrayList<>(prep.headerNames);
+        log.info("[ExcelUpload][Streaming] 사전 분석 완료 - 헤더 {}컬럼, 총 {}행", headerNames.size(), actualTotalRows);
+
+        if (jobId != null) ProgressStore.init(jobId, actualTotalRows);
+        addLog.accept("📂 SAX Streaming 모드 - 총 " + actualTotalRows + "행 감지");
+
+        Map<String, Object> psCache = new HashMap<>();
+        Map<String, List<String>> sqlParamOrderCache = new HashMap<>();
+
+        // UniqueKey / ICE 초기화
+        Object ukeyObj = null, iceObj = null;
+        try {
+            Class<?> ukClass = Class.forName("org.sdf.util.UniqueKey");
+            ukeyObj = ukClass.getMethod("getInstance").invoke(null);
+            psCache.put("_UKEY_METHOD_", ukClass.getMethod("fetchNewKey"));
+        } catch (Throwable e) {
+            log.error("[ExcelUpload][Streaming] UniqueKey 초기화 실패: {}", e.getMessage());
+        }
+        try {
+            Class<?> iceClass = Class.forName("org.sdf.efc.entity.IcEntityManager");
+            Object iceInstance = iceClass.getMethod("getInstance").invoke(null);
+            psCache.put("_ICE_ENT_METHOD_", iceClass.getMethod("getEntity", String.class));
+            psCache.put("_ICE_MAP_OBJ_", iceInstance);
+        } catch (Throwable e) {
+            log.info("[ExcelUpload][Streaming] ICE EntityManager 초기화 실패 (ICE 미사용): {}", e.getMessage());
+        }
+
+        List<org.apache.poi.ss.usermodel.Row> errorRows = new ArrayList<>();
+        List<String> errorMsgs = new ArrayList<>();
+        Map<String, String> failedRowMsgMap = new LinkedHashMap<>();
+        int successCnt = 0, failCnt = 0;
+        String errFileName = null;
+        int blockSize = actualTotalRows > 0
+            ? Math.min(actualTotalRows * structs.size() + 50, 10000) : 100;
+
+        Connection conn = null;
+        final int[] currentRowForLog = { headerIdx + 1 };
+
+        try {
+            ExcelUploadEngineRepository.FastSequenceManager seqMgr =
+                new ExcelUploadEngineRepository.FastSequenceManager(ds, blockSize);
+            conn = ds.getConnection();
+
+            String nowFuncU = repository.detectNowFunction(conn);
+            repository.ensureHistoryTable(conn, nowFuncU);
+            conn.setAutoCommit(false);
+            repository.ensureTempUploadKeysTable(conn);
+            addLog.accept("🔌 DB 연결 완료");
+
+            // 테이블 컬럼 메타 캐싱
+            Map<String, Set<String>> metaMap = new HashMap<>();
+            for (Object sObj : structs) {
+                Map<?, ?> s = (Map<?, ?>) sObj;
+                String tbl = (String) s.get("table");
+                if (tbl != null && !metaMap.containsKey(tbl))
+                    metaMap.put(tbl, repository.getNumericColumnNames(conn, tbl));
+            }
+
+            // Pre-SQL
+            if (preSqls != null && !preSqls.isEmpty()) {
+                addLog.accept("⚙️ Pre-SQL 실행 중...");
+                service.executeSqlArray(conn, preSqls, "Pre-SQL");
+                conn.commit();
+                addLog.accept("✅ Pre-SQL 완료");
+            }
+
+            addLog.accept("▶️ 데이터 행 삽입 시작 (SAX Streaming)...");
+
+            final int[] counters = { 0, 0 };
+            final int[] processedCount = { 0 };
+            final Connection _conn = conn;
+            final Object _ukeyObj = ukeyObj;
+            final Object _iceObj  = iceObj;
+            final Map<String, Object> _psCache = psCache;
+            final Map<String, List<String>> _sqlParamOrderCache = sqlParamOrderCache;
+            final ExcelUploadEngineRepository.FastSequenceManager _seqMgr = seqMgr;
+            final Map<String, Set<String>> _metaMap = metaMap;
+
+            service.parseStreamingExcel(fileBytes, headerIdx, (rowNum, row) -> {
+                currentRowForLog[0] = rowNum + 1;
+
+                // 빈 행 체크 (SyntheticCell.getStringCellValue() 사용)
+                boolean hasValue = false;
+                for (int ci = 0; ci < row.getLastCellNum(); ci++) {
+                    org.apache.poi.ss.usermodel.Cell c = row.getCell(ci);
+                    if (c != null && !service.getCellValue(c).trim().isEmpty()) {
+                        hasValue = true;
+                        break;
+                    }
+                }
+                if (!hasValue) return;
+
+                try {
+                    service.cascadeExcelInsert(_conn, row, structs, allMaps, "ROOT", null,
+                            _iceObj, _ukeyObj, _metaMap, rowSqls,
+                            _psCache, _sqlParamOrderCache, _seqMgr,
+                            null, null); // df/evaluator 불필요 (SAX가 이미 문자열 변환)
+                } catch (Exception rowEx) {
+                    errorRows.add(row);
+                    errorMsgs.add(rowEx.getMessage());
+                    int dataRowNum = rowNum - headerIdx;
+                    failedRowMsgMap.put(String.valueOf(dataRowNum),
+                        rowEx.getMessage() != null ? rowEx.getMessage() : "알 수 없는 오류");
+                    addLog.accept("❌ " + currentRowForLog[0] + "행 오류: " + rowEx.getMessage());
+                    log.info("[ExcelUpload][Streaming] ⚠ {}행 개별 오류: {}",
+                        currentRowForLog[0], rowEx.getMessage());
+                    counters[1]++;
+                }
+
+                processedCount[0]++;
+
+                // 진행률 업데이트 (100행마다)
+                if (_jobId != null && processedCount[0] % 100 == 0) {
+                    request.getSession().setAttribute(
+                        "EXCEL_PROGRESS_" + _jobId, processedCount[0] + "/" + actualTotalRows);
+                    ProgressStore.update(_jobId, processedCount[0]);
+                    addLog.accept("📋 " + processedCount[0] + " / " + actualTotalRows + " 행 처리 중...");
+                }
+
+                // 5000행마다 Batch flush + commit
+                if (processedCount[0] % 5000 == 0) {
+                    int done = processedCount[0];
+                    log.info("[ExcelUpload][Streaming] {} / {} 행 - Batch Flush...", done, actualTotalRows);
+                    addLog.accept("💾 " + done + "행 배치 저장 중...");
+                    int beforeFlush = errorRows.size();
+                    service.flushBatch(_psCache, errorRows, errorMsgs, counters);
+                    for (int ei = beforeFlush; ei < errorRows.size(); ei++) {
+                        org.apache.poi.ss.usermodel.Row errRow = errorRows.get(ei);
+                        String errMsg = (ei < errorMsgs.size()) ? errorMsgs.get(ei) : "배치 처리 실패";
+                        int dataRN = errRow != null ? (errRow.getRowNum() - headerIdx) : -1;
+                        if (dataRN > 0) {
+                            failedRowMsgMap.put(String.valueOf(dataRN), errMsg);
+                            addLog.accept("❌ " + dataRN + "행 오류: " + errMsg);
+                        } else {
+                            String uk = "__unknown_" + failedRowMsgMap.size() + "__";
+                            failedRowMsgMap.put(uk, errMsg);
+                            addLog.accept("❌ 배치 오류 (행 특정 불가): " + errMsg);
+                        }
+                    }
+                    _conn.commit();
+                    addLog.accept("✅ " + done + "행 배치 저장 완료");
+                }
+            }); // ── parseStreamingExcel 종료 ──
+
+            // 잔여 배치 flush
+            int beforeFinalFlush = errorRows.size();
+            service.flushBatch(psCache, errorRows, errorMsgs, counters);
+            int unknownSeq = 0;
+            for (int ei = beforeFinalFlush; ei < errorRows.size(); ei++) {
+                org.apache.poi.ss.usermodel.Row errRow = errorRows.get(ei);
+                String errMsg = (ei < errorMsgs.size()) ? errorMsgs.get(ei) : "배치 처리 실패";
+                int dataRN = errRow != null ? (errRow.getRowNum() - headerIdx) : -1;
+                if (dataRN > 0) {
+                    failedRowMsgMap.put(String.valueOf(dataRN), errMsg);
+                    addLog.accept("❌ " + dataRN + "행 오류: " + errMsg);
+                } else {
+                    failedRowMsgMap.put("__unknown_" + (++unknownSeq) + "__", errMsg);
+                    addLog.accept("❌ 배치 오류 (행 특정 불가): " + errMsg);
+                }
+            }
+            conn.commit();
+
+            // 안전망 재스캔
+            for (int ei = 0; ei < errorRows.size(); ei++) {
+                org.apache.poi.ss.usermodel.Row errRow = errorRows.get(ei);
+                if (errRow == null) continue;
+                String key = String.valueOf(errRow.getRowNum() - headerIdx);
+                if (!failedRowMsgMap.containsKey(key)) {
+                    String errMsg = (ei < errorMsgs.size()) ? errorMsgs.get(ei) : "오류 (상세 정보 없음)";
+                    failedRowMsgMap.put(key, errMsg);
+                    addLog.accept("❌ " + key + "행 오류 (재스캔): " + errMsg);
+                }
+            }
+
+            successCnt = counters[0];
+            failCnt = Math.max(failedRowMsgMap.size(), counters[1]);
+            log.info("[ExcelUpload][Streaming] 완료 - 성공: {}건, 실패: {}건", successCnt, failCnt);
+            addLog.accept("🎉 완료! 성공: " + successCnt + "건" + (failCnt > 0 ? ", 실패: " + failCnt + "건" : ""));
+
+            if (jobId != null) {
+                request.getSession().setAttribute(
+                    "EXCEL_PROGRESS_" + jobId, actualTotalRows + "/" + actualTotalRows);
+                ProgressStore.update(jobId, actualTotalRows);
+                ProgressStore.complete(jobId);
+            }
+
+            // 오류 리포트 생성
+            if (!errorRows.isEmpty()) {
+                addLog.accept("📄 오류 리포트 생성 중...");
+                errFileName = service.buildErrorReportStreaming(
+                    jobId, headerNames, errorRows, errorMsgs, allMaps, headerIdx);
+                addLog.accept("📄 오류 리포트 생성 완료: " + errFileName);
+            }
+
+            // 이력 저장
+            String nowFuncU2 = repository.detectNowFunction(conn);
+            repository.insertHistory(conn, UUID.randomUUID().toString(),
+                    (String) params.get("job_name"), (String) params.get("file_name"),
+                    successCnt, failCnt, errFileName, nowFuncU2);
+
+            // Post-SQL
+            if (postSqls != null && !postSqls.isEmpty()) {
+                addLog.accept("⚙️ Post-SQL 실행 중...");
+                try {
+                    service.executeSqlArray(conn, postSqls, "Post-SQL");
+                    conn.commit();
+                    addLog.accept("✅ Post-SQL 완료");
+                } catch (Throwable e) {
+                    log.error("[ExcelUpload][Streaming] Post-SQL 오류: {}", e.getMessage(), e);
+                    addLog.accept("❌ Post-SQL 오류: " + e.getMessage());
+                }
+            }
+
+            long elapsed = System.currentTimeMillis() - processStartTime;
+            log.info("=====================================================");
+            log.info("[ExcelUpload][Streaming] 🎉 완료 - 총 소요시간: {} ms, 성공: {}, 실패: {}",
+                elapsed, successCnt, failCnt);
+            log.info("=====================================================");
+
+            result.put("status", failCnt > 0 ? "partial" : "ok");
+            result.put("msg", successCnt + "건 성공" + (failCnt > 0 ? ", " + failCnt + "건 실패" : ""));
+            result.put("success_cnt", successCnt);
+            result.put("fail_cnt", failCnt);
+            result.put("error_file", errFileName);
+            if (!failedRowMsgMap.isEmpty()) result.put("failed_row_msgs", failedRowMsgMap);
+
+        } catch (Throwable e) {
+            log.error("[ExcelUpload][Streaming] 💣 치명적 오류 ({}행 쯤): {}",
+                currentRowForLog[0], e.getMessage(), e);
+            addLog.accept("💣 치명적 오류 (" + currentRowForLog[0] + "행): " + e.getMessage());
+            if (jobId != null) ProgressStore.error(jobId, e.getMessage());
+            if (conn != null) try { conn.rollback(); } catch (Throwable ex) {}
+            throw new Exception("엑셀 [ " + currentRowForLog[0] + " 번째 행 ] 처리 중 오류 발생:\n" + e.getMessage());
+        } finally {
+            service.closeCache(psCache);
+            if (conn != null) try { conn.close(); } catch (Throwable e) {}
         }
     }
 

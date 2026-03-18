@@ -30,6 +30,14 @@ public class ExcelUploadEngineService {
 
     private static final int BATCH_SIZE = 5000;
 
+    /**
+     * ✅ [Perf] SimpleDateFormat은 thread-safe하지 않으므로 ThreadLocal로 관리합니다.
+     * getCellValue() 호출마다 new SimpleDateFormat()을 생성하던 방식을 제거했습니다.
+     * 10만 행 기준 수십만 번의 객체 생성 및 GC 부하를 방지합니다.
+     */
+    private static final ThreadLocal<java.text.SimpleDateFormat> DATE_FORMAT =
+        ThreadLocal.withInitial(() -> new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
+
     private final ExcelUploadEngineRepository repository;
 
     public ExcelUploadEngineService(ExcelUploadEngineRepository repository) {
@@ -75,7 +83,19 @@ public class ExcelUploadEngineService {
     }
 
     /**
-     * 셀 값 문자열 반환
+     * 셀 값 문자열 반환 — 단건 호출용 (preview, 헤더 파싱 등)
+     * 내부적으로 df/evaluator 없이 동작하는 오버로드에 위임합니다.
+     */
+    public String getCellValue(org.apache.poi.ss.usermodel.Cell cell) {
+        return getCellValue(cell, null, null);
+    }
+
+    /**
+     * 셀 값 문자열 반환 — 대량 처리용
+     *
+     * ✅ [Perf] DataFormatter / FormulaEvaluator / SimpleDateFormat을
+     *    Workbook당 1회 생성하여 외부에서 주입받습니다.
+     *    null 전달 시 기존 단건 생성 방식으로 폴백합니다.
      *
      * ✅ [Fix] 색상/배경색 셀 인식 강화
      * - getCellTypeStr 캐싱 버그 수정으로 서식 셀 타입 정상 인식
@@ -83,29 +103,32 @@ public class ExcelUploadEngineService {
      *   ([Red]0, [색1]#,##0 등)이 적용된 셀도 값 추출 가능
      * - 리치텍스트(글자별 색상) 셀도 getStringCellValue()로 텍스트 정상 반환
      */
-    public String getCellValue(org.apache.poi.ss.usermodel.Cell cell) {
+    public String getCellValue(
+            org.apache.poi.ss.usermodel.Cell cell,
+            org.apache.poi.ss.usermodel.DataFormatter df,
+            org.apache.poi.ss.usermodel.FormulaEvaluator evaluator) {
         if (cell == null) return "";
         try {
             String typeStr = getCellTypeStr(cell);
 
             if ("STRING".equals(typeStr)) {
-                // 리치텍스트(글자별 색상 적용)도 getStringCellValue()로 plain text 반환
                 return cell.getStringCellValue();
             }
 
             if ("NUMERIC".equals(typeStr)) {
                 if (org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
-                    return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(cell.getDateCellValue());
+                    // ✅ [Perf] ThreadLocal SimpleDateFormat 재사용
+                    return DATE_FORMAT.get().format(cell.getDateCellValue());
                 }
                 double dVal = cell.getNumericCellValue();
                 // ✅ 커스텀 숫자 포맷([Red]0 등)이 적용된 셀: DataFormatter로 표시값 읽기 후
                 //    숫자만 추출 시도, 실패하면 원시 숫자값 사용
                 try {
-                    org.apache.poi.ss.usermodel.DataFormatter df =
-                        new org.apache.poi.ss.usermodel.DataFormatter();
-                    String formatted = df.formatCellValue(cell).trim();
+                    // ✅ [Perf] 외부 주입 df 우선 사용, null이면 단건 생성 (폴백)
+                    org.apache.poi.ss.usermodel.DataFormatter _df =
+                        df != null ? df : new org.apache.poi.ss.usermodel.DataFormatter();
+                    String formatted = _df.formatCellValue(cell).trim();
                     if (!formatted.isEmpty() && !"0".equals(formatted)) {
-                        // 포맷 문자열에서 색상 코드([Red],[Blue] 등) 제거 후 반환
                         formatted = formatted.replaceAll("^\\[.*?\\]", "").trim();
                         if (!formatted.isEmpty()) return formatted;
                     }
@@ -117,33 +140,33 @@ public class ExcelUploadEngineService {
             if ("BOOLEAN".equals(typeStr)) return String.valueOf(cell.getBooleanCellValue());
 
             if ("FORMULA".equals(typeStr)) {
-                // ✅ FormulaEvaluator로 수식 결과값을 직접 평가
                 try {
-                    org.apache.poi.ss.usermodel.FormulaEvaluator evaluator =
-                        cell.getSheet().getWorkbook().getCreationHelper().createFormulaEvaluator();
-                    org.apache.poi.ss.usermodel.CellValue evaluated = evaluator.evaluate(cell);
+                    // ✅ [Perf] 외부 주입 evaluator 우선 사용, null이면 단건 생성 (폴백)
+                    org.apache.poi.ss.usermodel.FormulaEvaluator ev = evaluator != null
+                        ? evaluator
+                        : cell.getSheet().getWorkbook().getCreationHelper().createFormulaEvaluator();
+                    org.apache.poi.ss.usermodel.CellValue evaluated = ev.evaluate(cell);
                     if (evaluated == null) return "";
                     String evalType = String.valueOf(evaluated.getCellType());
                     if ("NUMERIC".equals(evalType) || "0".equals(evalType)) {
                         double v = evaluated.getNumberValue();
                         if (org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
-                            return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-                                .format(org.apache.poi.ss.usermodel.DateUtil.getJavaDate(v));
+                            // ✅ [Perf] ThreadLocal SimpleDateFormat 재사용
+                            return DATE_FORMAT.get().format(
+                                org.apache.poi.ss.usermodel.DateUtil.getJavaDate(v));
                         }
                         return v == (long) v ? String.format("%d", (long) v) : String.valueOf(v);
                     }
                     if ("STRING".equals(evalType)  || "1".equals(evalType)) return evaluated.getStringValue();
                     if ("BOOLEAN".equals(evalType) || "4".equals(evalType)) return String.valueOf(evaluated.getBooleanValue());
-                    // 평가 후에도 타입 불명확하면 DataFormatter로 마지막 시도
                     try {
-                        org.apache.poi.ss.usermodel.DataFormatter df =
-                            new org.apache.poi.ss.usermodel.DataFormatter();
-                        String formatted = df.formatCellValue(cell, evaluator).trim();
+                        org.apache.poi.ss.usermodel.DataFormatter _df =
+                            df != null ? df : new org.apache.poi.ss.usermodel.DataFormatter();
+                        String formatted = _df.formatCellValue(cell, ev).trim();
                         if (!formatted.isEmpty()) return formatted;
                     } catch (Throwable ignore) {}
                     return "";
                 } catch (Throwable evalEx) {
-                    // FormulaEvaluator 실패 시 원시값으로 폴백
                     try { return cell.getStringCellValue(); } catch (Throwable ig) {}
                     try {
                         double v = cell.getNumericCellValue();
@@ -180,6 +203,490 @@ public class ExcelUploadEngineService {
     }
 
     // =====================================================================
+    // 1-B. SAX Streaming 파서 (대량 업로드 메모리 최적화)
+    // =====================================================================
+    //
+    // 기존 XSSFWorkbook 방식 문제:
+    //   - 파일 전체를 JVM 힙에 로딩 → 10만 행 xlsx = 300~500MB 점유
+    //   - 동시 업로드 3~5건만 돼도 OutOfMemoryError 위험
+    //
+    // SAX Streaming 방식:
+    //   - OPCPackage + XSSFSheetXMLHandler로 행 단위 스트리밍 파싱
+    //   - 메모리 사용량이 파일 크기에 무관하게 일정 (수십 MB)
+    //   - 추가 라이브러리 불필요 (poi-ooxml에 내장)
+    //
+    // 제약:
+    //   - 순방향 스트림이므로 편집된 셀(edited_rows_b64)이 있으면 기존 방식 사용
+    // =====================================================================
+
+    /** SAX 스트리밍 사전 분석 결과 */
+    public static class StreamingPrep {
+        public final int totalRows;
+        public final java.util.List<String> headerNames;
+        public StreamingPrep(int totalRows, java.util.List<String> headerNames) {
+            this.totalRows = totalRows;
+            this.headerNames = java.util.Collections.unmodifiableList(headerNames);
+        }
+    }
+
+    /** SAX 스트리밍 행 처리 콜백 */
+    public interface StreamingRowCallback {
+        /** @param rowNum 0-based 시트 행 번호 / @param row 합성 Row (POI Row 인터페이스 호환) */
+        void onRow(int rowNum, org.apache.poi.ss.usermodel.Row row) throws Exception;
+    }
+
+    /**
+     * 셀 참조 문자열(예: "AB3") → 0-based 열 인덱스 변환
+     */
+    private static int parseCellRefColIdx(String cellRef) {
+        int col = 0;
+        for (int i = 0; i < cellRef.length(); i++) {
+            char c = cellRef.charAt(i);
+            if (c >= 'A' && c <= 'Z') col = col * 26 + (c - 'A' + 1);
+            else break;
+        }
+        return col - 1;
+    }
+
+    /**
+     * SAX 스트리밍 모드용 합성 Cell.
+     * 이미 문자열로 추출된 값을 POI Cell 인터페이스로 래핑합니다.
+     * Java 동적 프록시 사용 → POI 버전 변경에도 컴파일 오류 없이 동작합니다.
+     */
+    public static org.apache.poi.ss.usermodel.Cell createSyntheticCell(final int colIdx, final String value) {
+        final String safe = value != null ? value : "";
+        return (org.apache.poi.ss.usermodel.Cell) java.lang.reflect.Proxy.newProxyInstance(
+            org.apache.poi.ss.usermodel.Cell.class.getClassLoader(),
+            new Class<?>[]{ org.apache.poi.ss.usermodel.Cell.class },
+            (proxy, method, args) -> {
+                switch (method.getName()) {
+                    case "getStringCellValue":  return safe;
+                    case "getCellType":
+                        try { return org.apache.poi.ss.usermodel.CellType.STRING; }
+                        catch (Throwable e) { return 1; }
+                    case "getCachedFormulaResultType":
+                        try { return org.apache.poi.ss.usermodel.CellType.STRING; }
+                        catch (Throwable e) { return 1; }
+                    case "getColumnIndex":  return colIdx;
+                    case "getRowIndex":     return 0;
+                    case "getSheet":        return null;
+                    case "getRow":          return null;
+                    case "getNumericCellValue":
+                        try { return Double.parseDouble(safe.replace(",", "")); }
+                        catch (Throwable e) { return 0.0; }
+                    case "getBooleanCellValue":        return Boolean.parseBoolean(safe);
+                    case "isBlank":                    return safe.isEmpty();
+                    case "getCellStyle":               return null;
+                    case "getCellComment":             return null;
+                    case "getHyperlink":               return null;
+                    case "getCellFormula":             return "";
+                    case "isPartOfArrayFormulaGroup":  return false;
+                    case "getAddress":
+                        try { return new org.apache.poi.ss.util.CellAddress(0, colIdx); }
+                        catch (Throwable e) { return null; }
+                    case "getErrorCellValue":          return (byte) 0;
+                    case "getRichStringCellValue":     return null;
+                    case "getDateCellValue":           return null;
+                    case "getArrayFormulaRange":       return null;
+                    default:
+                        Class<?> ret = method.getReturnType();
+                        if (ret == void.class || ret == Void.class)       return null;
+                        if (ret == boolean.class || ret == Boolean.class) return false;
+                        if (ret == int.class    || ret == Integer.class)  return 0;
+                        if (ret == double.class || ret == Double.class)   return 0.0;
+                        if (ret == byte.class   || ret == Byte.class)     return (byte) 0;
+                        if (ret == short.class  || ret == Short.class)    return (short) 0;
+                        if (ret == long.class   || ret == Long.class)     return 0L;
+                        return null;
+                }
+            });
+    }
+
+    /**
+     * SAX 스트리밍 모드용 합성 Row.
+     * Map<Integer,String> 셀 데이터를 POI Row 인터페이스로 래핑합니다.
+     */
+    public static org.apache.poi.ss.usermodel.Row createSyntheticRow(
+            final int rowNum, final java.util.Map<Integer, String> cells) {
+        final short lastCol = cells.isEmpty() ? 0
+            : (short) (cells.keySet().stream().mapToInt(i -> i).max().orElse(0) + 1);
+        return (org.apache.poi.ss.usermodel.Row) java.lang.reflect.Proxy.newProxyInstance(
+            org.apache.poi.ss.usermodel.Row.class.getClassLoader(),
+            new Class<?>[]{ org.apache.poi.ss.usermodel.Row.class },
+            (proxy, method, args) -> {
+                switch (method.getName()) {
+                    case "getRowNum":               return rowNum;
+                    case "getLastCellNum":           return lastCol;
+                    case "getFirstCellNum":          return (short) 0;
+                    case "getPhysicalNumberOfCells": return cells.size();
+                    case "getCell": {
+                        int col = (int) args[0];
+                        return createSyntheticCell(col, cells.getOrDefault(col, ""));
+                    }
+                    case "createCell": {
+                        int col = (int) args[0];
+                        return createSyntheticCell(col, cells.getOrDefault(col, ""));
+                    }
+                    case "getSheet":        return null;
+                    case "getZeroHeight":   return false;
+                    case "isFormatted":     return false;
+                    case "getRowStyle":     return null;
+                    case "getOutlineLevel": return 0;
+                    case "getHeight":       return (short) 0;
+                    case "getHeightInPoints": return 0.0f;
+                    case "iterator": case "cellIterator":
+                        return cells.entrySet().stream()
+                            .sorted(java.util.Map.Entry.comparingByKey())
+                            .map(e -> createSyntheticCell(e.getKey(), e.getValue()))
+                            .iterator();
+                    default:
+                        Class<?> ret = method.getReturnType();
+                        if (ret == void.class || ret == Void.class)       return null;
+                        if (ret == boolean.class || ret == Boolean.class) return false;
+                        if (ret == int.class    || ret == Integer.class)  return 0;
+                        if (ret == short.class  || ret == Short.class)    return (short) 0;
+                        if (ret == float.class  || ret == Float.class)    return 0.0f;
+                        if (ret == double.class || ret == Double.class)   return 0.0;
+                        return null;
+                }
+            });
+    }
+
+    /**
+     * xlsx 사전 분석: 헤더 컬럼명 수집 + 총 데이터 행 수 카운팅을 1회 SAX 패스로 처리합니다.
+     * XSSFWorkbook 없이 경량 파싱하므로 대용량 파일도 수 초 내에 완료됩니다.
+     */
+    public StreamingPrep prepareStreaming(byte[] fileBytes, final int headerIdx) throws Exception {
+        final java.util.List<String> headerNames = new java.util.ArrayList<>();
+        final int[] maxRowNum = { headerIdx };
+        final java.util.TreeMap<Integer, String> headerCells = new java.util.TreeMap<>();
+
+        org.apache.poi.openxml4j.opc.OPCPackage pkg = null;
+        try {
+            pkg = org.apache.poi.openxml4j.opc.OPCPackage.open(
+                new java.io.ByteArrayInputStream(fileBytes));
+            org.apache.poi.xssf.eventusermodel.XSSFReader xssfReader =
+                new org.apache.poi.xssf.eventusermodel.XSSFReader(pkg);
+            org.apache.poi.xssf.model.StylesTable styles = xssfReader.getStylesTable();
+            org.apache.poi.xssf.eventusermodel.ReadOnlySharedStringsTable sst =
+                new org.apache.poi.xssf.eventusermodel.ReadOnlySharedStringsTable(pkg);
+
+            java.util.Iterator<java.io.InputStream> sheets = xssfReader.getSheetsData();
+            if (!sheets.hasNext()) return new StreamingPrep(0, headerNames);
+
+            org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler.SheetContentsHandler handler =
+                new org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler.SheetContentsHandler() {
+                @Override public void startRow(int rowNum) {}
+                @Override public void endRow(int rowNum) {
+                    if (rowNum > maxRowNum[0]) maxRowNum[0] = rowNum;
+                }
+                @Override public void cell(String cellRef, String formattedValue,
+                        org.apache.poi.xssf.usermodel.XSSFComment comment) {
+                    if (cellRef == null) return;
+                    // 셀 참조에서 행 번호 파싱 (예: "B3" → row=2, col=1)
+                    int digitStart = -1;
+                    for (int i = 0; i < cellRef.length(); i++) {
+                        if (Character.isDigit(cellRef.charAt(i))) { digitStart = i; break; }
+                    }
+                    if (digitStart < 0) return;
+                    int rowInRef;
+                    try { rowInRef = Integer.parseInt(cellRef.substring(digitStart)) - 1; }
+                    catch (Throwable ig) { return; }
+                    if (rowInRef == headerIdx) {
+                        headerCells.put(parseCellRefColIdx(cellRef),
+                            formattedValue != null ? formattedValue : "");
+                    }
+                }
+                @Override public void headerFooter(String t, boolean h, String n) {}
+            };
+
+            org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler sheetHandler =
+                new org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler(
+                    styles, null, sst, handler,
+                    new org.apache.poi.ss.usermodel.DataFormatter(), false);
+
+            javax.xml.parsers.SAXParserFactory saxFactory =
+                javax.xml.parsers.SAXParserFactory.newInstance();
+            saxFactory.setNamespaceAware(true);
+            org.xml.sax.XMLReader xmlReader = saxFactory.newSAXParser().getXMLReader();
+            xmlReader.setContentHandler(sheetHandler);
+            xmlReader.parse(new org.xml.sax.InputSource(sheets.next()));
+
+            headerNames.addAll(headerCells.values());
+        } finally {
+            if (pkg != null) try { pkg.close(); } catch (Throwable ignore) {}
+        }
+        return new StreamingPrep(Math.max(0, maxRowNum[0] - headerIdx), headerNames);
+    }
+
+    /**
+     * SAX 이벤트 방식으로 xlsx를 행 단위 스트리밍 처리합니다.
+     * 메모리에 전체 파일을 올리지 않아 10만 행 이상에서도 메모리 사용량이 일정합니다.
+     *
+     * @param fileBytes xlsx 바이트
+     * @param headerIdx 0-based 헤더 행 인덱스
+     * @param callback  헤더 이후 각 데이터 행마다 호출되는 콜백
+     */
+    public void parseStreamingExcel(byte[] fileBytes, final int headerIdx,
+            StreamingRowCallback callback) throws Exception {
+
+        final Exception[] callbackError = { null };
+        final java.util.LinkedHashMap<Integer, String> curCells = new java.util.LinkedHashMap<>();
+
+        org.apache.poi.openxml4j.opc.OPCPackage pkg = null;
+        try {
+            pkg = org.apache.poi.openxml4j.opc.OPCPackage.open(
+                new java.io.ByteArrayInputStream(fileBytes));
+            org.apache.poi.xssf.eventusermodel.XSSFReader xssfReader =
+                new org.apache.poi.xssf.eventusermodel.XSSFReader(pkg);
+            org.apache.poi.xssf.model.StylesTable styles = xssfReader.getStylesTable();
+            org.apache.poi.xssf.eventusermodel.ReadOnlySharedStringsTable sst =
+                new org.apache.poi.xssf.eventusermodel.ReadOnlySharedStringsTable(pkg);
+
+            java.util.Iterator<java.io.InputStream> sheets = xssfReader.getSheetsData();
+            if (!sheets.hasNext()) return;
+
+            org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler.SheetContentsHandler handler =
+                new org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler.SheetContentsHandler() {
+                @Override public void startRow(int rowNum) { curCells.clear(); }
+                @Override public void endRow(int rowNum) {
+                    if (rowNum <= headerIdx) return;
+                    try {
+                        callback.onRow(rowNum,
+                            createSyntheticRow(rowNum, new java.util.HashMap<>(curCells)));
+                    } catch (Exception e) {
+                        callbackError[0] = e;
+                        throw new RuntimeException("_CALLBACK_ERR_");
+                    }
+                }
+                @Override public void cell(String cellRef, String formattedValue,
+                        org.apache.poi.xssf.usermodel.XSSFComment comment) {
+                    if (cellRef != null)
+                        curCells.put(parseCellRefColIdx(cellRef),
+                            formattedValue != null ? formattedValue : "");
+                }
+                @Override public void headerFooter(String t, boolean h, String n) {}
+            };
+
+            org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler sheetHandler =
+                new org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler(
+                    styles, null, sst, handler,
+                    new org.apache.poi.ss.usermodel.DataFormatter(), false);
+
+            javax.xml.parsers.SAXParserFactory saxFactory =
+                javax.xml.parsers.SAXParserFactory.newInstance();
+            saxFactory.setNamespaceAware(true);
+            org.xml.sax.XMLReader xmlReader = saxFactory.newSAXParser().getXMLReader();
+            xmlReader.setContentHandler(sheetHandler);
+            try {
+                xmlReader.parse(new org.xml.sax.InputSource(sheets.next()));
+            } catch (RuntimeException e) {
+                if (!"_CALLBACK_ERR_".equals(e.getMessage())) throw e;
+            }
+        } finally {
+            if (pkg != null) try { pkg.close(); } catch (Throwable ignore) {}
+        }
+        if (callbackError[0] != null) throw callbackError[0];
+    }
+
+    /**
+     * 스트리밍 모드용 오류 리포트 생성.
+     * Sheet 없이 헤더 이름 목록 + SyntheticRow 기반으로 buildErrorReport와 동일한 리포트를 생성합니다.
+     *
+     * @param headerNames     prepareStreaming()으로 수집한 헤더 컬럼명
+     * @param errorRows       SyntheticRow 인스턴스 목록 (getRowNum(), getCell() 동작)
+     * @param headerIdx       0-based 헤더 행 인덱스 (행 번호 계산용)
+     */
+    public String buildErrorReportStreaming(
+            String jobId,
+            java.util.List<String> headerNames,
+            java.util.List<org.apache.poi.ss.usermodel.Row> errorRows,
+            java.util.List<String> errorMsgs,
+            Map<?, ?> allMaps,
+            int headerIdx) {
+
+        if (errorRows == null || errorRows.isEmpty()) return null;
+
+        int lastCol = headerNames != null ? headerNames.size() : 0;
+        for (org.apache.poi.ss.usermodel.Row r : errorRows) {
+            if (r != null && r.getLastCellNum() > lastCol) lastCol = r.getLastCellNum();
+        }
+
+        String errFileName = null;
+        org.apache.poi.ss.usermodel.Workbook errWb = null;
+        try {
+            errWb = createNewXlsxWorkbook();
+            org.apache.poi.ss.usermodel.Sheet errSheet = errWb.createSheet("오류_목록");
+
+            org.apache.poi.ss.usermodel.CellStyle headerStyle     = createHeaderStyle(errWb, false);
+            org.apache.poi.ss.usermodel.CellStyle metaHeaderStyle = createHeaderStyle(errWb, true);
+            org.apache.poi.ss.usermodel.CellStyle wrapStyle       = createWrapStyle(errWb);
+            org.apache.poi.ss.usermodel.CellStyle rowNumStyle     = createRowNumStyle(errWb);
+
+            // DB 컬럼명 → 리포트 열 인덱스 매핑
+            Map<String, Integer> dbColToReportColIdx = new java.util.HashMap<>();
+            if (allMaps != null) {
+                for (Map.Entry<?, ?> aliasEntry : allMaps.entrySet()) {
+                    Object aliasVal = aliasEntry.getValue();
+                    if (!(aliasVal instanceof Map)) continue;
+                    for (Map.Entry<?, ?> colEntry : ((Map<?, ?>) aliasVal).entrySet()) {
+                        String dbCol = String.valueOf(colEntry.getKey()).trim().toLowerCase();
+                        String mv = String.valueOf(colEntry.getValue()).trim();
+                        int excelColIdx = -1;
+                        try { excelColIdx = Integer.parseInt(mv); }
+                        catch (NumberFormatException ignore) {
+                            if (mv.startsWith("_REPLACE_:") || mv.startsWith("_UNIQUE_:")) {
+                                try { excelColIdx = Integer.parseInt(mv.split(":", 3)[1]); }
+                                catch (Throwable ig) {}
+                            }
+                        }
+                        if (excelColIdx >= 0) dbColToReportColIdx.put(dbCol, excelColIdx + 1);
+                    }
+                }
+            }
+
+            // 헤더명 → 열 인덱스 맵
+            Map<String, Integer> headerColMap = new java.util.HashMap<>();
+            if (headerNames != null) {
+                for (int c = 0; c < headerNames.size(); c++) {
+                    String hn = headerNames.get(c);
+                    if (hn != null && !hn.trim().isEmpty())
+                        headerColMap.put(hn.trim().toLowerCase(), c);
+                }
+            }
+
+            // 오류 셀 강조 스타일
+            org.apache.poi.ss.usermodel.CellStyle errorCellStyle = errWb.createCellStyle();
+            try {
+                org.apache.poi.ss.usermodel.Font errFont = errWb.createFont();
+                errFont.setBold(true);
+                try { errFont.setColor(org.apache.poi.ss.usermodel.IndexedColors.DARK_RED.getIndex()); }
+                catch (Throwable ignore) {}
+                errorCellStyle.setFont(errFont);
+                try {
+                    org.apache.poi.xssf.usermodel.XSSFCellStyle xStyle =
+                        (org.apache.poi.xssf.usermodel.XSSFCellStyle) errorCellStyle;
+                    xStyle.setFillForegroundColor(new org.apache.poi.xssf.usermodel.XSSFColor(
+                        new byte[]{(byte)0xFF,(byte)0xC8,(byte)0xC8}, null));
+                    xStyle.setFillPattern(org.apache.poi.ss.usermodel.FillPatternType.SOLID_FOREGROUND);
+                    org.apache.poi.xssf.usermodel.XSSFColor red = new org.apache.poi.xssf.usermodel.XSSFColor(
+                        new byte[]{(byte)0xDC,(byte)0x14,(byte)0x3C}, null);
+                    xStyle.setBorderTop(org.apache.poi.ss.usermodel.BorderStyle.MEDIUM);
+                    xStyle.setBorderBottom(org.apache.poi.ss.usermodel.BorderStyle.MEDIUM);
+                    xStyle.setBorderLeft(org.apache.poi.ss.usermodel.BorderStyle.MEDIUM);
+                    xStyle.setBorderRight(org.apache.poi.ss.usermodel.BorderStyle.MEDIUM);
+                    xStyle.setTopBorderColor(red); xStyle.setBottomBorderColor(red);
+                    xStyle.setLeftBorderColor(red); xStyle.setRightBorderColor(red);
+                } catch (Throwable ignore) {
+                    errorCellStyle.setFillForegroundColor(
+                        org.apache.poi.ss.usermodel.IndexedColors.ROSE.getIndex());
+                    errorCellStyle.setFillPattern(
+                        org.apache.poi.ss.usermodel.FillPatternType.SOLID_FOREGROUND);
+                    errorCellStyle.setBorderTop(org.apache.poi.ss.usermodel.BorderStyle.MEDIUM);
+                    errorCellStyle.setBorderBottom(org.apache.poi.ss.usermodel.BorderStyle.MEDIUM);
+                    errorCellStyle.setBorderLeft(org.apache.poi.ss.usermodel.BorderStyle.MEDIUM);
+                    errorCellStyle.setBorderRight(org.apache.poi.ss.usermodel.BorderStyle.MEDIUM);
+                    errorCellStyle.setTopBorderColor(
+                        org.apache.poi.ss.usermodel.IndexedColors.RED.getIndex());
+                    errorCellStyle.setBottomBorderColor(
+                        org.apache.poi.ss.usermodel.IndexedColors.RED.getIndex());
+                    errorCellStyle.setLeftBorderColor(
+                        org.apache.poi.ss.usermodel.IndexedColors.RED.getIndex());
+                    errorCellStyle.setRightBorderColor(
+                        org.apache.poi.ss.usermodel.IndexedColors.RED.getIndex());
+                }
+                errorCellStyle.setWrapText(true);
+                errorCellStyle.setVerticalAlignment(
+                    org.apache.poi.ss.usermodel.VerticalAlignment.CENTER);
+            } catch (Throwable ignore) {}
+
+            int colFriendly = lastCol + 1, colSolution = lastCol + 2, colSystem = lastCol + 3;
+
+            // 헤더 행
+            org.apache.poi.ss.usermodel.Row newHeader = errSheet.createRow(0);
+            newHeader.setHeightInPoints(40);
+            org.apache.poi.ss.usermodel.Cell hRowNum = newHeader.createCell(0);
+            hRowNum.setCellValue("엑셀\n행 번호");
+            try { hRowNum.setCellStyle(metaHeaderStyle); } catch (Throwable ignore) {}
+            for (int c = 0; c < lastCol; c++) {
+                org.apache.poi.ss.usermodel.Cell nc = newHeader.createCell(c + 1);
+                if (headerNames != null && c < headerNames.size()) nc.setCellValue(headerNames.get(c));
+                try { nc.setCellStyle(headerStyle); } catch (Throwable ignore) {}
+            }
+            org.apache.poi.ss.usermodel.Cell hFriendly = newHeader.createCell(colFriendly);
+            hFriendly.setCellValue("오류 원인 (일반 안내)");
+            try { hFriendly.setCellStyle(metaHeaderStyle); } catch (Throwable ignore) {}
+            org.apache.poi.ss.usermodel.Cell hSolution = newHeader.createCell(colSolution);
+            hSolution.setCellValue("해결 방법");
+            try { hSolution.setCellStyle(metaHeaderStyle); } catch (Throwable ignore) {}
+            org.apache.poi.ss.usermodel.Cell hSystem = newHeader.createCell(colSystem);
+            hSystem.setCellValue("시스템 오류 메시지 (개발자용)");
+            try { hSystem.setCellStyle(metaHeaderStyle); } catch (Throwable ignore) {}
+
+            // 오류 데이터 행
+            for (int r = 0; r < errorRows.size(); r++) {
+                org.apache.poi.ss.usermodel.Row oldRow = errorRows.get(r);
+                org.apache.poi.ss.usermodel.Row newRow = errSheet.createRow(r + 1);
+                newRow.setHeightInPoints(40);
+
+                int lineNo = (oldRow != null) ? (oldRow.getRowNum() - headerIdx) : -1;
+                org.apache.poi.ss.usermodel.Cell cellRowNum = newRow.createCell(0);
+                cellRowNum.setCellValue(lineNo > 0 ? String.valueOf(lineNo) : "?");
+                try { cellRowNum.setCellStyle(rowNumStyle); } catch (Throwable ignore) {}
+
+                for (int c = 0; c < lastCol; c++) {
+                    org.apache.poi.ss.usermodel.Cell oldCell = oldRow != null ? oldRow.getCell(c) : null;
+                    org.apache.poi.ss.usermodel.Cell newCell = newRow.createCell(c + 1);
+                    if (oldCell != null) newCell.setCellValue(getCellValue(oldCell));
+                }
+
+                String rawMsg = r < errorMsgs.size() ? errorMsgs.get(r) : "";
+                java.util.List<String> errColNames = extractAllErrorColumnNames(rawMsg);
+                for (String errColName : errColNames) {
+                    String key = errColName.toLowerCase();
+                    Integer reportColIdx = dbColToReportColIdx.get(key);
+                    if (reportColIdx == null) {
+                        Integer hIdx = headerColMap.get(key);
+                        if (hIdx != null) reportColIdx = hIdx + 1;
+                    }
+                    if (reportColIdx != null && reportColIdx >= 1 && reportColIdx <= lastCol) {
+                        org.apache.poi.ss.usermodel.Cell errCell = newRow.getCell(reportColIdx);
+                        if (errCell == null) errCell = newRow.createCell(reportColIdx);
+                        try { errCell.setCellStyle(errorCellStyle); } catch (Throwable ignore) {}
+                    }
+                }
+
+                String[] translated = translateErrorForReport(rawMsg);
+                org.apache.poi.ss.usermodel.Cell cellFriendly = newRow.createCell(colFriendly);
+                cellFriendly.setCellValue(translated[0]);
+                try { cellFriendly.setCellStyle(wrapStyle); } catch (Throwable ignore) {}
+                org.apache.poi.ss.usermodel.Cell cellSolution = newRow.createCell(colSolution);
+                cellSolution.setCellValue(translated[1]);
+                try { cellSolution.setCellStyle(wrapStyle); } catch (Throwable ignore) {}
+                org.apache.poi.ss.usermodel.Cell cellSystem = newRow.createCell(colSystem);
+                cellSystem.setCellValue(rawMsg != null ? rawMsg : "");
+                try { cellSystem.setCellStyle(wrapStyle); } catch (Throwable ignore) {}
+            }
+
+            errSheet.setColumnWidth(0, 14 * 256);
+            for (int c = 1; c <= lastCol; c++) errSheet.setColumnWidth(c, 20 * 256);
+            errSheet.setColumnWidth(colFriendly, 45 * 256);
+            errSheet.setColumnWidth(colSolution, 55 * 256);
+            errSheet.setColumnWidth(colSystem,   65 * 256);
+
+            errFileName = "ERR_" + (jobId != null ? jobId : UUID.randomUUID().toString()) + ".xlsx";
+            java.io.File errFile = new java.io.File(getSampleFileDir(), errFileName);
+            try (FileOutputStream errFos = new FileOutputStream(errFile)) { errWb.write(errFos); }
+            log.info("[ExcelUpload] 오류 리포트 생성 완료 (Streaming): {}", errFileName);
+        } catch (Exception e) {
+            log.error("[ExcelUpload] 오류 리포트 생성 실패: {}", e.getMessage(), e);
+        } finally {
+            closeWorkbook(errWb);
+        }
+        return errFileName;
+    }
+
+    // =====================================================================
     // 2. 계층형 Cascade INSERT / UPSERT (핵심 로직)
     // =====================================================================
 
@@ -189,7 +696,9 @@ public class ExcelUploadEngineService {
             String currentAlias, String parentId, Object iceObj, Object ukeyObj,
             Map<String, Set<String>> metaMap, List<?> rowSqls,
             Map<String, Object> psCache, Map<String, List<String>> sqlParamOrderCache,
-            ExcelUploadEngineRepository.FastSequenceManager seqMgr
+            ExcelUploadEngineRepository.FastSequenceManager seqMgr,
+            org.apache.poi.ss.usermodel.DataFormatter df,           // ✅ [Perf] Workbook당 1회 생성 후 주입
+            org.apache.poi.ss.usermodel.FormulaEvaluator evaluator  // ✅ [Perf] Workbook당 1회 생성 후 주입
     ) throws Exception {
 
         // 현재 alias에 해당하는 struct 탐색
@@ -272,7 +781,7 @@ public class ExcelUploadEngineService {
             } else if (mappingVal.startsWith("_REPLACE_:")) {
                 String[] parts = mappingVal.split(":", 3);
                 int excelIdx = Integer.parseInt(parts[1]);
-                String rawVal = getCellValue(row.getCell(excelIdx)).trim();
+                String rawVal = getCellValue(row.getCell(excelIdx), df, evaluator).trim();
                 String rulesStr = parts.length > 2 ? parts[2] : "";
                 for (String rule : rulesStr.split("\\|\\|")) {
                     String[] kv = rule.split("==", 2);
@@ -281,7 +790,7 @@ public class ExcelUploadEngineService {
                 data.put(dbCol, rawVal);
             } else if (mappingVal.startsWith("_UNIQUE_:")) {
                 int excelIdx = Integer.parseInt(mappingVal.split(":", 2)[1]);
-                String rawVal = getCellValue(row.getCell(excelIdx)).trim();
+                String rawVal = getCellValue(row.getCell(excelIdx), df, evaluator).trim();
                 if (!rawVal.isEmpty()) {
                     Map<String, Integer> uTrack = (Map<String, Integer>) psCache.get("_UNIQUE_TRACKER_");
                     if (uTrack == null) { uTrack = new HashMap<>(); psCache.put("_UNIQUE_TRACKER_", uTrack); }
@@ -292,7 +801,7 @@ public class ExcelUploadEngineService {
                 } else { data.put(dbCol, ""); }
             } else {
                 int excelIdx = Integer.parseInt(mappingVal);
-                data.put(dbCol, getCellValue(row.getCell(excelIdx)));
+                data.put(dbCol, getCellValue(row.getCell(excelIdx), df, evaluator));
             }
         }
 
@@ -438,7 +947,7 @@ public class ExcelUploadEngineService {
                 tokens.put("PARENT_ID", parentId == null ? "" : parentId);
                 if (row != null) {
                     for (int ci = 0; ci < row.getLastCellNum(); ci++) {
-                        tokens.put("COL_" + ci, getCellValue(row.getCell(ci)));
+                        tokens.put("COL_" + ci, getCellValue(row.getCell(ci), df, evaluator));
                     }
                 }
                 for (Map.Entry<String, Object> de : data.entrySet()) {
@@ -466,7 +975,8 @@ public class ExcelUploadEngineService {
             Map<String, Object> s = (Map<String, Object>) sObj;
             if (currentAlias.equals(s.get("parent"))) {
                 cascadeExcelInsert(conn, row, structs, allMaps, (String) s.get("alias"),
-                        newId, iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr);
+                        newId, iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr,
+                        df, evaluator);
             }
         }
     }

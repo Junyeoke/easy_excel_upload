@@ -307,11 +307,31 @@ function ExcelApp() {
   const translateError = msg => {
     if (!msg) return { friendlyMsg: '알 수 없는 오류', solution: '관리자에게 문의해주세요.' };
     const rowMatch = msg.match(/엑셀 \[ (\d+) 번째 행 \]/);
-    const rowInfo = rowMatch ? `<b style="color:#e11d48">${rowMatch[1]}번째 행</b>에서 ` : '';
+    const rowInfo = rowMatch ? `${rowMatch[1]}번째 행에서 ` : '';
     if (msg.includes('cannot be null')) return { friendlyMsg: `${rowInfo}필수 데이터가 비어있습니다.`, solution: '빈 칸이 있는지 확인해주세요.' };
     if (msg.includes('Duplicate entry') || msg.includes('unique constraint')) return { friendlyMsg: `${rowInfo}중복 데이터가 존재합니다.`, solution: '이미 등록된 데이터와 겹칩니다.' };
     if (msg.includes('Data too long') || msg.includes('value too large')) return { friendlyMsg: `${rowInfo}데이터 길이가 초과했습니다.`, solution: '해당 셀 내용을 줄여주세요.' };
     return { friendlyMsg: `${rowInfo}데이터 저장에 실패했습니다.`, solution: '관리자에게 시스템 에러 원문을 전달해주세요.' };
+  };
+
+  const getKnownFailedRowNumbers = () => Object.keys(failedRows)
+    .filter(key => key !== '__unknown__')
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+
+  const moveToFirstFailedRow = () => {
+    const knownFailedRows = getKnownFailedRowNumbers();
+    if (!knownFailedRows.length) {
+      toast.info('이동 가능한 실패 행 번호가 없습니다.');
+      return;
+    }
+    const firstFail = knownFailedRows[0];
+    const pg = Math.ceil(firstFail / previewPageSize);
+    if (pg !== previewPage) {
+      setPreviewPage(pg);
+      fetchPreviewPage(file, pg, headerRow, null);
+    }
   };
 
   const renderDebugUploadOptions = (compact = false) => (
@@ -1081,7 +1101,7 @@ function ExcelApp() {
                     </span>
                     </div>
                     <div style={{ display: 'flex', gap: '5px' }}>
-                      <button onClick={() => { const firstFail = Math.min(...Object.keys(failedRows).map(Number)); const pg = Math.ceil(firstFail / previewPageSize); if (pg !== previewPage) { setPreviewPage(pg); fetchPreviewPage(file, pg, headerRow, null); } }}
+                      <button onClick={moveToFirstFailedRow}
                         style={{ fontSize: '0.7rem', padding: '2px 9px', borderRadius: '5px', border: '1px solid #fca5a5', background: 'white', color: '#e11d48', cursor: 'pointer', fontWeight: 600 }}>🔴 실패 행으로</button>
                       <button onClick={() => setFailedRows({})} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '5px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', cursor: 'pointer' }}>✕</button>
                     </div>
@@ -1205,7 +1225,7 @@ function ExcelApp() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    {renderDebugUploadOptions(true)}
+                    {isAdmin && renderDebugUploadOptions(true)}
                     {hasFailed && (
                       <button onClick={() => { setFailedRows({}); setEditedCells({}); }} style={{ padding: '9px 16px', borderRadius: '9px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontWeight: 600, cursor: 'pointer', fontSize: '0.82rem' }}>초기화</button>
                     )}
@@ -1457,11 +1477,7 @@ function ExcelApp() {
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    <button onClick={() => {
-                      const firstFail = Math.min(...Object.keys(failedRows).map(Number));
-                      const pg = Math.ceil(firstFail / previewPageSize);
-                      if (pg !== previewPage) { setPreviewPage(pg); fetchPreviewPage(file, pg, headerRow, null); }
-                    }} style={{ fontSize: '0.72rem', padding: '3px 10px', borderRadius: '6px', border: '1px solid #fca5a5', background: 'white', color: '#e11d48', cursor: 'pointer', fontWeight: 600 }}>
+                      <button onClick={moveToFirstFailedRow} style={{ fontSize: '0.72rem', padding: '3px 10px', borderRadius: '6px', border: '1px solid #fca5a5', background: 'white', color: '#e11d48', cursor: 'pointer', fontWeight: 600 }}>
                       🔴 실패 행으로 이동
                     </button>
                     <button onClick={() => setFailedRows({})} style={{ fontSize: '0.72rem', padding: '3px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', cursor: 'pointer' }}>✕ 초기화</button>
@@ -1580,7 +1596,7 @@ function ExcelApp() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  {renderDebugUploadOptions(false)}
+                  {isAdmin && renderDebugUploadOptions(false)}
                   {hasFailed && (
                     <button onClick={() => { setFailedRows({}); setEditedCells({}); }} style={{ padding: '10px 18px', borderRadius: '10px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>
                       초기화

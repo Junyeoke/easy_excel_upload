@@ -926,6 +926,9 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         List<org.apache.poi.ss.usermodel.Row> errorRows = new ArrayList<>();
         List<String> errorMsgs = new ArrayList<>();
         Map<String, String> failedRowMsgMap = new LinkedHashMap<>();
+        Set<String> failedExcelRowNums = new LinkedHashSet<>();
+        int unknownFailCnt = 0;
+        int processedExcelRowCnt = 0;
         int successCnt = 0, failCnt = 0;
         String errFileName = null;
 
@@ -963,6 +966,10 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             }
 
             int[] counters = {0, 0}; // [성공, 실패]
+            org.apache.poi.ss.usermodel.DataFormatter dataFormatter =
+                    new org.apache.poi.ss.usermodel.DataFormatter();
+            org.apache.poi.ss.usermodel.FormulaEvaluator formulaEvaluator =
+                    wb.getCreationHelper().createFormulaEvaluator();
 
             addLog.accept("▶️ 데이터 행 삽입 시작...");
 
@@ -985,15 +992,18 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                 if (!rowHasValue) {
                     continue;
                 }
+                processedExcelRowCnt++;
 
                 try {
                     service.cascadeExcelInsert(conn, row, structs, allMaps, "ROOT", null,
-                            iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr);
+                            iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr,
+                            dataFormatter, formulaEvaluator);
                 } catch (Exception rowEx) {
                     errorRows.add(row);
                     errorMsgs.add(rowEx.getMessage());
                     int dataRowNum = row.getRowNum() - headerIdx; // 1-based 데이터 행 번호
                     failedRowMsgMap.put(String.valueOf(dataRowNum), rowEx.getMessage() != null ? rowEx.getMessage() : "알 수 없는 오류");
+                    failedExcelRowNums.add(String.valueOf(dataRowNum));
                     addLog.accept("❌ " + currentRowForLog + "행 오류: " + rowEx.getMessage());
                     log.info("[ExcelUpload] ⚠ {}행 개별 오류: {}", currentRowForLog, rowEx.getMessage());
                     counters[1]++; 
@@ -1021,11 +1031,13 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                         if (errRow != null) {
                             int dataRN = errRow.getRowNum() - headerIdx;
                             failedRowMsgMap.put(String.valueOf(dataRN), errMsg);
+                            failedExcelRowNums.add(String.valueOf(dataRN));
                             addLog.accept("❌ " + dataRN + "행 오류: " + errMsg);
                         } else {
                             // ✅ 행 특정 불가 오류
                             String unknownKey = "__unknown_" + failedRowMsgMap.size() + "__";
                             failedRowMsgMap.put(unknownKey, errMsg);
+                            unknownFailCnt++;
                             addLog.accept("❌ 배치 오류 (행 특정 불가): " + errMsg);
                             log.error("[ExcelUpload] ❌ 행 특정 불가 오류: {}", errMsg);
                         }
@@ -1047,11 +1059,13 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                     // 행 특정 가능: 행 번호로 키 설정
                     int dataRN = errRow.getRowNum() - headerIdx;
                     failedRowMsgMap.put(String.valueOf(dataRN), errMsg);
+                    failedExcelRowNums.add(String.valueOf(dataRN));
                     addLog.accept("❌ " + dataRN + "행 오류: " + errMsg);
                 } else {
                     // ✅ [Fix] trackedRows==null로 행 특정 불가한 오류 → __unknown_N__ 키로 등록
                     String unknownKey = "__unknown_" + (++unknownErrSeq) + "__";
                     failedRowMsgMap.put(unknownKey, errMsg);
+                    unknownFailCnt++;
                     addLog.accept("❌ 배치 오류 (행 특정 불가): " + errMsg);
                     log.error("[ExcelUpload] ❌ 행 특정 불가 오류: {}", errMsg);
                 }
@@ -1067,18 +1081,19 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                 if (!failedRowMsgMap.containsKey(dataRNKey)) {
                     String errMsg = (ei < errorMsgs.size()) ? errorMsgs.get(ei) : "오류 (상세 정보 없음)";
                     failedRowMsgMap.put(dataRNKey, errMsg);
+                    failedExcelRowNums.add(dataRNKey);
                     addLog.accept("❌ " + dataRNKey + "행 오류 (재스캔): " + errMsg);
                     log.info("[ExcelUpload] ⚠ failedRowMsgMap 누락 행 재스캔으로 추가: {}행", dataRNKey);
                 }
             }
 
-            successCnt = counters[0];
-            // ✅ [Fix] failedRowMsgMap.size() 만 믿으면 안 됨
-            // flushBatch에서 trackedRows==null인 경우 counters[1]은 증가하지만
-            // errorRows/failedRowMsgMap에 행이 추가되지 않아 failCnt=0 → status=ok 버그 수정
-            failCnt = Math.max(failedRowMsgMap.size(), counters[1]);
-            log.info("[ExcelUpload] Batch 처리 완료 - 성공: {}건, 실패: {}건 (맵:{}건/카운터:{}건)",
-                successCnt, failCnt, failedRowMsgMap.size(), counters[1]);
+            // 성공/실패 건수는 실제 INSERT 횟수가 아니라 "엑셀 입력 행" 기준으로 집계한다.
+            // root-child 구조에서는 한 행이 여러 테이블에 배치될 수 있으므로 counters[0]/counters[1]를
+            // 그대로 쓰면 성공 건수가 중복 집계될 수 있다.
+            failCnt = failedExcelRowNums.size() + unknownFailCnt;
+            successCnt = Math.max(processedExcelRowCnt - failCnt, 0);
+            log.info("[ExcelUpload] Batch 처리 완료 - 성공(row): {}건, 실패(row): {}건, 처리(row): {}건 (배치성공:{}건/배치실패:{}건, 식별실패행:{}건, 미식별실패:{}건)",
+                successCnt, failCnt, processedExcelRowCnt, counters[0], counters[1], failedExcelRowNums.size(), unknownFailCnt);
             addLog.accept("🎉 완료! 성공: " + successCnt + "건" + (failCnt > 0 ? ", 실패: " + failCnt + "건" : ""));
 
             // 최종 진행률 100% 세팅

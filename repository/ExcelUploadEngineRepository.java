@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import javax.sql.DataSource;
 import java.sql.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * =====================================================================
@@ -26,6 +27,8 @@ import java.util.*;
 public class ExcelUploadEngineRepository {
 
     private static final Logger log = LoggerFactory.getLogger(ExcelUploadEngineRepository.class);
+    private static final AtomicBoolean CONFIG_SCHEMA_VERIFIED = new AtomicBoolean(false);
+    private static final AtomicBoolean HISTORY_SCHEMA_VERIFIED = new AtomicBoolean(false);
 
     private final DataSource dataSource;
 
@@ -143,11 +146,7 @@ public class ExcelUploadEngineRepository {
         Object isUpdateFlag = configData.get("is_update");
         boolean isUpdate = Boolean.TRUE.equals(isUpdateFlag);
 
-        // 테이블/컬럼 존재 확보 (최초 실행 시)
-        try (Statement s = conn.createStatement()) {
-            try { s.execute("ALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD INSTRUCTIONS CLOB"); }        catch (Throwable ignore) {}
-            try { s.execute("ALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD COLUMN INSTRUCTIONS TEXT"); }  catch (Throwable ignore) {}
-        }
+        ensureConfigSchema(conn);
 
         String nowFunc = detectNowFunction(conn);
 
@@ -257,6 +256,9 @@ public class ExcelUploadEngineRepository {
      * 업로드 이력 테이블 초기화 (없으면 생성)
      */
     public void ensureHistoryTable(Connection conn, String nowFunc) {
+        if (HISTORY_SCHEMA_VERIFIED.get()) {
+            return;
+        }
         try (Statement initStmt = conn.createStatement()) {
             try { initStmt.execute(
                 "CREATE TABLE IF NOT EXISTS ESO_EXCEL_UPLOAD_HISTORY " +
@@ -272,6 +274,18 @@ public class ExcelUploadEngineRepository {
             try { initStmt.execute("ALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD COLUMN ERROR_FILE VARCHAR(256)"); } catch (Throwable ignore) {}
             try { initStmt.execute("ALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD FAIL_CNT NUMBER(10)"); }          catch (Throwable ignore) {}
             try { initStmt.execute("ALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD ERROR_FILE VARCHAR2(256)"); }     catch (Throwable ignore) {}
+            HISTORY_SCHEMA_VERIFIED.set(true);
+        } catch (Throwable ignore) {}
+    }
+
+    private void ensureConfigSchema(Connection conn) {
+        if (CONFIG_SCHEMA_VERIFIED.get()) {
+            return;
+        }
+        try (Statement s = conn.createStatement()) {
+            try { s.execute("ALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD INSTRUCTIONS CLOB"); }        catch (Throwable ignore) {}
+            try { s.execute("ALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD COLUMN INSTRUCTIONS TEXT"); }  catch (Throwable ignore) {}
+            CONFIG_SCHEMA_VERIFIED.set(true);
         } catch (Throwable ignore) {}
     }
 

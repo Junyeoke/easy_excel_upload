@@ -73,6 +73,16 @@ public class ExcelUploadEngineController {
     public void progressStream(HttpServletRequest request, HttpServletResponse response) {
         String jobId = request.getParameter("job_id");
 
+        if (jobId == null || jobId.trim().isEmpty()) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.setContentType("application/json; charset=UTF-8");
+            try {
+                response.getWriter().write("{\"status\":\"err\",\"msg\":\"job_id is required\"}");
+            } catch (IOException ignore) {
+            }
+            return;
+        }
+
         // ── 응답 헤더 설정 ────────────────────────────────────────────
         response.setContentType("text/event-stream; charset=UTF-8");
         response.setCharacterEncoding("UTF-8");
@@ -272,6 +282,9 @@ public class ExcelUploadEngineController {
     handleDelete(ds, params, result);
 } else if ("clone".equals(mode)) {
     handleClone(ds, params, result);
+} else {
+    result.put("status", "err");
+    result.put("msg", "Unknown mode: " + mode);
 }
             
 
@@ -717,6 +730,11 @@ private void handleClone(DataSource ds, Map<String, Object> params,
     private void handleProgress(HttpServletRequest request, Map<String, Object> params,
             Map<String, Object> result) {
         String jobId = (String) params.get("job_id");
+        if (jobId == null || jobId.trim().isEmpty()) {
+            result.put("status", "err");
+            result.put("msg", "job_id가 필요합니다.");
+            return;
+        }
 
         // ① ProgressStore 우선 조회
         ProgressStore.JobProgress prog = ProgressStore.get(jobId);

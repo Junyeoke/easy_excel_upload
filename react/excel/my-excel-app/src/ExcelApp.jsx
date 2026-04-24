@@ -124,6 +124,8 @@ function ExcelApp() {
   const [editedCells, setEditedCells] = useState({});
   const [failedRows, setFailedRows] = useState({}); // { '3': '오류메시지', ... }
   const [uploading, setUploading] = useState(false);
+  const [debugDetailEnabled, setDebugDetailEnabled] = useState(false);
+  const [debugRowLimit, setDebugRowLimit] = useState(20);
   const MAPPING_PAGE_SIZE = 10;
   const [mappingPage, setMappingPage] = useState(1);
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0 });
@@ -312,6 +314,63 @@ function ExcelApp() {
     return { friendlyMsg: `${rowInfo}데이터 저장에 실패했습니다.`, solution: '관리자에게 시스템 에러 원문을 전달해주세요.' };
   };
 
+  const renderDebugUploadOptions = (compact = false) => (
+    <div style={{
+      padding: compact ? '10px 12px' : '12px 14px',
+      borderRadius: '10px',
+      border: '1px solid #dbeafe',
+      background: debugDetailEnabled ? '#eff6ff' : '#f8fafc',
+      minWidth: compact ? '260px' : '320px'
+    }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={debugDetailEnabled}
+          onChange={(e) => setDebugDetailEnabled(e.target.checked)}
+          style={{ width: '16px', height: '16px', accentColor: '#4f46e5' }}
+        />
+        <span style={{ fontWeight: 700, color: '#1e293b', fontSize: compact ? '0.82rem' : '0.86rem' }}>
+          디버깅 모드
+        </span>
+        <span style={{
+          fontSize: '0.68rem',
+          fontWeight: 700,
+          color: debugDetailEnabled ? '#1d4ed8' : '#64748b',
+          background: debugDetailEnabled ? '#dbeafe' : '#e2e8f0',
+          padding: '2px 8px',
+          borderRadius: '999px'
+        }}>
+          {debugDetailEnabled ? 'ON' : 'OFF'}
+        </span>
+      </label>
+      <div style={{ color: '#64748b', fontSize: compact ? '0.72rem' : '0.75rem', marginTop: '6px', lineHeight: 1.5 }}>
+        켜면 업로드 로그 창에 행별 매핑값, 예상 SQL, row-sql 치환 결과를 자세히 보여줍니다.
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: compact ? '0.75rem' : '0.78rem', color: '#334155', fontWeight: 600 }}>상세 로그 행 수</span>
+        <input
+          type="number"
+          min="1"
+          max="200"
+          value={debugRowLimit}
+          onChange={(e) => setDebugRowLimit(e.target.value)}
+          disabled={!debugDetailEnabled}
+          style={{
+            width: '84px',
+            padding: '7px 10px',
+            borderRadius: '8px',
+            border: '1px solid #cbd5e1',
+            background: debugDetailEnabled ? 'white' : '#f1f5f9',
+            color: debugDetailEnabled ? '#0f172a' : '#94a3b8',
+            fontWeight: 700,
+            fontFamily: 'inherit'
+          }}
+        />
+        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>1 ~ 200, 기본 20</span>
+      </div>
+    </div>
+  );
+
   // 오류 메시지에서 DB 컬럼명(들) 추출 → 매핑으로 엑셀 컬럼 인덱스 역조회 (다중 컬럼 지원)
   const parseFailedColsFromMsg = (msg) => {
     if (!msg) return [];
@@ -453,6 +512,10 @@ function ExcelApp() {
     fd.append('pre_sql_json_b64', encodeSafeBase64(JSON.stringify(preSqls)));
     fd.append('post_sql_json_b64', encodeSafeBase64(JSON.stringify(postSqls)));
     fd.append('row_sql_json_b64', encodeSafeBase64(JSON.stringify(rowSqls)));
+    if (debugDetailEnabled) {
+      fd.append('debug_detail', 'Y');
+      fd.append('debug_row_limit', String(Math.min(Math.max(Number(debugRowLimit) || 20, 1), 200)));
+    }
     if (Object.keys(editedCells).length > 0) fd.append('edited_rows_b64', encodeSafeBase64(JSON.stringify(editedCells)));
 
     const tid = toast.loading('🚀 서버 전송 중...', { position: 'top-left' });
@@ -1142,6 +1205,7 @@ function ExcelApp() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {renderDebugUploadOptions(true)}
                     {hasFailed && (
                       <button onClick={() => { setFailedRows({}); setEditedCells({}); }} style={{ padding: '9px 16px', borderRadius: '9px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontWeight: 600, cursor: 'pointer', fontSize: '0.82rem' }}>초기화</button>
                     )}
@@ -1516,6 +1580,7 @@ function ExcelApp() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {renderDebugUploadOptions(false)}
                   {hasFailed && (
                     <button onClick={() => { setFailedRows({}); setEditedCells({}); }} style={{ padding: '10px 18px', borderRadius: '10px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>
                       초기화

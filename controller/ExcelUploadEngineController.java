@@ -881,6 +881,9 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         Map<String, Object> psCache = new HashMap<>();
         Map<String, List<String>> sqlParamOrderCache = new HashMap<>();
         String jobId = (String) params.get("job_id");
+        boolean debugDetail = isTruthy(params.get("debug_detail")) || isTruthy(params.get("debug_upload_log"));
+        int debugRowLimit = Math.min(Math.max(parseIntParam((String) params.get("debug_row_limit"), 20), 1), 200);
+        int debugLoggedRows = 0;
 
         // ── 로그 리스트 세션 등록 (폴백용 유지) + ProgressStore 초기화 ──
         List<String> uploadLogs = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -901,6 +904,13 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         };
 
         addLog.accept("📂 파일 파싱 완료 - 총 " + actualTotalRows + "행 감지");
+        if (debugDetail) {
+            addLog.accept("🔎 상세 디버그 로그 활성화");
+            addLog.accept("🔎 상세 로그 대상: 상위 " + debugRowLimit + "개 행");
+            addLog.accept("🔎 구조 수: " + structs.size() + ", Pre-SQL: " + (preSqls == null ? 0 : preSqls.size())
+                    + ", Row-SQL: " + (rowSqls == null ? 0 : rowSqls.size())
+                    + ", Post-SQL: " + (postSqls == null ? 0 : postSqls.size()));
+        }
 
         int blockSize = actualTotalRows > 0 ? Math.min(actualTotalRows * structs.size() + 50, 10000) : 100;
 
@@ -993,6 +1003,22 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                     continue;
                 }
                 processedExcelRowCnt++;
+
+                if (debugDetail && debugLoggedRows < debugRowLimit) {
+                    int dataRowNum = row.getRowNum() - headerIdx;
+                    addLog.accept("🔍 [" + dataRowNum + "행] 상세 업로드 계획 시작");
+                    try {
+                        debugCascadePlan(row, structs, allMaps, "ROOT", null, rowSqls, metaMap, addLog, dataRowNum);
+                    } catch (Throwable debugEx) {
+                        addLog.accept("⚠️ [" + dataRowNum + "행] 상세 로그 생성 실패: " + debugEx.getMessage());
+                        log.info("[ExcelUpload][Debug] {}행 상세 로그 생성 실패: {}", dataRowNum, debugEx.getMessage());
+                    }
+                    addLog.accept("🔍 [" + dataRowNum + "행] 상세 업로드 계획 종료");
+                    debugLoggedRows++;
+                    if (debugLoggedRows == debugRowLimit) {
+                        addLog.accept("🔎 상세 로그 행 제한 도달: 이후 행은 요약 로그만 출력됩니다.");
+                    }
+                }
 
                 try {
                     service.cascadeExcelInsert(conn, row, structs, allMaps, "ROOT", null,
@@ -1492,6 +1518,175 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         return sb.toString();
     }
 
+    @SuppressWarnings("unchecked")
+    private void debugCascadePlan(
+            org.apache.poi.ss.usermodel.Row row,
+            List<?> structs,
+            Map<?, ?> allMaps,
+            String currentAlias,
+            String parentIdPlaceholder,
+            List<?> rowSqls,
+            Map<String, Set<String>> metaMap,
+            java.util.function.Consumer<String> addLog,
+            int dataRowNum
+    ) throws Exception {
+        Map<String, Object> currentStruct = null;
+        for (Object sObj : structs) {
+            Map<String, Object> candidate = (Map<String, Object>) sObj;
+            if (currentAlias.equals(candidate.get("alias"))) {
+                currentStruct = candidate;
+                break;
+            }
+        }
+        if (currentStruct == null) {
+            return;
+        }
+
+        String tableName = (String) currentStruct.get("table");
+        Map<?, ?> aliasMap = (Map<?, ?>) allMaps.get(currentAlias);
+        if (aliasMap == null) {
+            aliasMap = new LinkedHashMap<>();
+        }
+
+        String generatedId = "<AUTO_ID:" + currentAlias + ":" + dataRowNum + ">";
+        Map<String, Object> data = new LinkedHashMap<>();
+
+        for (Map.Entry<?, ?> entry : aliasMap.entrySet()) {
+            String dbCol = String.valueOf(entry.getKey());
+            String mappingVal = String.valueOf(entry.getValue());
+            if (mappingVal == null || mappingVal.trim().isEmpty() || "null".equals(mappingVal)) {
+                continue;
+            }
+            if (!service.isValidSqlIdentifier(dbCol)) {
+                continue;
+            }
+
+            if ("_AUTO_SEQ_".equals(mappingVal)) {
+                data.put(dbCol, generatedId);
+            } else if (mappingVal.startsWith("_FIXED_:")) {
+                data.put(dbCol, mappingVal.substring(8));
+            } else if (mappingVal.startsWith("_REPLACE_:")) {
+                String[] parts = mappingVal.split(":", 3);
+                int excelIdx = Integer.parseInt(parts[1]);
+                String rawVal = service.getCellValue(row.getCell(excelIdx)).trim();
+                String rulesStr = parts.length > 2 ? parts[2] : "";
+                for (String rule : rulesStr.split("\\|\\|")) {
+                    String[] kv = rule.split("==", 2);
+                    if (kv.length == 2 && rawVal.equals(kv[0].trim())) {
+                        rawVal = kv[1].trim();
+                        break;
+                    }
+                }
+                data.put(dbCol, rawVal);
+            } else if (mappingVal.startsWith("_UNIQUE_:")) {
+                int excelIdx = Integer.parseInt(mappingVal.split(":", 2)[1]);
+                data.put(dbCol, service.getCellValue(row.getCell(excelIdx)).trim());
+            } else {
+                int excelIdx = Integer.parseInt(mappingVal);
+                data.put(dbCol, service.getCellValue(row.getCell(excelIdx)));
+            }
+        }
+
+        String pkCol = (String) currentStruct.get("pk_col");
+        if (pkCol != null && !pkCol.trim().isEmpty()) {
+            data.put(pkCol, generatedId);
+        }
+        String fkCol = (String) currentStruct.get("fk");
+        if (parentIdPlaceholder != null && fkCol != null && !fkCol.trim().isEmpty()) {
+            data.put(fkCol, parentIdPlaceholder);
+        }
+
+        List<String> upsertKeys = new ArrayList<>();
+        Object upsertKeysObj = currentStruct.get("upsert_keys");
+        if (upsertKeysObj instanceof List) {
+            for (Object k : (List<?>) upsertKeysObj) {
+                String key = String.valueOf(k).trim();
+                if (!key.isEmpty() && service.isValidSqlIdentifier(key)) {
+                    upsertKeys.add(key);
+                }
+            }
+        }
+
+        addLog.accept("  • alias=" + currentAlias
+                + ", table=" + safeLogValue(tableName)
+                + (pkCol != null && !pkCol.trim().isEmpty() ? ", pk=" + pkCol : "")
+                + (fkCol != null && !fkCol.trim().isEmpty() ? ", fk=" + fkCol : "")
+                + (!upsertKeys.isEmpty() ? ", upsertKeys=" + upsertKeys : ""));
+        addLog.accept("    - 컬럼 매핑값: " + formatDebugMap(data));
+
+        Set<String> numericColumns = metaMap.get(tableName);
+        if (tableName != null && service.isValidSqlIdentifier(tableName) && !data.isEmpty()) {
+            try {
+                Object[] insertSqlInfo = service.makeInsertSql(tableName, data, numericColumns);
+                String insertSql = (String) insertSqlInfo[0];
+                String[] insertParams = (String[]) insertSqlInfo[1];
+                addLog.accept("    - INSERT SQL: " + safeLogValue(insertSql));
+                addLog.accept("    - INSERT PARAM ORDER: " + Arrays.toString(insertParams));
+            } catch (Throwable insertEx) {
+                addLog.accept("    - INSERT SQL 생성 실패: " + safeLogValue(insertEx.getMessage()));
+            }
+
+            if (!upsertKeys.isEmpty()) {
+                try {
+                    Object[] updateSqlInfo = service.makeUpdateSql(tableName, data, upsertKeys, numericColumns);
+                    String updateSql = (String) updateSqlInfo[0];
+                    List<String> updateParams = (List<String>) updateSqlInfo[1];
+                    addLog.accept("    - UPDATE SQL: " + safeLogValue(updateSql));
+                    addLog.accept("    - UPDATE PARAM ORDER: " + updateParams);
+                } catch (Throwable updateEx) {
+                    addLog.accept("    - UPDATE SQL 생성 실패: " + safeLogValue(updateEx.getMessage()));
+                }
+            }
+        }
+
+        if (rowSqls != null && !rowSqls.isEmpty()) {
+            Map<String, String> tokens = new LinkedHashMap<>();
+            tokens.put("ALIAS", currentAlias);
+            tokens.put("TABLE", tableName == null ? "" : tableName);
+            tokens.put("PK_COL", pkCol == null ? "" : pkCol);
+            tokens.put("NEW_ID", generatedId);
+            tokens.put("PARENT_ID", parentIdPlaceholder == null ? "" : parentIdPlaceholder);
+            if (row != null) {
+                for (int ci = 0; ci < row.getLastCellNum(); ci++) {
+                    tokens.put("COL_" + ci, service.getCellValue(row.getCell(ci)));
+                }
+            }
+            for (Map.Entry<String, Object> de : data.entrySet()) {
+                tokens.put(de.getKey(), de.getValue() == null ? "" : String.valueOf(de.getValue()));
+            }
+            int rowSqlIdx = 1;
+            for (Object obj : rowSqls) {
+                if (!(obj instanceof Map)) {
+                    continue;
+                }
+                String sql = (String) ((Map<?, ?>) obj).get("sql");
+                if (sql == null || sql.trim().isEmpty()) {
+                    continue;
+                }
+                String resolved = service.replaceTokens(sql.trim(), tokens).trim();
+                addLog.accept("    - ROW SQL #" + rowSqlIdx + ": " + safeLogValue(resolved));
+                rowSqlIdx++;
+            }
+        }
+
+        for (Object sObj : structs) {
+            Map<String, Object> childStruct = (Map<String, Object>) sObj;
+            if (currentAlias.equals(childStruct.get("parent"))) {
+                debugCascadePlan(
+                        row,
+                        structs,
+                        allMaps,
+                        (String) childStruct.get("alias"),
+                        generatedId,
+                        rowSqls,
+                        metaMap,
+                        addLog,
+                        dataRowNum
+                );
+            }
+        }
+    }
+
     // =====================================================================
     // 내부 헬퍼
     // =====================================================================
@@ -1512,5 +1707,41 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         } catch (Throwable e) {
             return def;
         }
+    }
+
+    private boolean isTruthy(Object value) {
+        if (value == null) {
+            return false;
+        }
+        String s = String.valueOf(value).trim().toLowerCase();
+        return "y".equals(s) || "yes".equals(s) || "true".equals(s) || "1".equals(s) || "on".equals(s);
+    }
+
+    private String formatDebugMap(Map<String, Object> map) {
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            if (!first) {
+                sb.append(", ");
+            }
+            sb.append(entry.getKey()).append("=").append(safeLogValue(entry.getValue()));
+            first = false;
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private String safeLogValue(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        String s = String.valueOf(value)
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t");
+        if (s.length() > 160) {
+            return s.substring(0, 160) + "...(" + s.length() + " chars)";
+        }
+        return s;
     }
 }

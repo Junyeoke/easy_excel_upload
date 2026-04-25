@@ -88,6 +88,8 @@ const UserWorkbenchStep = ({
   setShowOnlyFailedRows,
   downloadSampleFile,
 }) => {
+  const [previewSearchTerm, setPreviewSearchTerm] = React.useState('');
+  const [showErrorColumnsOnly, setShowErrorColumnsOnly] = React.useState(false);
   const hasFile = !!file;
   const hasPreview = previewData.length > 0;
   const knownFailedRows = getKnownFailedRowNumbers();
@@ -124,13 +126,59 @@ const UserWorkbenchStep = ({
       : hasKnownFailedRows
         ? '빨간 행과 강조된 셀을 수정한 뒤 다시 업로드해 주세요.'
         : `총 ${totalRows.toLocaleString()}건을 업로드합니다.`;
-  const filteredPreviewData = showOnlyFailedRows
-    ? previewData.filter(row => {
-        const originalIndex = previewData.indexOf(row);
-        const rowNum = row._rowNum ?? ((previewPage - 1) * previewPageSize + originalIndex + 1);
-        return failedRows[String(rowNum)] !== undefined && !failedRows.__unknown__;
-      })
-    : previewData;
+  const failedColumnIndexSet = React.useMemo(() => {
+    const set = new Set();
+    Object.entries(failedRows).forEach(([rowKey, message]) => {
+      if (rowKey === '__unknown__') return;
+      parseFailedColsFromMsg(message || '').forEach(info => {
+        if (info.colIdx !== null) set.add(info.colIdx);
+      });
+    });
+    return set;
+  }, [failedRows, parseFailedColsFromMsg]);
+  const visibleColumnIndexes = React.useMemo(() => {
+    if (!showErrorColumnsOnly || failedColumnIndexSet.size === 0) {
+      return excelHeaders.map((_, idx) => idx);
+    }
+    return excelHeaders.map((_, idx) => idx).filter(idx => failedColumnIndexSet.has(idx));
+  }, [excelHeaders, failedColumnIndexSet, showErrorColumnsOnly]);
+  const searchKeyword = previewSearchTerm.trim().toLowerCase();
+  const filteredPreviewData = previewData.filter((row, index) => {
+    const rowNum = row._rowNum ?? ((previewPage - 1) * previewPageSize + index + 1);
+    const isFailedRow = failedRows[String(rowNum)] !== undefined && !failedRows.__unknown__;
+    if (showOnlyFailedRows && !isFailedRow) {
+      return false;
+    }
+    if (!searchKeyword) {
+      return true;
+    }
+    return visibleColumnIndexes.some(colIdx => {
+      const cellValue = Array.isArray(row) ? (row[colIdx] || '') : (row[String(colIdx)] || '');
+      return String(cellValue).toLowerCase().includes(searchKeyword);
+    });
+  });
+  const checklistItems = [
+    {
+      label: '파일 형식 확인',
+      ok: !hasFile || /\.(xlsx|xls)$/i.test(file.name),
+      detail: hasFile ? '지원 형식으로 인식되었습니다.' : '.xls 또는 .xlsx 파일을 선택하세요.',
+    },
+    {
+      label: '헤더 인식',
+      ok: !hasFile || excelHeaders.length > 0,
+      detail: hasFile ? `헤더 ${excelHeaders.length}개를 읽었습니다.` : `헤더 기준은 ${headerRow}행입니다.`,
+    },
+    {
+      label: '데이터 건수',
+      ok: !hasFile || totalRows > 0,
+      detail: hasFile ? `업로드 대상 ${totalRows.toLocaleString()}건` : '파일 선택 후 건수를 계산합니다.',
+    },
+    {
+      label: '오류 여부',
+      ok: !hasFile || (!hasKnownFailedRows && !hasUnknownFailedRows),
+      detail: !hasFile ? '사전 점검 전입니다.' : hasUnknownFailedRows ? '실패 건은 있으나 행 특정이 필요합니다.' : hasKnownFailedRows ? `${failedRowCount}개 행 수정 필요` : '즉시 업로드 가능한 상태입니다.',
+    },
+  ];
 
   const openCorrectionWorkbench = () => {
     if (uploadResult?.failed_row_msgs && Object.keys(uploadResult.failed_row_msgs).length > 0) {
@@ -203,6 +251,27 @@ const UserWorkbenchStep = ({
             </div>
           </div>
 
+          <div className="result-priority-strip">
+            {uploadResult.status === 'ok' && (
+              <div className="result-priority-card priority-success">
+                <div className="result-priority-title">권장 다음 작업</div>
+                <div className="result-priority-desc">같은 양식으로 이어서 업로드하거나 최근 이력을 확인하세요.</div>
+              </div>
+            )}
+            {uploadResult.status === 'partial' && (
+              <div className="result-priority-card priority-warning">
+                <div className="result-priority-title">먼저 실패 행 수정이 가장 빠릅니다</div>
+                <div className="result-priority-desc">오류 리포트보다 먼저 미리보기 작업대로 돌아가 빨간 셀만 수정하면 재업로드가 더 빠릅니다.</div>
+              </div>
+            )}
+            {uploadResult.status === 'err' && (
+              <div className="result-priority-card priority-danger">
+                <div className="result-priority-title">오류 원인 확인 후 다시 시도</div>
+                <div className="result-priority-desc">원문 오류와 해결 가이드를 먼저 보고 파일 또는 설정을 조정한 뒤 다시 업로드하세요.</div>
+              </div>
+            )}
+          </div>
+
           {uploadResult.status === 'partial' && uploadResult.failed_row_msgs && Object.keys(uploadResult.failed_row_msgs).filter(k => k !== '__unknown__').length > 0 && (
             <div className="result-list-card">
               <div className="result-list-title">오류 발생 행 요약</div>
@@ -244,9 +313,9 @@ const UserWorkbenchStep = ({
             </div>
           )}
 
-          <div className="result-action-grid">
+          <div className={`result-action-grid ${uploadResult.status === 'partial' ? 'result-action-grid-priority' : ''}`}>
             {uploadResult.status !== 'ok' && file && (
-              <button className="result-action-card action-primary" onClick={openCorrectionWorkbench}>
+              <button className={`result-action-card action-primary ${uploadResult.status === 'partial' ? 'action-emphasis' : ''}`} onClick={openCorrectionWorkbench}>
                 <span className="result-action-title">미리보기에서 바로 수정</span>
                 <span className="result-action-desc">실패 행을 다시 불러와서 빨간 셀만 수정합니다.</span>
               </button>
@@ -400,6 +469,29 @@ const UserWorkbenchStep = ({
             </div>
           </div>
 
+          <div className="preflight-checklist-card">
+            <div className="preflight-checklist-head">
+              <div>
+                <div className="preflight-checklist-title">업로드 전 체크리스트</div>
+                <div className="preflight-checklist-desc">실행 전에 가장 자주 헷갈리는 지점을 빠르게 확인합니다.</div>
+              </div>
+              <div className={`preflight-checklist-summary ${checklistItems.every(item => item.ok) ? 'ok' : 'warn'}`}>
+                {checklistItems.filter(item => item.ok).length} / {checklistItems.length} 통과
+              </div>
+            </div>
+            <div className="preflight-checklist-grid">
+              {checklistItems.map(item => (
+                <div key={item.label} className={`preflight-check-item ${item.ok ? 'ok' : 'warn'}`}>
+                  <div className="preflight-check-icon">{item.ok ? '✓' : '!'}</div>
+                  <div>
+                    <div className="preflight-check-label">{item.label}</div>
+                    <div className="preflight-check-detail">{item.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {!hasFile ? (
             <div className="upload-workspace-grid workbench-grid-empty">
               <div className="workspace-card workspace-card-drop workspace-card-drop-focus">
@@ -501,8 +593,19 @@ const UserWorkbenchStep = ({
                     <>
                       <div className="workbench-toolbar">
                         <div className="workbench-toolbar-left">
+                          <label className="workbench-search">
+                            <span className="workbench-search-icon">⌕</span>
+                            <input
+                              value={previewSearchTerm}
+                              onChange={e => setPreviewSearchTerm(e.target.value)}
+                              placeholder="표에서 값 검색"
+                            />
+                          </label>
                           <button className={`inline-control-btn ${showOnlyFailedRows ? 'active' : ''}`} onClick={() => setShowOnlyFailedRows(prev => !prev)} disabled={!hasKnownFailedRows}>
                             {showOnlyFailedRows ? '전체 행 보기' : '오류 행만 보기'}
+                          </button>
+                          <button className={`inline-control-btn ${showErrorColumnsOnly ? 'active' : ''}`} onClick={() => setShowErrorColumnsOnly(prev => !prev)} disabled={failedColumnIndexSet.size === 0}>
+                            {showErrorColumnsOnly ? '전체 컬럼 보기' : '오류 컬럼만 보기'}
                           </button>
                           {editedRowCount > 0 && <button className="inline-control-btn" onClick={() => setEditedCells({})}>수정한 행 초기화</button>}
                         </div>
@@ -517,10 +620,14 @@ const UserWorkbenchStep = ({
                         )}
                       </div>
 
-                      {showOnlyFailedRows && filteredPreviewData.length === 0 && hasKnownFailedRows && (
+                      {filteredPreviewData.length === 0 && (showOnlyFailedRows || searchKeyword) && (
                         <div className="table-empty-state">
-                          <div className="table-empty-title">현재 페이지에는 오류 행이 없습니다.</div>
-                          <div className="table-empty-desc">다음 오류 버튼을 누르면 오류가 있는 페이지로 바로 이동할 수 있습니다.</div>
+                          <div className="table-empty-title">
+                            {searchKeyword ? '검색 조건에 맞는 행이 없습니다.' : '현재 페이지에는 오류 행이 없습니다.'}
+                          </div>
+                          <div className="table-empty-desc">
+                            {searchKeyword ? '검색어를 지우거나 전체 컬럼 보기로 바꿔 다시 확인해 주세요.' : '다음 오류 버튼을 누르면 오류가 있는 페이지로 바로 이동할 수 있습니다.'}
+                          </div>
                         </div>
                       )}
 
@@ -530,7 +637,7 @@ const UserWorkbenchStep = ({
                           <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                             <tr>
                               <th style={{ width: '46px', textAlign: 'center', color: '#8b95a1', background: '#f2f4f6' }}>No.</th>
-                              {excelHeaders.map((h, i) => <th key={i}>{h.label}</th>)}
+                              {visibleColumnIndexes.map(i => <th key={i}>{excelHeaders[i].label}</th>)}
                             </tr>
                           </thead>
                           <tbody>
@@ -554,7 +661,7 @@ const UserWorkbenchStep = ({
                                       {!isCurrentError && isFailed && <span style={{ display: 'block', fontSize: '0.65rem', color: '#e11d48' }}>❌</span>}
                                       {!isFailed && isEdited && <span style={{ color: '#e67e22' }}>✏</span>}
                                     </td>
-                                    {excelHeaders.map((_, cIdx) => {
+                                    {visibleColumnIndexes.map((cIdx) => {
                                       const orig = Array.isArray(row) ? (row[cIdx] || '') : (row[String(cIdx)] || '');
                                       const disp = rowEdits[cIdx] !== undefined ? rowEdits[cIdx] : orig;
                                       const isCE = rowEdits[cIdx] !== undefined && rowEdits[cIdx] !== orig;
@@ -590,7 +697,7 @@ const UserWorkbenchStep = ({
                                   {isFailed && (
                                     <tr style={{ background: '#fff1f2' }}>
                                       <td style={{ background: '#fee2e2', borderRight: '1px solid #fecdd3', borderBottom: '2px solid #fca5a5' }} />
-                                      <td colSpan={excelHeaders.length} style={{ padding: '5px 10px 7px', borderBottom: '2px solid #fca5a5', background: '#fff1f2' }}>
+                                      <td colSpan={visibleColumnIndexes.length} style={{ padding: '5px 10px 7px', borderBottom: '2px solid #fca5a5', background: '#fff1f2' }}>
                                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
                                           <span style={{ background: '#fee2e2', color: '#e11d48', fontWeight: 700, fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>
                                             ❌ {friendlyMsg}

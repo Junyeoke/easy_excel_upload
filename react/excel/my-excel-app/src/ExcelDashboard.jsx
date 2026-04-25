@@ -1,478 +1,450 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
 
-const API_URL = "/api/excel/engine";
+const API_URL = '/api/excel/engine';
 
-// ── 공통 fetch 래퍼 (form-urlencoded 방식 - 멀티파트 파싱 오류 방지) ──
 const post = async (params) => {
   const body = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => body.append(k, v));
   const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
-  const csrfToken  = document.querySelector("meta[name='_csrf']")?.getAttribute("content");
-  const csrfHeader = document.querySelector("meta[name='_csrf_header']")?.getAttribute("content");
+  const csrfToken = document.querySelector("meta[name='_csrf']")?.getAttribute('content');
+  const csrfHeader = document.querySelector("meta[name='_csrf_header']")?.getAttribute('content');
   if (csrfToken && csrfHeader) headers[csrfHeader] = csrfToken;
+
   try {
     const res = await fetch(API_URL, { method: 'POST', headers, body });
     const txt = await res.text();
     const cleaned = txt.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, (c) =>
-      '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')
+      `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`
     );
     return JSON.parse(cleaned);
   } catch (e) {
-    console.error('[Dashboard] fetch/JSON 오류:', e);
     return { status: 'err', msg: e.message };
   }
 };
 
-// ── 숫자 포맷 ─────────────────────────────────────────────────
 const fmt = (n) => (n ?? 0).toLocaleString();
-const pct = (s, f) => { const t = (s ?? 0) + (f ?? 0); return t === 0 ? '0' : ((s / t) * 100).toFixed(1); };
-
-// ── 날짜 포맷 ─────────────────────────────────────────────────
-const fmtDate = (str) => {
-  if (!str || str === 'null') return '-';
-  return str.substring(0, 16).replace('T', ' ');
+const rate = (success, fail) => {
+  const total = (success ?? 0) + (fail ?? 0);
+  return total === 0 ? '0.0' : ((success / total) * 100).toFixed(1);
 };
-const fmtDateShort = (str) => {
-  if (!str || str === 'null') return '';
-  return str.substring(5, 10); // MM-DD
-};
+const dt = (raw) => (!raw || raw === 'null' ? '-' : raw.substring(0, 16).replace('T', ' '));
+const dtShort = (raw) => (!raw || raw === 'null' ? '-' : raw.substring(5, 10));
 
-// ── 커스텀 툴팁 ───────────────────────────────────────────────
-const CustomTooltip = ({ active, payload, label }) => {
+const Stat = ({ label, value, desc }) => (
+  <div className="itsm-stat">
+    <div className="itsm-stat-label">{label}</div>
+    <div className="itsm-stat-value">{value}</div>
+    <div className="itsm-stat-desc">{desc}</div>
+  </div>
+);
+
+const LightTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{
-      background: '#0D1B2A', border: '1px solid #1E3A5F',
-      borderRadius: '8px', padding: '10px 14px', fontSize: '0.8rem'
-    }}>
-      <div style={{ color: '#64B5F6', marginBottom: '6px', fontWeight: 700 }}>{label}</div>
+    <div className="itsm-tip">
+      <div className="itsm-tip-title">{label}</div>
       {payload.map((p, i) => (
-        <div key={i} style={{ color: p.color, display: 'flex', gap: '8px', justifyContent: 'space-between' }}>
-          <span>{p.name}</span><span style={{ fontWeight: 700 }}>{fmt(p.value)}</span>
+        <div key={i} className="itsm-tip-row">
+          <span>{p.name}</span>
+          <strong>{fmt(p.value)}</strong>
         </div>
       ))}
     </div>
   );
 };
 
-// ── 통계 카드 ─────────────────────────────────────────────────
-const StatCard = ({ label, value, sub, color, icon }) => (
-  <div style={{
-    background: 'linear-gradient(135deg, #0D1B2A 0%, #112233 100%)',
-    border: `1px solid ${color}33`, borderRadius: '12px',
-    padding: '20px 24px', position: 'relative', overflow: 'hidden'
-  }}>
-    <div style={{
-      position: 'absolute', right: '-10px', top: '-10px',
-      fontSize: '4rem', opacity: 0.07, userSelect: 'none'
-    }}>{icon}</div>
-    <div style={{ fontSize: '0.72rem', color: '#64748b', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '8px' }}>{label}</div>
-    <div style={{ fontSize: '2rem', fontWeight: 800, color, fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1 }}>{value}</div>
-    {sub && <div style={{ fontSize: '0.75rem', color: '#475569', marginTop: '6px' }}>{sub}</div>}
-  </div>
-);
-
-// ══════════════════════════════════════════════════════════════
-// 메인 대시보드 컴포넌트
-// ══════════════════════════════════════════════════════════════
 export default function ExcelDashboard() {
-  const [loaders, setLoaders]     = useState([]);
-  const [history, setHistory]     = useState([]);
-  const [selected, setSelected]   = useState(null);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState(null);
-  const [actionMsg, setActionMsg] = useState(null); // { type: 'ok'|'err', text: string }
+  const [loaders, setLoaders] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [actionMsg, setActionMsg] = useState(null);
+  const [loaderQuery, setLoaderQuery] = useState('');
 
-  // ── 테스트 사용자 여부 (emp_test_yn === 1 이면 설정 열기 버튼 표시) ──
   const isTestUser = (() => {
-    try { return opener?.$egene?._user?.emp_test_yn == 1; }
-    catch { return false; }
+    try {
+      return opener?.$egene?._user?.emp_test_yn == 1;
+    } catch {
+      return false;
+    }
   })();
 
-  // ── 초기 데이터 로드 ────────────────────────────────────────
+  const loadAll = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [listRes, histRes] = await Promise.all([post({ mode: 'get_list' }), post({ mode: 'get_history' })]);
+      const loaderList = Array.isArray(listRes.list) ? listRes.list : [];
+      const histList = Array.isArray(histRes.list) ? histRes.list : [];
+
+      if (listRes.status === 'err') setError(listRes.msg || '로더 목록 조회 실패');
+
+      setLoaders(loaderList);
+      setHistory(histList);
+      setSelected((prev) => loaderList.find((l) => l.upload_id === prev?.upload_id) || loaderList[0] || null);
+    } catch (e) {
+      setError(`데이터 로드 중 오류: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const [listRes, histRes] = await Promise.all([
-          post({ mode: 'get_list' }),
-          post({ mode: 'get_history' }),
-        ]);
-
-        if (listRes.status === 'err') {
-          setError('로더 목록을 불러오는데 실패했습니다: ' + (listRes.msg || '서버 오류'));
-        }
-
-        const loaderList = Array.isArray(listRes.list) ? listRes.list : [];
-        const histList   = Array.isArray(histRes.list) ? histRes.list : [];
-        setLoaders(loaderList);
-        setHistory(histList);
-        if (loaderList.length > 0) setSelected(loaderList[0]);
-      } catch (e) {
-        console.error('[Dashboard] 초기 로드 오류:', e);
-        setError('데이터 로드 중 오류가 발생했습니다: ' + e.message);
-      } finally {
-        setLoading(false);
-      }
-    })();
+    loadAll();
   }, []);
 
-  // ── 선택된 로더의 이력 필터링 ───────────────────────────────
-  const filteredHistory = selected
-    ? history.filter(h => h.job_name === selected.job_name)
-    : [];
+  const filteredLoaders = useMemo(() => {
+    const q = loaderQuery.trim().toLowerCase();
+    if (!q) return loaders;
+    return loaders.filter((l) =>
+      [l.job_name || '', l.upload_id || ''].join(' ').toLowerCase().includes(q)
+    );
+  }, [loaders, loaderQuery]);
 
-  // ── 통계 계산 ───────────────────────────────────────────────
-  const totalSuccess = filteredHistory.reduce((a, h) => a + (h.success_cnt ?? 0), 0);
-  const totalFail    = filteredHistory.reduce((a, h) => a + (h.fail_cnt    ?? 0), 0);
-  const totalRuns    = filteredHistory.length;
-  const successRate  = pct(totalSuccess, totalFail);
-  const lastRun      = filteredHistory[0]?.reg_dttm ?? null;
+  const selectedHistory = useMemo(
+    () => (selected ? history.filter((h) => h.job_name === selected.job_name) : []),
+    [history, selected]
+  );
 
-  // ── 차트 데이터 ─────────────────────────────────────────────
-  const timelineData = [...filteredHistory]
-    .slice(0, 15).reverse()
+  const totalSuccess = selectedHistory.reduce((a, h) => a + (h.success_cnt ?? 0), 0);
+  const totalFail = selectedHistory.reduce((a, h) => a + (h.fail_cnt ?? 0), 0);
+  const totalRuns = selectedHistory.length;
+  const successPct = rate(totalSuccess, totalFail);
+
+  const timelineData = [...selectedHistory]
+    .slice(0, 15)
+    .reverse()
     .map((h, i) => ({
-      name: fmtDateShort(h.reg_dttm) || `#${i + 1}`,
+      label: dtShort(h.reg_dttm) || `#${i + 1}`,
       성공: h.success_cnt ?? 0,
       실패: h.fail_cnt ?? 0,
     }));
 
-  const pieData = [
-    { name: '성공', value: totalSuccess, color: '#10B981' },
-    { name: '실패', value: totalFail,    color: '#EF4444' },
-  ].filter(d => d.value > 0);
+  const ratioData = [
+    { name: '성공', value: totalSuccess, color: '#16a34a' },
+    { name: '실패', value: totalFail, color: '#dc2626' },
+  ].filter((d) => d.value > 0);
 
-  const loaderBarData = loaders.map(l => ({
-    name: l.job_name?.length > 10 ? l.job_name.substring(0, 10) + '…' : (l.job_name ?? '-'),
-    fullName: l.job_name,
-    횟수: history.filter(h => h.job_name === l.job_name).length,
-  })).sort((a, b) => b.횟수 - a.횟수).slice(0, 8);
+  const topLoaderData = useMemo(
+    () =>
+      loaders
+        .map((l) => ({
+          name: (l.job_name || '-').length > 12 ? `${(l.job_name || '-').substring(0, 12)}…` : (l.job_name || '-'),
+          fullName: l.job_name || '-',
+          횟수: history.filter((h) => h.job_name === l.job_name).length,
+        }))
+        .sort((a, b) => b.횟수 - a.횟수)
+        .slice(0, 8),
+    [history, loaders]
+  );
 
-  const handleDeleteLoader = async (loader) => {
-    if (!window.confirm(`"${loader.job_name}" 로더를 삭제하시겠습니까?\n삭제 후 복구할 수 없습니다.`)) return;
-    setActionMsg(null);
-    const res = await post({ mode: 'delete', upload_id: loader.upload_id });
-    if (res.status === 'ok') {
-      const newLoaders = loaders.filter(l => l.upload_id !== loader.upload_id);
-      setLoaders(newLoaders);
-      setSelected(newLoaders.length > 0 ? newLoaders[0] : null);
-      setActionMsg({ type: 'ok', text: `"${loader.job_name}" 삭제 완료` });
-    } else {
-      setActionMsg({ type: 'err', text: '삭제 실패: ' + (res.msg || '서버 오류') });
-    }
+  const notify = (type, text) => {
+    setActionMsg({ type, text });
     setTimeout(() => setActionMsg(null), 3000);
   };
 
+  const handleDeleteLoader = async (loader) => {
+    if (!window.confirm(`"${loader.job_name}" 로더를 삭제하시겠습니까?\n삭제 후 복구할 수 없습니다.`)) return;
+    const res = await post({ mode: 'delete', upload_id: loader.upload_id });
+    if (res.status === 'ok') {
+      notify('ok', `"${loader.job_name}" 삭제 완료`);
+      await loadAll();
+      return;
+    }
+    notify('err', `삭제 실패: ${res.msg || '서버 오류'}`);
+  };
+
   const handleCloneLoader = async (loader) => {
-    setActionMsg(null);
     const res = await post({ mode: 'clone', upload_id: loader.upload_id });
     if (res.status === 'ok') {
-      setActionMsg({ type: 'ok', text: `"${loader.job_name}" 복제 완료! 편집 화면으로 이동합니다.` });
-      setTimeout(() => { window.location.href = `?admin=true&upload_id=${res.new_upload_id}`; }, 1500);
-    } else {
-      setActionMsg({ type: 'err', text: '복제 실패: ' + (res.msg || '서버 오류') });
-      setTimeout(() => setActionMsg(null), 3000);
+      notify('ok', `"${loader.job_name}" 복제 완료`);
+      setTimeout(() => {
+        window.location.href = `?admin=true&upload_id=${res.new_upload_id}`;
+      }, 1000);
+      return;
     }
-  };
-
-  const goToLoader = (loader) => {
-    window.location.href = `?admin=true&upload_id=${loader.upload_id}`;
-  };
-
-  const goToUpload = (loader) => {
-    window.location.href = `?upload_id=${loader.upload_id}`;
-  };
-
-  const cardStyle = {
-    background: 'linear-gradient(135deg, #0D1B2A 0%, #0F2236 100%)',
-    border: '1px solid #1E3A5F',
-    borderRadius: '14px',
-    padding: '20px 24px',
+    notify('err', `복제 실패: ${res.msg || '서버 오류'}`);
   };
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: '#060D17',
-      color: '#CBD5E1',
-      fontFamily: "'DM Sans', 'Noto Sans KR', sans-serif",
-      padding: '0',
-    }}>
+    <div className="itsm-wrap">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap');
         * { box-sizing: border-box; }
-        .loader-card {
-          cursor: pointer; border-radius: 10px; padding: 14px 18px;
-          border: 1px solid transparent; transition: all 0.18s ease;
-          background: transparent; text-align: left; width: 100%;
+        .itsm-wrap { min-height: 100vh; background: #f4f6f8; color: #1f2937; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; }
+        .itsm-header { height: 64px; background: #fff; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+        .itsm-head-title { font-size: 18px; font-weight: 700; color: #111827; }
+        .itsm-head-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+        .itsm-top-actions { display: flex; gap: 8px; align-items: center; }
+        .itsm-btn { border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #374151; height: 34px; padding: 0 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .itsm-btn.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+        .itsm-layout { height: calc(100vh - 64px); display: grid; grid-template-columns: 290px 1fr; }
+        .itsm-side { border-right: 1px solid #e5e7eb; background: #fff; display: flex; flex-direction: column; }
+        .itsm-side-head { padding: 14px; border-bottom: 1px solid #f0f2f4; display: flex; flex-direction: column; gap: 8px; }
+        .itsm-side-title { font-size: 12px; font-weight: 700; color: #4b5563; text-transform: uppercase; letter-spacing: .04em; }
+        .itsm-search { width: 100%; height: 34px; border: 1px solid #d1d5db; border-radius: 6px; padding: 0 10px; font-size: 13px; }
+        .itsm-alert { margin: 10px 14px 0; border: 1px solid; border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.5; }
+        .itsm-alert.ok { background: #f0fdf4; border-color: #86efac; color: #166534; }
+        .itsm-alert.err { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+        .itsm-loader-list { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+        .itsm-loader-item { border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; cursor: pointer; background: #fff; }
+        .itsm-loader-item:hover { border-color: #9ca3af; }
+        .itsm-loader-item.active { border-color: #2563eb; background: #eff6ff; }
+        .itsm-loader-title { font-size: 13px; font-weight: 700; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .itsm-loader-meta { margin-top: 3px; font-size: 11px; color: #6b7280; }
+        .itsm-loader-actions { display: flex; gap: 6px; margin-top: 8px; }
+        .itsm-mini-btn { flex: 1; height: 26px; border-radius: 5px; border: 1px solid #d1d5db; background: #fff; font-size: 11px; color: #374151; cursor: pointer; }
+        .itsm-mini-btn.danger { color: #b91c1c; border-color: #fecaca; background: #fff5f5; }
+        .itsm-main { overflow-y: auto; padding: 18px; }
+        .itsm-empty { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 60px 20px; text-align: center; color: #6b7280; font-size: 14px; }
+        .itsm-panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; }
+        .itsm-main-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; gap: 10px; }
+        .itsm-main-title { font-size: 20px; font-weight: 700; color: #111827; line-height: 1.3; }
+        .itsm-main-meta { margin-top: 4px; font-size: 12px; color: #6b7280; }
+        .itsm-head-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+        .itsm-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+        .itsm-stat { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #fff; min-height: 96px; display: flex; flex-direction: column; justify-content: space-between; }
+        .itsm-stat-label { font-size: 12px; color: #6b7280; }
+        .itsm-stat-value { font-size: 24px; font-weight: 700; color: #111827; line-height: 1.1; }
+        .itsm-stat-desc { font-size: 12px; color: #6b7280; }
+        .itsm-grid-2 { display: grid; grid-template-columns: 1fr 340px; gap: 10px; margin-bottom: 10px; }
+        .itsm-chart-title { font-size: 13px; font-weight: 700; color: #374151; margin-bottom: 8px; }
+        .itsm-tip { background: #fff; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 10px; font-size: 12px; }
+        .itsm-tip-title { font-weight: 700; margin-bottom: 6px; color: #111827; }
+        .itsm-tip-row { display: flex; justify-content: space-between; gap: 8px; color: #4b5563; }
+        .itsm-table-head { display: grid; grid-template-columns: 1fr 84px 84px 100px; gap: 8px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; font-weight: 700; }
+        .itsm-table-body { max-height: 320px; overflow-y: auto; }
+        .itsm-row { display: grid; grid-template-columns: 1fr 84px 84px 100px; gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid #f3f4f6; }
+        .itsm-file { font-size: 13px; color: #1f2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .itsm-time { margin-top: 3px; font-size: 11px; color: #6b7280; }
+        .itsm-badge { display: inline-flex; justify-content: center; min-width: 58px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+        .itsm-badge.ok { background: #dcfce7; color: #166534; }
+        .itsm-badge.err { background: #fee2e2; color: #991b1b; }
+        .itsm-link { font-size: 12px; color: #2563eb; text-decoration: none; font-weight: 600; }
+        .itsm-placeholder { color: #9ca3af; font-size: 12px; }
+        @media (max-width: 1280px) {
+          .itsm-layout { grid-template-columns: 250px 1fr; }
+          .itsm-stats { grid-template-columns: repeat(2, 1fr); }
+          .itsm-grid-2 { grid-template-columns: 1fr; }
         }
-        .loader-card:hover { background: #0D1B2A; border-color: #1E3A5F; }
-        .loader-card.active { background: #0F2A47; border-color: #1976D2; box-shadow: 0 0 0 1px #1976D222; }
-        .loader-card .loader-name { font-size: 0.88rem; font-weight: 700; color: #E2E8F0; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .loader-card.active .loader-name { color: #64B5F6; }
-        .loader-card .loader-meta { font-size: 0.72rem; color: #475569; }
-        .hist-row { display: grid; grid-template-columns: 1fr 80px 80px 100px; gap: 8px; padding: 10px 0; border-bottom: 1px solid #1E3A5F22; align-items: center; font-size: 0.82rem; }
-        .hist-row:last-child { border-bottom: none; }
-        .badge-success { background: #10B98122; color: #10B981; border: 1px solid #10B98133; padding: 2px 8px; border-radius: 20px; font-size: 0.72rem; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
-        .badge-fail { background: #EF444422; color: #EF4444; border: 1px solid #EF444433; padding: 2px 8px; border-radius: 20px; font-size: 0.72rem; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
-        .go-btn { background: none; border: 1px solid #1976D2; color: #64B5F6; border-radius: 6px; padding: 3px 10px; font-size: 0.72rem; cursor: pointer; font-family: inherit; transition: all 0.15s; }
-        .go-btn:hover { background: #1976D2; color: white; }
-        .section-title { font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: #475569; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
-        .section-title::after { content: ''; flex: 1; height: 1px; background: #1E3A5F; }
-        ::-webkit-scrollbar { width: 4px; height: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #1E3A5F; border-radius: 4px; }
       `}</style>
 
-      {/* ── 헤더 ── */}
-      <div style={{ borderBottom: '1px solid #1E3A5F', padding: '16px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#08111C' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ width: '36px', height: '36px', background: 'linear-gradient(135deg, #1976D2, #0D47A1)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', boxShadow: '0 0 16px #1976D244' }}>📊</div>
-          <div>
-            <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#E2E8F0', letterSpacing: '-0.3px' }}>Excel Loader Dashboard</div>
-            <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '1px' }}>업로드 현황 모니터링</div>
+      <header className="itsm-header">
+        <div>
+          <div className="itsm-head-title">Excel Loader 운영 대시보드</div>
+          <div className="itsm-head-sub">ITSM 배치 업로드 현황 모니터링</div>
+        </div>
+        <div className="itsm-top-actions">
+          <span style={{ fontSize: 12, color: '#6b7280' }}>로더 {fmt(loaders.length)}개 / 실행 {fmt(history.length)}회</span>
+          <button className="itsm-btn primary" onClick={() => (window.location.href = '?admin=true')}>+ 새 로더</button>
+        </div>
+      </header>
+
+      <section className="itsm-layout">
+        <aside className="itsm-side">
+          <div className="itsm-side-head">
+            <div className="itsm-side-title">로더 목록</div>
+            <input
+              className="itsm-search"
+              value={loaderQuery}
+              onChange={(e) => setLoaderQuery(e.target.value)}
+              placeholder="작업명 또는 ID 검색"
+            />
           </div>
-        </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.72rem', color: '#475569' }}>로더 {loaders.length}개 · 총 {history.length}회 실행</span>
-          <button onClick={() => window.location.href = '?admin=true'} style={{ background: '#1976D2', color: 'white', border: 'none', borderRadius: '7px', padding: '7px 16px', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>+ 새 로더 생성</button>
-        </div>
-      </div>
 
-      {/* ── 본문 레이아웃 ── */}
-      <div style={{ display: 'flex', height: 'calc(100vh - 69px)' }}>
-
-        {/* ── 좌측 사이드바 ── */}
-        <div style={{ width: '260px', flexShrink: 0, borderRight: '1px solid #1E3A5F', overflowY: 'auto', background: '#08111C', padding: '20px 12px' }}>
-          <div className="section-title">로더 목록</div>
-
-          {/* 액션 메시지 배너 */}
           {actionMsg && (
-            <div style={{ background: actionMsg.type === 'ok' ? '#0A2A1A' : '#1A0A0A', border: `1px solid ${actionMsg.type === 'ok' ? '#10B98144' : '#EF444444'}`, borderRadius: '8px', padding: '8px 12px', marginBottom: '10px', fontSize: '0.75rem', color: actionMsg.type === 'ok' ? '#10B981' : '#EF4444', lineHeight: 1.5 }}>
-              {actionMsg.type === 'ok' ? '✅ ' : '❌ '}{actionMsg.text}
+            <div className={`itsm-alert ${actionMsg.type}`}>
+              {actionMsg.type === 'ok' ? '완료: ' : '오류: '}
+              {actionMsg.text}
             </div>
           )}
+          {error && <div className="itsm-alert err">{error}</div>}
 
-          {/* 에러 배너 */}
-          {error && (
-            <div style={{ background: '#1A0A0A', border: '1px solid #EF444444', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px', fontSize: '0.75rem', color: '#EF4444', lineHeight: 1.5 }}>
-              ⚠️ {error}
-              <div style={{ marginTop: '6px' }}>
-                <button onClick={() => window.location.reload()} style={{ background: '#EF4444', color: 'white', border: 'none', borderRadius: '5px', padding: '3px 10px', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit' }}>새로고침</button>
-              </div>
-            </div>
-          )}
+          <div className="itsm-loader-list">
+            {loading ? (
+              <div className="itsm-empty" style={{ padding: 40 }}>로딩 중...</div>
+            ) : filteredLoaders.length === 0 ? (
+              <div className="itsm-empty" style={{ padding: 40 }}>조회된 로더가 없습니다.</div>
+            ) : (
+              filteredLoaders.map((loader) => {
+                const runCount = history.filter((h) => h.job_name === loader.job_name).length;
+                const active = selected?.upload_id === loader.upload_id;
+                return (
+                  <div key={loader.upload_id} className={`itsm-loader-item ${active ? 'active' : ''}`} onClick={() => setSelected(loader)}>
+                    <div className="itsm-loader-title">{loader.job_name || '(이름 없음)'}</div>
+                    <div className="itsm-loader-meta">실행 {fmt(runCount)}회</div>
+                    <div className="itsm-loader-meta">등록 {dt(loader.reg_dttm)}</div>
+                    <div className="itsm-loader-meta">ID {loader.upload_id?.substring(0, 14)}...</div>
+                    <div className="itsm-loader-actions" onClick={(e) => e.stopPropagation()}>
+                      <button className="itsm-mini-btn" onClick={() => handleCloneLoader(loader)}>복제</button>
+                      <button className="itsm-mini-btn danger" onClick={() => handleDeleteLoader(loader)}>삭제</button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </aside>
 
-          {loading ? (
-            <div style={{ color: '#475569', fontSize: '0.8rem', textAlign: 'center', padding: '30px 0' }}>
-              <div style={{ fontSize: '1.5rem', marginBottom: '8px', opacity: 0.5 }}>⏳</div>
-              로딩 중...
-            </div>
-          ) : loaders.length === 0 ? (
-            <div style={{ color: '#475569', fontSize: '0.8rem', textAlign: 'center', padding: '30px 0' }}>
-              <div style={{ fontSize: '1.5rem', marginBottom: '8px', opacity: 0.3 }}>📂</div>
-              등록된 로더가 없습니다.
-              <div style={{ marginTop: '10px' }}>
-                <button onClick={() => window.location.href = '?admin=true'} style={{ background: '#1976D2', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 12px', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>+ 새 로더 생성</button>
-              </div>
-            </div>
-          ) : loaders.map(loader => {
-            const runCount = history.filter(h => h.job_name === loader.job_name).length;
-            const isActive = selected?.upload_id === loader.upload_id;
-            return (
-              <button key={loader.upload_id} className={`loader-card ${isActive ? 'active' : ''}`} onClick={() => setSelected(loader)}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
-                  <div className="loader-name">{loader.job_name || '(이름 없음)'}</div>
-                  {runCount > 0 && (
-                    <span style={{ background: '#1E3A5F', color: '#64B5F6', fontSize: '0.65rem', fontWeight: 700, padding: '1px 6px', borderRadius: '10px', flexShrink: 0, fontFamily: 'IBM Plex Mono, monospace' }}>{runCount}</span>
-                  )}
-                </div>
-                <div className="loader-meta">ID: {loader.upload_id?.substring(0, 12)}…</div>
-                <div className="loader-meta" style={{ marginTop: '2px' }}>{fmtDate(loader.reg_dttm)}</div>
-                {/* 복제 / 삭제 버튼 — 호버 시 표시 */}
-                <div className="loader-actions" style={{ display: 'flex', gap: '4px', marginTop: '8px' }} onClick={e => e.stopPropagation()}>
-                  <button
-                    onClick={() => handleCloneLoader(loader)}
-                    style={{ flex: 1, padding: '3px 0', borderRadius: '5px', border: '1px solid #1E3A5F', background: 'transparent', color: '#64B5F6', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, transition: 'all 0.15s' }}
-                    onMouseEnter={e => { e.currentTarget.style.background = '#1E3A5F'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                  >📋 복제</button>
-                  <button
-                    onClick={() => handleDeleteLoader(loader)}
-                    style={{ flex: 1, padding: '3px 0', borderRadius: '5px', border: '1px solid #3A1E1E', background: 'transparent', color: '#EF4444', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, transition: 'all 0.15s' }}
-                    onMouseEnter={e => { e.currentTarget.style.background = '#3A1E1E'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                  >🗑️ 삭제</button>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* ── 우측 메인 ── */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px' }}>
+        <main className="itsm-main">
           {!selected ? (
-            <div style={{ textAlign: 'center', padding: '80px 0', color: '#475569' }}>
-              <div style={{ fontSize: '3rem', marginBottom: '12px', opacity: 0.3 }}>📂</div>
-              <div>좌측에서 로더를 선택하세요.</div>
-            </div>
+            <div className="itsm-empty">좌측에서 로더를 선택하세요.</div>
           ) : (
             <>
-              {/* 로더 헤더 */}
-              <div style={{ marginBottom: '28px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                    <div style={{ fontSize: '1.7rem', fontWeight: 800, color: '#E2E8F0', letterSpacing: '-0.5px', lineHeight: 1.2 }}>
-                      {selected.job_name || '(이름 없음)'}
-                    </div>
-                    {/* 설정 열기 버튼 — emp_test_yn === 1 인 경우에만 표시 */}
+              <div className="itsm-panel" style={{ marginBottom: 10 }}>
+                <div className="itsm-main-head">
+                  <div>
+                    <div className="itsm-main-title">{selected.job_name || '(이름 없음)'}</div>
+                    <div className="itsm-main-meta">로더 ID: {selected.upload_id}</div>
+                    <div className="itsm-main-meta">최근 실행: {dt(selectedHistory[0]?.reg_dttm)}</div>
+                  </div>
+                  <div className="itsm-head-actions">
                     {isTestUser && (
-                      <button
-                        onClick={() => goToLoader(selected)}
-                        style={{ background: 'none', border: '1px solid #1976D2', borderRadius: '6px', padding: '4px 12px', cursor: 'pointer', color: '#1976D2', fontSize: '0.85rem', fontWeight: 600, fontFamily: 'inherit', transition: 'all 0.15s', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        onMouseEnter={e => { e.currentTarget.style.background = '#1976D2'; e.currentTarget.style.color = 'white'; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#1976D2'; }}
-                      >
-                        ⚙ 설정 열기
+                      <button className="itsm-btn" onClick={() => (window.location.href = `?admin=true&upload_id=${selected.upload_id}`)}>
+                        설정 열기
                       </button>
                     )}
-                    {/* 업로드 화면 버튼 */}
-                    <button
-                      onClick={() => goToUpload(selected)}
-                      style={{ background: 'none', border: '1px solid #10B981', borderRadius: '6px', padding: '4px 12px', cursor: 'pointer', color: '#10B981', fontSize: '0.85rem', fontWeight: 600, fontFamily: 'inherit', transition: 'all 0.15s', display: 'flex', alignItems: 'center', gap: '4px' }}
-                      onMouseEnter={e => { e.currentTarget.style.background = '#10B981'; e.currentTarget.style.color = 'white'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#10B981'; }}
-                    >
-                      📤 업로드 화면
+                    <button className="itsm-btn" onClick={() => (window.location.href = `?upload_id=${selected.upload_id}`)}>
+                      업로드 화면
                     </button>
                   </div>
-                  <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: '6px', fontFamily: 'IBM Plex Mono, monospace' }}>ID: {selected.upload_id}</div>
-                </div>
-                <div style={{ fontSize: '0.75rem', color: '#475569', textAlign: 'right' }}>
-                  <div>최근 실행</div>
-                  <div style={{ color: '#94A3B8', fontFamily: 'IBM Plex Mono, monospace', marginTop: '2px' }}>{fmtDate(lastRun) || '없음'}</div>
                 </div>
               </div>
 
-              {/* 통계 카드 4개 */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '24px' }}>
-                <StatCard label="총 실행 횟수"  value={fmt(totalRuns)}    sub="업로드 시도"           color="#64B5F6" icon="🔄" />
-                <StatCard label="성공 건수"     value={fmt(totalSuccess)} sub="누적 처리 완료"        color="#10B981" icon="✅" />
-                <StatCard label="실패 건수"     value={fmt(totalFail)}    sub="오류 발생"            color="#EF4444" icon="❌" />
-                <StatCard label="성공률"        value={`${successRate}%`} sub={`${totalRuns}회 기준`} color="#F59E0B" icon="📈" />
+              <div className="itsm-stats">
+                <Stat label="총 실행 횟수" value={fmt(totalRuns)} desc="선택 로더 기준" />
+                <Stat label="성공 건수" value={fmt(totalSuccess)} desc="누적 성공 처리" />
+                <Stat label="실패 건수" value={fmt(totalFail)} desc="오류 발생 건수" />
+                <Stat label="성공률" value={`${successPct}%`} desc="성공/(성공+실패)" />
               </div>
 
-              {/* 차트 2열 */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', marginBottom: '20px' }}>
-                <div style={cardStyle}>
-                  <div className="section-title">최근 업로드 추이 (최대 15회)</div>
+              <div className="itsm-grid-2">
+                <div className="itsm-panel">
+                  <div className="itsm-chart-title">최근 실행 추이 (최대 15회)</div>
                   {timelineData.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: '#475569', padding: '40px 0', fontSize: '0.85rem' }}>업로드 이력이 없습니다.</div>
+                    <div className="itsm-empty" style={{ padding: 30 }}>이력이 없습니다.</div>
                   ) : (
-                    <ResponsiveContainer width="100%" height={200}>
-                      <AreaChart data={timelineData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <AreaChart data={timelineData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                         <defs>
-                          <linearGradient id="gSuccess" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%"  stopColor="#10B981" stopOpacity={0.3} />
-                            <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
+                          <linearGradient id="okFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#16a34a" stopOpacity={0.25} />
+                            <stop offset="95%" stopColor="#16a34a" stopOpacity={0.02} />
                           </linearGradient>
-                          <linearGradient id="gFail" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%"  stopColor="#EF4444" stopOpacity={0.3} />
-                            <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
+                          <linearGradient id="errFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#dc2626" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#dc2626" stopOpacity={0.02} />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1E3A5F" />
-                        <XAxis dataKey="name" tick={{ fill: '#475569', fontSize: 11 }} axisLine={false} tickLine={false} />
-                        <YAxis tick={{ fill: '#475569', fontSize: 11 }} axisLine={false} tickLine={false} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Area type="monotone" dataKey="성공" stroke="#10B981" fill="url(#gSuccess)" strokeWidth={2} />
-                        <Area type="monotone" dataKey="실패" stroke="#EF4444" fill="url(#gFail)"    strokeWidth={2} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="label" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
+                        <Tooltip content={<LightTooltip />} />
+                        <Area type="monotone" dataKey="성공" stroke="#16a34a" strokeWidth={2} fill="url(#okFill)" />
+                        <Area type="monotone" dataKey="실패" stroke="#dc2626" strokeWidth={2} fill="url(#errFill)" />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
                 </div>
-                <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                  <div className="section-title" style={{ width: '100%' }}>성공 / 실패 비율</div>
-                  {pieData.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: '#475569', padding: '30px 0', fontSize: '0.85rem' }}>데이터 없음</div>
+
+                <div className="itsm-panel">
+                  <div className="itsm-chart-title">성공/실패 비율</div>
+                  {ratioData.length === 0 ? (
+                    <div className="itsm-empty" style={{ padding: 30 }}>이력이 없습니다.</div>
                   ) : (
-                    <ResponsiveContainer width="100%" height={180}>
-                      <PieChart>
-                        <Pie data={pieData} cx="50%" cy="50%" innerRadius={52} outerRadius={78} paddingAngle={3} dataKey="value">
-                          {pieData.map((entry, index) => <Cell key={index} fill={entry.color} />)}
-                        </Pie>
-                        <Tooltip formatter={(value, name) => [fmt(value) + '건', name]} contentStyle={{ background: '#0D1B2A', border: '1px solid #1E3A5F', borderRadius: '8px', fontSize: '0.8rem' }} itemStyle={{ color: '#CBD5E1' }} />
-                        <Legend formatter={(value) => <span style={{ color: '#94A3B8', fontSize: '0.78rem' }}>{value}</span>} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  )}
-                  {pieData.length > 0 && (
-                    <div style={{ textAlign: 'center', marginTop: '-8px' }}>
-                      <div style={{ fontSize: '1.6rem', fontWeight: 800, color: '#10B981', fontFamily: 'IBM Plex Mono, monospace' }}>{successRate}%</div>
-                      <div style={{ fontSize: '0.72rem', color: '#475569' }}>성공률</div>
-                    </div>
+                    <>
+                      <ResponsiveContainer width="100%" height={180}>
+                        <PieChart>
+                          <Pie data={ratioData} dataKey="value" cx="50%" cy="50%" innerRadius={50} outerRadius={72} paddingAngle={3}>
+                            {ratioData.map((d, i) => (
+                              <Cell key={i} fill={d.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(value, name) => [`${fmt(value)}건`, name]} />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div style={{ textAlign: 'center', marginTop: -6 }}>
+                        <div style={{ fontSize: 22, fontWeight: 700 }}>{successPct}%</div>
+                        <div style={{ fontSize: 12, color: '#6b7280' }}>성공률</div>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
 
-              {/* 로더별 실행 횟수 바 차트 */}
-              <div style={{ ...cardStyle, marginBottom: '20px' }}>
-                <div className="section-title">로더별 총 실행 횟수</div>
-                {loaderBarData.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: '#475569', padding: '30px 0', fontSize: '0.85rem' }}>데이터 없음</div>
+              <div className="itsm-panel" style={{ marginBottom: 10 }}>
+                <div className="itsm-chart-title">로더별 실행 빈도 (상위 8개)</div>
+                {topLoaderData.length === 0 ? (
+                  <div className="itsm-empty" style={{ padding: 30 }}>데이터가 없습니다.</div>
                 ) : (
-                  <ResponsiveContainer width="100%" height={160}>
-                    <BarChart data={loaderBarData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1E3A5F" />
-                      <XAxis dataKey="name" tick={{ fill: '#475569', fontSize: 11 }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fill: '#475569', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
-                      <Tooltip formatter={(value, name, props) => [value + '회', props.payload.fullName]} contentStyle={{ background: '#0D1B2A', border: '1px solid #1E3A5F', borderRadius: '8px', fontSize: '0.8rem' }} itemStyle={{ color: '#CBD5E1' }} />
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={topLoaderData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="name" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip formatter={(value, _n, p) => [`${value}회`, p.payload.fullName]} />
                       <Bar dataKey="횟수" radius={[4, 4, 0, 0]}>
-                        {loaderBarData.map((entry, index) => <Cell key={index} fill={entry.fullName === selected?.job_name ? '#1976D2' : '#1E3A5F'} />)}
+                        {topLoaderData.map((row, i) => (
+                          <Cell key={i} fill={row.fullName === selected.job_name ? '#2563eb' : '#93c5fd'} />
+                        ))}
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 )}
               </div>
 
-              {/* 상세 이력 테이블 */}
-              <div style={cardStyle}>
-                <div className="section-title">상세 업로드 이력</div>
-                {filteredHistory.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: '#475569', padding: '30px 0', fontSize: '0.85rem' }}>이 로더의 업로드 이력이 없습니다.</div>
+              <div className="itsm-panel">
+                <div className="itsm-chart-title">상세 실행 이력</div>
+                {selectedHistory.length === 0 ? (
+                  <div className="itsm-empty" style={{ padding: 30 }}>이 로더의 실행 이력이 없습니다.</div>
                 ) : (
                   <>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 100px', gap: '8px', padding: '6px 0 10px', borderBottom: '1px solid #1E3A5F', fontSize: '0.68rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
-                      <span>파일명 · 실행일시</span>
+                    <div className="itsm-table-head">
+                      <span>파일명 / 실행일시</span>
                       <span style={{ textAlign: 'center' }}>성공</span>
                       <span style={{ textAlign: 'center' }}>실패</span>
-                      <span style={{ textAlign: 'center' }}>오류 리포트</span>
+                      <span style={{ textAlign: 'center' }}>오류파일</span>
                     </div>
-                    <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                      {filteredHistory.map((h, i) => (
-                        <div key={i} className="hist-row">
+                    <div className="itsm-table-body">
+                      {selectedHistory.map((h, idx) => (
+                        <div className="itsm-row" key={idx}>
                           <div>
-                            <div style={{ fontSize: '0.82rem', color: '#CBD5E1', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.file_name || '-'}</div>
-                            <div style={{ fontSize: '0.7rem', color: '#475569', marginTop: '2px', fontFamily: 'IBM Plex Mono, monospace' }}>{fmtDate(h.reg_dttm)}</div>
+                            <div className="itsm-file">{h.file_name || '-'}</div>
+                            <div className="itsm-time">{dt(h.reg_dttm)}</div>
                           </div>
-                          <div style={{ textAlign: 'center' }}><span className="badge-success">{fmt(h.success_cnt)}</span></div>
                           <div style={{ textAlign: 'center' }}>
-                            {(h.fail_cnt ?? 0) > 0
-                              ? <span className="badge-fail">{fmt(h.fail_cnt)}</span>
-                              : <span style={{ color: '#475569', fontSize: '0.75rem' }}>0</span>
-                            }
+                            <span className="itsm-badge ok">{fmt(h.success_cnt)}</span>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            {(h.fail_cnt ?? 0) > 0 ? (
+                              <span className="itsm-badge err">{fmt(h.fail_cnt)}</span>
+                            ) : (
+                              <span className="itsm-placeholder">0</span>
+                            )}
                           </div>
                           <div style={{ textAlign: 'center' }}>
                             {h.error_file ? (
-                              <a href={`${API_URL}?mode=download_error&error_file=${h.error_file}`} style={{ color: '#F59E0B', fontSize: '0.72rem', textDecoration: 'none', fontWeight: 700 }}>📥 다운로드</a>
+                              <a className="itsm-link" href={`${API_URL}?mode=download_error&error_file=${h.error_file}`}>
+                                다운로드
+                              </a>
                             ) : (
-                              <span style={{ color: '#1E3A5F', fontSize: '0.72rem' }}>—</span>
+                              <span className="itsm-placeholder">-</span>
                             )}
                           </div>
                         </div>
@@ -483,8 +455,9 @@ export default function ExcelDashboard() {
               </div>
             </>
           )}
-        </div>
-      </div>
+        </main>
+      </section>
     </div>
   );
 }
+

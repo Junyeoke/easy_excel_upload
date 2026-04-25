@@ -149,6 +149,14 @@ const UserWorkbenchStep = ({
     setUploadResult(null);
   };
 
+  const sessionModeLabel = !hasFile
+    ? '새 업로드 시작'
+    : previewLoading
+      ? '파일 점검 중'
+      : hasKnownFailedRows || hasUnknownFailedRows
+        ? '오류 수정 작업'
+        : '업로드 실행 준비';
+
   return (
     <div className="wizard-panel">
       <div className="wizard-panel-title">📂 파일 업로드 작업대</div>
@@ -344,48 +352,57 @@ const UserWorkbenchStep = ({
         </div>
       ) : (
         <div className="upload-flow-stack">
-          <div className="upload-overview-grid">
-            <div className={`overview-card overview-card-${validationTone}`}>
-              <div className="overview-card-label">검증 상태</div>
-              <div className="overview-card-title">{!hasFile ? '파일 대기' : previewLoading ? '파일 분석 중' : hasKnownFailedRows || hasUnknownFailedRows ? '수정 필요' : '업로드 가능'}</div>
-              <div className="overview-card-desc">{validationSummaryText}</div>
-            </div>
-            <div className="overview-card">
-              <div className="overview-card-label">파일 정보</div>
-              <div className="overview-card-title">{hasFile ? file.name : '선택된 파일 없음'}</div>
-              <div className="summary-chip-list">
-                {hasFile ? (
-                  <>
-                    <span className="summary-chip">{formatFileSize(file.size)}</span>
-                    <span className="summary-chip">헤더 {excelHeaders.length}개</span>
-                    <span className="summary-chip">총 {totalRows.toLocaleString()}건</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="summary-chip">.xls / .xlsx</span>
-                    <span className="summary-chip">DRM 해제 필요</span>
-                  </>
-                )}
+          <div className="focus-workbench-hero">
+            <div className={`focus-hero-main focus-hero-main-${validationTone}`}>
+              <div className="focus-hero-kicker">작업 세션</div>
+              <div className="focus-hero-title-row">
+                <div className="focus-hero-title">{sessionModeLabel}</div>
+                <div className={`focus-hero-badge focus-hero-badge-${validationTone}`}>
+                  {!hasFile ? '대기' : previewLoading ? '분석 중' : hasKnownFailedRows || hasUnknownFailedRows ? '수정 필요' : 'Ready'}
+                </div>
+              </div>
+              <div className="focus-hero-desc">{validationSummaryText}</div>
+              <div className="focus-hero-metrics">
+                <div className="focus-hero-metric">
+                  <span className="focus-hero-metric-label">파일</span>
+                  <strong>{hasFile ? file.name : '선택 전'}</strong>
+                </div>
+                <div className="focus-hero-metric">
+                  <span className="focus-hero-metric-label">데이터</span>
+                  <strong>{hasFile ? `${totalRows.toLocaleString()}건` : '.xls / .xlsx'}</strong>
+                </div>
+                <div className="focus-hero-metric">
+                  <span className="focus-hero-metric-label">현재 상태</span>
+                  <strong>{hasKnownFailedRows ? `${failedRowCount}개 오류` : editedRowCount > 0 ? `${editedRowCount}개 수정` : '점검 대기'}</strong>
+                </div>
               </div>
             </div>
-            <div className="overview-card">
-              <div className="overview-card-label">작업 메모</div>
-              <div className="overview-card-title">{hasKnownFailedRows ? `${failedRowCount}개 행 점검 필요` : editedRowCount > 0 ? `${editedRowCount}개 행 수정 완료` : '업로드 전 최종 점검'}</div>
-              <div className="overview-card-desc">
+            <div className="focus-hero-side">
+              <div className="focus-hero-side-label">작업 메모</div>
+              <div className="focus-hero-side-title">
                 {hasUnknownFailedRows
-                  ? '실패 행 번호를 특정하지 못한 경우 오류 리포트를 우선 확인해 주세요.'
+                  ? '오류 리포트 병행 확인'
                   : hasKnownFailedRows
-                    ? '실패 행 이동 버튼으로 바로 문제 구간으로 갈 수 있습니다.'
+                    ? '오류 셀만 빠르게 수정'
                     : editedRowCount > 0
-                      ? '수정한 값이 반영된 상태로 업로드됩니다.'
-                      : '샘플 양식과 헤더 수를 한 번 더 확인하면 좋습니다.'}
+                      ? '수정값 재확인 후 업로드'
+                      : '작업대 진입 전 최종 점검'}
+              </div>
+              <div className="focus-hero-side-desc">
+                {hasUnknownFailedRows
+                  ? '정확한 행 번호가 없는 실패는 로그와 오류 리포트를 함께 보는 것이 가장 빠릅니다.'
+                  : hasKnownFailedRows
+                    ? '오류 행 이동 버튼과 필터를 사용하면 문제 구간만 빠르게 확인할 수 있습니다.'
+                    : editedRowCount > 0
+                      ? '현재 표에 보이는 수정값 기준으로 업로드가 진행됩니다.'
+                      : '샘플 양식, 헤더 위치, 예상 건수를 가볍게 확인하고 시작하세요.'}
               </div>
             </div>
           </div>
 
           {!hasFile ? (
-            <div className="upload-workspace-grid">
-              <div className="workspace-card workspace-card-drop">
+            <div className="upload-workspace-grid workbench-grid-empty">
+              <div className="workspace-card workspace-card-drop workspace-card-drop-focus">
                 <div className="workspace-card-title">파일 업로드</div>
                 <div className="workspace-card-desc">양식에 맞는 엑셀 파일을 선택하면 사전 점검과 작업 화면이 바로 열립니다.</div>
                 <label
@@ -413,7 +430,7 @@ const UserWorkbenchStep = ({
                 </label>
               </div>
 
-              <div className="workspace-side-stack">
+              <div className="workspace-side-stack workspace-side-stack-focus">
                 {sampleFileName && (
                   <div className="workspace-card workspace-card-guide">
                     <div className="workspace-card-title">양식 먼저 확인</div>
@@ -435,25 +452,26 @@ const UserWorkbenchStep = ({
               </div>
             </div>
           ) : (
-            <div className="upload-workspace-grid">
+            <div className="upload-workspace-grid workbench-grid-focus">
               <div className="workspace-main-stack">
-                <div className="workspace-card">
+                <div className="workspace-card workspace-card-session">
                   <div className="workspace-card-head">
                     <div>
-                      <div className="workspace-card-title">업로드 대상 파일</div>
-                      <div className="workspace-card-desc">파일 분석이 끝나면 아래 작업대에서 바로 수정과 점검을 진행할 수 있습니다.</div>
+                      <div className="workspace-card-title">현재 작업 세션</div>
+                      <div className="workspace-card-desc">파일 맥락과 현재 수정 상태를 유지한 채 바로 작업대에서 이어서 처리합니다.</div>
                     </div>
                     <button className="side-action-btn side-action-btn-danger" onClick={clearSelectedFile}>파일 제거</button>
                   </div>
-                  <div className="summary-chip-list">
+                  <div className="summary-chip-list summary-chip-list-session">
                     <span className="summary-chip strong">{file.name}</span>
                     <span className="summary-chip">{formatFileSize(file.size)}</span>
                     <span className="summary-chip">헤더 {excelHeaders.length}개</span>
                     <span className="summary-chip">데이터 {totalRows.toLocaleString()}건</span>
+                    <span className="summary-chip">헤더 기준 {headerRow}행</span>
                   </div>
                 </div>
 
-                <div className="workspace-card">
+                <div className="workspace-card workspace-card-workbench">
                   <div className="workspace-card-head">
                     <div>
                       <div className="workspace-card-title">오류 수정 작업대</div>
@@ -506,7 +524,7 @@ const UserWorkbenchStep = ({
                         </div>
                       )}
 
-                      <div style={{ overflowX: 'auto', maxHeight: '360px', position: 'relative', border: '1px solid #e5e8eb', borderRadius: '14px' }}>
+                      <div className="workbench-table-shell">
                         {previewLoading && <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, fontWeight: 700, color: '#3182f6' }}>미리보기 갱신 중...</div>}
                         <table className="data-table" style={{ margin: 0, whiteSpace: 'nowrap', border: 'none' }}>
                           <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
@@ -597,9 +615,9 @@ const UserWorkbenchStep = ({
                       </div>
 
                       {previewTotalPages > 1 && (
-                        <div style={{ padding: '10px 14px', borderTop: '1px solid #e5e8eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f9fafb', flexWrap: 'wrap', gap: '6px' }}>
-                          <span style={{ fontSize: '0.76rem', color: '#8b95a1' }}>{((previewPage - 1) * previewPageSize + 1).toLocaleString()} ~ {Math.min(previewPage * previewPageSize, totalRows).toLocaleString()}행 / 전체 {totalRows.toLocaleString()}건</span>
-                          <div style={{ display: 'flex', gap: '3px' }}>
+                        <div className="table-pagination-bar">
+                          <span className="table-pagination-meta">{((previewPage - 1) * previewPageSize + 1).toLocaleString()} ~ {Math.min(previewPage * previewPageSize, totalRows).toLocaleString()}행 / 전체 {totalRows.toLocaleString()}건</span>
+                          <div className="table-pagination-actions">
                             {[['«', 1], ['‹', previewPage - 1], ...Array.from({ length: Math.min(5, previewTotalPages) }, (_, i) => {
                               let p;
                               if (previewTotalPages <= 5) p = i + 1;
@@ -612,7 +630,7 @@ const UserWorkbenchStep = ({
                                 key={i}
                                 onClick={() => { if (pg >= 1 && pg <= previewTotalPages) { setPreviewPage(pg); fetchPreviewPage(file, pg, headerRow, null); } }}
                                 disabled={pg < 1 || pg > previewTotalPages || previewLoading}
-                                style={{ minWidth: '28px', height: '28px', padding: '0 5px', borderRadius: '5px', border: '1px solid', borderColor: pg === previewPage ? '#3182f6' : '#e5e8eb', background: pg === previewPage ? '#3182f6' : 'white', color: pg === previewPage ? 'white' : (pg < 1 || pg > previewTotalPages || previewLoading) ? '#d1d5db' : '#333', fontWeight: pg === previewPage ? 700 : 400, fontSize: '0.76rem', cursor: pg < 1 || pg > previewTotalPages ? 'not-allowed' : 'pointer' }}
+                                className={`table-page-btn ${pg === previewPage ? 'active' : ''}`}
                               >
                                 {label}
                               </button>
@@ -625,11 +643,11 @@ const UserWorkbenchStep = ({
                 </div>
               </div>
 
-              <div className="workspace-side-stack">
-                <div className={`workspace-card workspace-card-${hasKnownFailedRows || hasUnknownFailedRows ? 'warning' : 'positive'}`}>
+              <div className="workspace-side-stack workspace-side-stack-sticky">
+                <div className={`workspace-card workspace-card-${hasKnownFailedRows || hasUnknownFailedRows ? 'warning' : 'positive'} workspace-card-command`}>
                   <div className="workspace-card-title">{uploadReadyLabel}</div>
                   <div className="workspace-card-desc">{uploadReadyDesc}</div>
-                  <div className="workspace-guide-list compact">
+                  <div className="workspace-guide-list compact workspace-guide-list-command">
                     <div>헤더 기준: {headerRow}행</div>
                     <div>수정된 행: {editedRowCount}건</div>
                     <div>오류 행: {failedRowCount}건</div>
@@ -644,7 +662,7 @@ const UserWorkbenchStep = ({
                   </div>
                 </div>
 
-                <div className="workspace-card">
+                <div className="workspace-card workspace-card-guide-compact">
                   <div className="workspace-card-title">작업 가이드</div>
                   <div className="workspace-guide-list">
                     <div>오류 행은 빨간색 띠와 함께 표시됩니다.</div>

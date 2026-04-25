@@ -2,6 +2,29 @@ import React from 'react';
 import { toast } from 'react-toastify';
 import StepIndicator from './StepIndicator';
 
+const AdminStageHero = ({ eyebrow, title, desc, status, meta = [] }) => (
+  <div className="admin-stage-hero">
+    <div className="admin-stage-hero-main">
+      <div className="admin-stage-eyebrow">{eyebrow}</div>
+      <div className="admin-stage-title-row">
+        <div className="admin-stage-title">{title}</div>
+        <div className="admin-stage-status">{status}</div>
+      </div>
+      <div className="admin-stage-desc">{desc}</div>
+      {meta.length > 0 && (
+        <div className="admin-stage-meta-list">
+          {meta.map(item => (
+            <div key={item.label} className="admin-stage-meta-item">
+              <span className="admin-stage-meta-label">{item.label}</span>
+              <strong>{item.value}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
+);
+
 const AdminStep0 = ({
   jobName,
   setJobName,
@@ -19,8 +42,17 @@ const AdminStep0 = ({
   setInstructions,
 }) => (
   <div className="wizard-panel">
-    <div className="wizard-panel-title">⚙️ 기본 설정</div>
-    <div className="wizard-panel-desc">업로드 작업의 기본 정보와 사용자 안내 내용을 설정합니다.</div>
+    <AdminStageHero
+      eyebrow="Admin Setup"
+      title="기본 설정"
+      status="Step 1"
+      desc="업로드 작업의 이름, 헤더 기준, 샘플 양식, 사용자 안내 문구를 먼저 정리합니다."
+      meta={[
+        { label: '작업명', value: jobName?.trim() || '미입력' },
+        { label: '헤더 행', value: `${headerRow || 1}행` },
+        { label: '샘플 파일', value: sampleFileName || sampleFile?.name || '없음' },
+      ]}
+    />
     <div className="wiz-grid-2" style={{ marginTop: '28px' }}>
       <div className="wiz-field-group">
         <label className="wiz-label">작업명 <span style={{ color: '#ef4444' }}>*</span></label>
@@ -81,8 +113,17 @@ const AdminStep1 = ({
   MyMultiSelect,
 }) => (
   <div className="wizard-panel">
-    <div className="wizard-panel-title">🗄️ 테이블 구조 & SQL 설정</div>
-    <div className="wizard-panel-desc">데이터를 삽입할 테이블과 전/후 처리 SQL을 설정합니다.</div>
+    <AdminStageHero
+      eyebrow="Structure Design"
+      title="테이블 구조와 SQL 설계"
+      status="Step 2"
+      desc="ROOT부터 하위 테이블 관계, PK/FK, UPSERT 키와 Pre/Post/Row SQL까지 한 번에 설계합니다."
+      meta={[
+        { label: '테이블 수', value: `${structs.length}개` },
+        { label: 'Pre-SQL', value: `${preSqls.length}개` },
+        { label: 'Post-SQL', value: `${postSqls.length}개` },
+      ]}
+    />
     <div className="wiz-section" style={{ marginTop: '28px' }}>
       <div className="wiz-section-title">테이블 구조</div>
       <div style={{ overflowX: 'auto' }}>
@@ -208,8 +249,17 @@ const AdminStep2 = ({
   setIsDragging,
 }) => (
   <div className="wizard-panel">
-    <div className="wizard-panel-title">🔗 컬럼 매핑</div>
-    <div className="wizard-panel-desc">엑셀 파일을 선택하여 DB 컬럼과 매핑합니다. 다음 단계에서 자동으로 저장됩니다.</div>
+    <AdminStageHero
+      eyebrow="Mapping Workbench"
+      title="컬럼 매핑"
+      status="Step 3"
+      desc="샘플 엑셀을 기준으로 각 테이블의 DB 컬럼과 매핑 방식을 구성합니다."
+      meta={[
+        { label: '샘플 파일', value: file?.name || '선택 전' },
+        { label: '헤더 수', value: `${excelHeaders.length}개` },
+        { label: '활성 Alias', value: activeAlias || 'ROOT' },
+      ]}
+    />
     <div className="wiz-section" style={{ marginTop: '28px' }}>
       <div className="wiz-section-title" style={{ marginBottom: '10px' }}>샘플 엑셀 파일 선택 (헤더 파악용)</div>
       <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -363,21 +413,20 @@ const AdminStep3 = (props) => {
 
   return (
     <div className="wizard-panel">
-      <div style={{ textAlign: 'center', paddingBottom: '24px', borderBottom: '1px solid #f1f5f9' }}>
-        <div style={{ fontSize: '3rem', marginBottom: '10px' }}>🎉</div>
-        <div className="wizard-panel-title">설정 저장 완료</div>
-        <div className="wizard-panel-desc" style={{ marginBottom: '20px' }}>설정이 저장되었습니다. 아래에서 바로 데이터를 업로드할 수 있습니다.</div>
-        {uploadId && (
-          <div style={{ background: '#f0fdf4', border: '1px solid #a7f3d0', borderRadius: '10px', padding: '12px 20px', display: 'inline-block' }}>
-            <span style={{ fontSize: '0.78rem', color: '#059669', fontWeight: 600 }}>로더 ID: </span>
-            <span style={{ fontSize: '1rem', fontWeight: 700, color: '#065f46', fontFamily: 'monospace' }}>{uploadId}</span>
-            <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: '10px' }}>| 사용자 URL: ?upload_id={uploadId}</span>
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '16px', flexWrap: 'wrap' }}>
-          <button onClick={() => setCurrentStep(0)} style={{ padding: '9px 18px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>← 설정 처음으로</button>
-          <button onClick={handleSave} style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: '#10b981', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}>💾 다시 저장</button>
-        </div>
+      <AdminStageHero
+        eyebrow="Launch & Verify"
+        title="설정 저장 완료"
+        status="Step 4"
+        desc="설정이 저장되었습니다. 바로 테스트 업로드를 실행하거나, 다시 저장 후 배포 흐름으로 이어갈 수 있습니다."
+        meta={[
+          { label: '로더 ID', value: uploadId || '저장 후 생성' },
+          { label: '사용자 URL', value: uploadId ? `?upload_id=${uploadId}` : '생성 전' },
+          { label: '업로드 상태', value: uploading ? `${progress.percent}% 진행 중` : uploadResult ? uploadResult.status : '대기' },
+        ]}
+      />
+      <div className="admin-stage-action-row">
+        <button onClick={() => setCurrentStep(0)} className="side-action-btn">← 설정 처음으로</button>
+        <button onClick={handleSave} className="side-action-btn side-action-btn-green">💾 다시 저장</button>
       </div>
       <div style={{ marginTop: '28px' }}>
         <div className="wiz-section-title" style={{ marginBottom: '16px' }}>🚀 데이터 업로드 (테스트 / 직접 실행)</div>

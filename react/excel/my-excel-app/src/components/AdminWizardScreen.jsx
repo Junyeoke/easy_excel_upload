@@ -146,6 +146,9 @@ const AdminStep1 = ({
   setStructs,
   tableList,
   loadCols,
+  handleStructTableChange,
+  handleStructAliasChange,
+  handleRemoveStruct,
   colsCache,
   setMapping,
   preSqls,
@@ -190,8 +193,8 @@ const AdminStep1 = ({
           <tbody>
             {structs.map((s, i) => (
               <tr key={i}>
-                <td>{i === 0 ? <b style={{ color: '#6366f1' }}>ROOT</b> : <input type="text" value={s.alias} onChange={e => { const next = [...structs]; next[i].alias = e.target.value; setStructs(next); }} className="wiz-input-sm" />}</td>
-                <td style={{ minWidth: '200px' }}><MySelect options={tableList} value={s.table} onChange={v => { const next = [...structs]; next[i].table = v; setStructs(next); if (v) loadCols(v); }} placeholder="테이블 선택" /></td>
+                <td>{i === 0 ? <b style={{ color: '#6366f1' }}>ROOT</b> : <input type="text" value={s.alias} onChange={e => handleStructAliasChange(i, e.target.value)} className="wiz-input-sm" />}</td>
+                <td style={{ minWidth: '200px' }}><MySelect options={tableList} value={s.table} onChange={v => handleStructTableChange(i, v)} placeholder="테이블 선택" /></td>
                 <td style={{ minWidth: '90px' }}><input type="text" value={s.ent_id || ''} onChange={e => { const next = [...structs]; next[i].ent_id = e.target.value.toUpperCase(); setStructs(next); }} placeholder="예: CM" className="wiz-input-sm" style={{ textTransform: 'uppercase' }} /></td>
                 <td style={{ minWidth: '180px' }}><MySelect options={colsCache[s.table] || []} value={s.pk_col} onChange={v => { const next = [...structs]; next[i].pk_col = v; setStructs(next); }} placeholder="PK 선택" /></td>
                 <td style={{ minWidth: '150px' }}>{i > 0 && <MySelect options={structs.map(x => x.alias)} value={s.parent} onChange={v => { const next = [...structs]; next[i].parent = v; setStructs(next); }} placeholder="부모" />}</td>
@@ -200,7 +203,7 @@ const AdminStep1 = ({
                   <MyMultiSelect options={colsCache[s.table] || []} value={s.upsert_keys || []} onChange={v => { const next = [...structs]; next[i].upsert_keys = v; setStructs(next); }} placeholder={s.table ? '키 선택 (없으면 INSERT 전용)' : '테이블 먼저 선택'} isDisabled={!s.table} />
                   {s.upsert_keys?.length > 0 && <div style={{ marginTop: '3px', fontSize: '0.7rem', color: '#92400e', background: '#fef9c3', padding: '2px 6px', borderRadius: '4px' }}>🔄 UPSERT 모드</div>}
                 </td>
-                <td style={{ textAlign: 'center' }}>{i > 0 && <button className="btn btn-mini btn-del" onClick={() => setStructs(structs.filter((_, idx) => idx !== i))}>삭제</button>}</td>
+                <td style={{ textAlign: 'center' }}>{i > 0 && <button className="btn btn-mini btn-del" onClick={() => handleRemoveStruct(i)}>삭제</button>}</td>
               </tr>
             ))}
           </tbody>

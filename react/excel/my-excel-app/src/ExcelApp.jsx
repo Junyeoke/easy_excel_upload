@@ -194,14 +194,23 @@ function ExcelApp() {
         setUploadId(id); setJobName(res.job_name || ''); setHeaderRow(res.header_row || 1);
         const s = safeJsonParse(res.struct_json, [{ alias: 'ROOT', table: '', pk_col: '', parent: '', fk: '', ent_id: '', upsert_keys: [] }]);
         const m = safeJsonParse(res.mapping_json, { ROOT: {} });
-        setStructs(s); setMapping(m);
+        setStructs(s);
         setPreSqls(safeJsonParse(res.pre_sql_json, [{ sql: '' }]));
         setPostSqls(safeJsonParse(res.post_sql_json, [{ sql: '' }]));
         setRowSqls(safeJsonParse(res.row_sql_json, [{ sql: '' }]));
         setSampleFileName(res.sample_file_name || '');
         setSampleFileDownloadName(res.sample_file_org_name || '');
         setInstructions(res.instructions || '');
-        await Promise.all(s.map(item => item.table ? loadCols(item.table) : Promise.resolve()));
+        const loadedEntries = await Promise.all(s.map(async item => {
+          if (!item.table) return [item.table, []];
+          const cols = await loadCols(item.table);
+          return [item.table, cols];
+        }));
+        const loadedColsCache = loadedEntries.reduce((acc, [tableName, cols]) => {
+          if (tableName) acc[tableName] = cols;
+          return acc;
+        }, {});
+        setMapping(sanitizeMappingForStructs(m, s, loadedColsCache));
         toast.update(tid, { render: '✅ 로드 완료', type: 'success', isLoading: false, autoClose: 2000 });
       } else toast.update(tid, { render: '❌ ' + (res.msg || '실패'), type: 'error', isLoading: false, autoClose: 3000 });
     } catch(e) { toast.update(tid, { render: '❌ ' + e.message, type: 'error', isLoading: false, autoClose: 3000 }); }
@@ -215,12 +224,107 @@ function ExcelApp() {
     return cols;
   };
 
+  const sanitizeMappingForStructs = (rawMapping, targetStructs = structs, targetColsCache = colsCache) => {
+    const sanitized = {};
+    const validAliases = new Set(targetStructs.map(item => item.alias));
+
+    targetStructs.forEach(item => {
+      const alias = item.alias;
+      const aliasMapping = rawMapping?.[alias] || {};
+      const tableCols = targetColsCache[item.table] || [];
+
+      if (!item.table || !tableCols.length) {
+        sanitized[alias] = {};
+        return;
+      }
+
+      const validColSet = new Set(tableCols.map(col => col.value));
+      sanitized[alias] = Object.fromEntries(
+        Object.entries(aliasMapping).filter(([dbCol, mapVal]) => validColSet.has(dbCol) && mapVal)
+      );
+    });
+
+    Object.keys(sanitized).forEach(alias => {
+      if (!validAliases.has(alias)) delete sanitized[alias];
+    });
+
+    if (!sanitized.ROOT) sanitized.ROOT = {};
+    return sanitized;
+  };
+
+  const ensureStructColumnsLoaded = async (targetStructs = structs) => {
+    const nextColsCache = { ...colsCache };
+    for (const item of targetStructs) {
+      if (item.table && !nextColsCache[item.table]?.length) {
+        nextColsCache[item.table] = await loadCols(item.table);
+      }
+    }
+    return nextColsCache;
+  };
+
+  const handleStructTableChange = async (index, tableName) => {
+    const nextStructs = [...structs];
+    nextStructs[index] = {
+      ...nextStructs[index],
+      table: tableName || '',
+      pk_col: '',
+      upsert_keys: [],
+    };
+    setStructs(nextStructs);
+
+    if (tableName) await loadCols(tableName);
+
+    const alias = nextStructs[index].alias;
+    setMapping(prev => ({
+      ...prev,
+      [alias]: {},
+    }));
+  };
+
+  const handleStructAliasChange = (index, nextAliasRaw) => {
+    const prevAlias = structs[index].alias;
+    const nextAlias = (nextAliasRaw || '').trim();
+    const nextStructs = [...structs];
+    nextStructs[index] = { ...nextStructs[index], alias: nextAlias };
+    nextStructs.forEach((item, itemIndex) => {
+      if (itemIndex !== index && item.parent === prevAlias) {
+        nextStructs[itemIndex] = { ...item, parent: nextAlias };
+      }
+    });
+    setStructs(nextStructs);
+    setMapping(prev => {
+      const nextMapping = { ...prev };
+      const aliasMapping = nextMapping[prevAlias] || {};
+      delete nextMapping[prevAlias];
+      nextMapping[nextAlias] = aliasMapping;
+      return nextMapping;
+    });
+    if (activeAlias === prevAlias) setActiveAlias(nextAlias || 'ROOT');
+  };
+
+  const handleRemoveStruct = (index) => {
+    const removedAlias = structs[index]?.alias;
+    const nextStructs = structs.filter((_, idx) => idx !== index).map(item => (
+      item.parent === removedAlias ? { ...item, parent: 'ROOT' } : item
+    ));
+    setStructs(nextStructs);
+    setMapping(prev => {
+      const nextMapping = { ...prev };
+      delete nextMapping[removedAlias];
+      return sanitizeMappingForStructs(nextMapping, nextStructs, colsCache);
+    });
+    if (activeAlias === removedAlias) setActiveAlias('ROOT');
+  };
+
   const handleSave = async () => {
     const tid = toast.loading('💾 저장 중...');
+    const preparedColsCache = await ensureStructColumnsLoaded(structs);
+    const sanitizedMapping = sanitizeMappingForStructs(mapping, structs, preparedColsCache);
+    setMapping(sanitizedMapping);
     const fd = new FormData();
     fd.append('mode', 'save'); fd.append('upload_id', uploadId); fd.append('job_name', jobName); fd.append('header_row', headerRow);
     fd.append('struct_json_b64', encodeSafeBase64(JSON.stringify(structs)));
-    fd.append('mapping_json_b64', encodeSafeBase64(JSON.stringify(mapping)));
+    fd.append('mapping_json_b64', encodeSafeBase64(JSON.stringify(sanitizedMapping)));
     fd.append('pre_sql_json_b64', encodeSafeBase64(JSON.stringify(preSqls)));
     fd.append('post_sql_json_b64', encodeSafeBase64(JSON.stringify(postSqls)));
     fd.append('row_sql_json_b64', encodeSafeBase64(JSON.stringify(rowSqls)));
@@ -550,11 +654,15 @@ function ExcelApp() {
       }
     };
 
+    const preparedColsCache = await ensureStructColumnsLoaded(structs);
+    const sanitizedMapping = sanitizeMappingForStructs(mapping, structs, preparedColsCache);
+    setMapping(sanitizedMapping);
+
     const fd = new FormData();
     fd.append('mode', 'upload'); fd.append('job_id', jobId); fd.append('file', file);
     fd.append('header_row', headerRow); fd.append('job_name', jobName || '직접 업로드'); fd.append('file_name', file.name);
     fd.append('struct_json_b64', encodeSafeBase64(JSON.stringify(structs)));
-    fd.append('mapping_json_b64', encodeSafeBase64(JSON.stringify(mapping)));
+    fd.append('mapping_json_b64', encodeSafeBase64(JSON.stringify(sanitizedMapping)));
     fd.append('pre_sql_json_b64', encodeSafeBase64(JSON.stringify(preSqls)));
     fd.append('post_sql_json_b64', encodeSafeBase64(JSON.stringify(postSqls)));
     fd.append('row_sql_json_b64', encodeSafeBase64(JSON.stringify(rowSqls)));
@@ -780,6 +888,9 @@ function ExcelApp() {
     setStructs,
     tableList,
     loadCols,
+    handleStructTableChange,
+    handleStructAliasChange,
+    handleRemoveStruct,
     colsCache,
     setMapping,
     preSqls,

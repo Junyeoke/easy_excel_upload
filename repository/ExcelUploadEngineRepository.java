@@ -41,6 +41,40 @@ public class ExcelUploadEngineRepository {
         return dataSource;
     }
 
+    private String renderSql(String sql, List<?> params) {
+        if (sql == null || params == null || params.isEmpty()) {
+            return sql;
+        }
+        StringBuilder out = new StringBuilder(sql.length() + (params.size() * 16));
+        int paramIndex = 0;
+        for (int i = 0; i < sql.length(); i++) {
+            char ch = sql.charAt(i);
+            if (ch == '?' && paramIndex < params.size()) {
+                out.append(toSqlLiteral(params.get(paramIndex++)));
+            } else {
+                out.append(ch);
+            }
+        }
+        return out.toString();
+    }
+
+    private String toSqlLiteral(Object value) {
+        if (value == null) {
+            return "NULL";
+        }
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+        String text = String.valueOf(value)
+                .replace("'", "''")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n");
+        if (text.length() > 500) {
+            text = text.substring(0, 500) + "...";
+        }
+        return "'" + text + "'";
+    }
+
     // =====================================================================
     // 1. FastSequenceManager (시퀀스 채번 - 블록 단위 캐싱)
     // =====================================================================
@@ -341,7 +375,14 @@ public class ExcelUploadEngineRepository {
             histPs.setInt(4, successCnt);
             histPs.setInt(5, failCnt);
             histPs.setString(6, errorFile);
-            sqlLog.info(sql);
+            sqlLog.info(renderSql(sql, Arrays.asList(
+                    histId,
+                    jobName == null || jobName.trim().isEmpty() ? "일반 데이터 업로드" : jobName,
+                    fileName,
+                    successCnt,
+                    failCnt,
+                    errorFile
+            )));
             histPs.executeUpdate();
             conn.commit();
             return null;
@@ -410,7 +451,7 @@ public class ExcelUploadEngineRepository {
             ps.setString(2, tableName);
             ps.setString(3, pkCol);
             ps.setString(4, pkVal);
-            sqlLog.info(sql);
+            sqlLog.info(renderSql(sql, Arrays.asList(alias, tableName, pkCol, pkVal)));
             ps.addBatch();
         } catch (Throwable e) {}
     }

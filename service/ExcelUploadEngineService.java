@@ -53,11 +53,11 @@ public class ExcelUploadEngineService {
         return sql == null ? null : String.valueOf(sql);
     }
 
-    private void logPreparedSql(String sql) {
+    private void logPreparedSql(String sql, List<?> params) {
         if (sql == null || sql.trim().isEmpty()) {
             return;
         }
-        sqlLog.info(sql.trim());
+        sqlLog.info(renderSql(sql.trim(), params));
     }
 
     private void logPlainSql(String sql) {
@@ -65,6 +65,40 @@ public class ExcelUploadEngineService {
             return;
         }
         sqlLog.info(sql.trim());
+    }
+
+    private String renderSql(String sql, List<?> params) {
+        if (sql == null || params == null || params.isEmpty()) {
+            return sql;
+        }
+        StringBuilder out = new StringBuilder(sql.length() + (params.size() * 16));
+        int paramIndex = 0;
+        for (int i = 0; i < sql.length(); i++) {
+            char ch = sql.charAt(i);
+            if (ch == '?' && paramIndex < params.size()) {
+                out.append(toSqlLiteral(params.get(paramIndex++)));
+            } else {
+                out.append(ch);
+            }
+        }
+        return out.toString();
+    }
+
+    private String toSqlLiteral(Object value) {
+        if (value == null) {
+            return "NULL";
+        }
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+        String text = String.valueOf(value)
+                .replace("'", "''")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n");
+        if (text.length() > 500) {
+            text = text.substring(0, 500) + "...";
+        }
+        return "'" + text + "'";
     }
 
     // =====================================================================
@@ -425,7 +459,11 @@ public class ExcelUploadEngineService {
                         if (val.isEmpty() && numericColumns != null && numericColumns.contains(col.toLowerCase())) val = "0";
                         updPs.setString(pi + 1, val);
                     }
-                    logPreparedSql(getCachedSqlText(psCache, updCacheKey));
+                    List<String> updLogParams = new ArrayList<>();
+                    for (String col : updParamOrder) {
+                        updLogParams.add(data.get(col) == null ? null : String.valueOf(data.get(col)).trim());
+                    }
+                    logPreparedSql(getCachedSqlText(psCache, updCacheKey), updLogParams);
                     updPs.addBatch();
 
                     // 배치 트래커에 UPDATE 행 등록
@@ -543,7 +581,11 @@ public class ExcelUploadEngineService {
             if (val.isEmpty() && numericColumns != null && numericColumns.contains(col.toLowerCase())) val = "0";
             ps.setString(pi + 1, val);
         }
-        logPreparedSql(getCachedSqlText(psCache, cacheKey));
+        List<String> insertLogParams = new ArrayList<>();
+        for (String col : paramOrder) {
+            insertLogParams.add(data.get(col) == null ? null : String.valueOf(data.get(col)).trim());
+        }
+        logPreparedSql(getCachedSqlText(psCache, cacheKey), insertLogParams);
         ps.addBatch();
 
         // Row 추적 (배치 오류 식별용)
@@ -600,7 +642,11 @@ public class ExcelUploadEngineService {
                 String val = String.valueOf(data.get(keyCols.get(i))).trim();
                 chkPs.setString(i + 1, val);
             }
-            logPreparedSql(chkSql);
+            List<String> chkLogParams = new ArrayList<>();
+            for (String keyCol : keyCols) {
+                chkLogParams.add(data.get(keyCol) == null ? null : String.valueOf(data.get(keyCol)).trim());
+            }
+            logPreparedSql(chkSql, chkLogParams);
 
             try (ResultSet rs = chkPs.executeQuery()) {
                 return rs.next() && rs.getInt(1) > 0;

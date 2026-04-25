@@ -456,27 +456,6 @@ const UserWorkbenchStep = ({
                 </div>
               </div>
             </div>
-            <div className="focus-hero-side">
-              <div className="focus-hero-side-label">작업 메모</div>
-              <div className="focus-hero-side-title">
-                {hasUnknownFailedRows
-                  ? '오류 리포트 병행 확인'
-                  : hasKnownFailedRows
-                    ? '오류 셀만 빠르게 수정'
-                    : editedRowCount > 0
-                      ? '수정값 재확인 후 업로드'
-                      : '작업대 진입 전 최종 점검'}
-              </div>
-              <div className="focus-hero-side-desc">
-                {hasUnknownFailedRows
-                  ? '정확한 행 번호가 없는 실패는 로그와 오류 리포트를 함께 보는 것이 가장 빠릅니다.'
-                  : hasKnownFailedRows
-                    ? '오류 행 이동 버튼과 필터를 사용하면 문제 구간만 빠르게 확인할 수 있습니다.'
-                    : editedRowCount > 0
-                      ? '현재 표에 보이는 수정값 기준으로 업로드가 진행됩니다.'
-                      : '샘플 양식, 헤더 위치, 예상 건수를 가볍게 확인하고 시작하세요.'}
-              </div>
-            </div>
           </div>
 
           <div className="preflight-checklist-card">

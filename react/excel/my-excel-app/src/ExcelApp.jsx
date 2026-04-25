@@ -93,6 +93,8 @@ function ExcelApp() {
   const [editedCells, setEditedCells] = useState({});
   const [failedRows, setFailedRows] = useState({}); // { '3': '오류메시지', ... }
   const [uploading, setUploading] = useState(false);
+  const [uploadJobId, setUploadJobId] = useState('');
+  const [cancellingUpload, setCancellingUpload] = useState(false);
   const [validating, setValidating] = useState(false);
   const [showOnlyFailedRows, setShowOnlyFailedRows] = useState(false);
   const [selectedErrorRow, setSelectedErrorRow] = useState(null);
@@ -385,6 +387,7 @@ function ExcelApp() {
     if (!msg) return { friendlyMsg: '알 수 없는 오류', solution: '관리자에게 문의해주세요.' };
     const rowMatch = msg.match(/엑셀 \[ (\d+) 번째 행 \]/);
     const rowInfo = rowMatch ? `${rowMatch[1]}번째 행에서 ` : '';
+    if (msg.includes('사용자 요청으로 업로드가 취소')) return { friendlyMsg: '사용자 요청으로 업로드가 취소되었습니다.', solution: '파일과 설정을 확인한 뒤 다시 실행할 수 있습니다.' };
     if (msg.includes('cannot be null')) return { friendlyMsg: `${rowInfo}필수 데이터가 비어있습니다.`, solution: '빈 칸이 있는지 확인해주세요.' };
     if (msg.includes('Duplicate entry') || msg.includes('unique constraint')) return { friendlyMsg: `${rowInfo}중복 데이터가 존재합니다.`, solution: '이미 등록된 데이터와 겹칩니다.' };
     if (msg.includes('Data too long') || msg.includes('value too large')) return { friendlyMsg: `${rowInfo}데이터 길이가 초과했습니다.`, solution: '해당 셀 내용을 줄여주세요.' };
@@ -616,6 +619,8 @@ function ExcelApp() {
     setUploading(true); setProgress({ current: 0, total: 0, percent: 0 }); setUploadLogs(['🚀 파일 전송을 시작합니다...']); setUploadResult(null);
     sseCompletedRef.current = false; // SSE 완료 플래그 초기화
     const jobId = 'JOB_' + Date.now();
+    setUploadJobId(jobId);
+    setCancellingUpload(false);
 
     // ── SSE 스트리밍 시작 ────────────────────────────────────────────
     // EventSource는 GET 전용이므로 jobId를 쿼리 파라미터로 전달합니다.
@@ -679,6 +684,8 @@ function ExcelApp() {
       // ── SSE 스트림 정리 ──
       if (esRef.current) { esRef.current.close(); esRef.current = null; }
       setUploading(false);
+      setCancellingUpload(false);
+      setUploadJobId('');
       if (res.status === 'ok' || res.status === 'partial') {
         setProgress(p => ({ ...p, current: p.total, percent: 100 }));
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
@@ -763,6 +770,8 @@ function ExcelApp() {
       // fetch만 JEUS 타임아웃으로 끊긴 것이므로 성공으로 처리
       if (sseCompletedRef.current) {
         setUploading(false);
+        setCancellingUpload(false);
+        setUploadJobId('');
         setProgress(p => ({ ...p, percent: 100 }));
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
         toast.update(tid, { render: '🎉 업로드 완료', type: 'success', isLoading: false, autoClose: 3000 });
@@ -777,7 +786,28 @@ function ExcelApp() {
 
       // SSE 완료 신호도 없이 끊긴 경우 → 진짜 통신 오류
       setUploading(false);
+      setCancellingUpload(false);
+      setUploadJobId('');
       toast.update(tid, { render: '❌ 통신 오류', type: 'error', isLoading: false, autoClose: 3000 });
+    }
+  };
+
+  const handleCancelUpload = async () => {
+    if (!uploading || !uploadJobId || cancellingUpload) return;
+    setCancellingUpload(true);
+    setUploadLogs(prev => [...prev, '🛑 업로드 취소 요청 중...']);
+    try {
+      const res = await post(API_URL, getParams({ mode: 'cancel', job_id: uploadJobId }));
+      if (res.status === 'ok') {
+        setUploadLogs(prev => [...prev, '🛑 취소 요청이 접수되었습니다. 서버가 현재 작업을 정리합니다.']);
+        toast.info('취소 요청을 보냈습니다.', { position: 'top-left' });
+      } else {
+        setUploadLogs(prev => [...prev, `⚠ 취소 요청 실패: ${res.msg || '작업 없음'}`]);
+        setCancellingUpload(false);
+      }
+    } catch {
+      setUploadLogs(prev => [...prev, '⚠ 취소 요청 중 네트워크 오류']);
+      setCancellingUpload(false);
     }
   };
 
@@ -923,6 +953,8 @@ function ExcelApp() {
     setEditedCells,
     renderDebugUploadOptions,
     handleUpload,
+    handleCancelUpload,
+    cancellingUpload,
     handleValidate,
     validating,
     setShowOnlyFailedRows,
@@ -1011,6 +1043,8 @@ function ExcelApp() {
     renderDebugUploadOptions,
     isAdmin,
     handleUpload,
+    handleCancelUpload,
+    cancellingUpload,
     handleValidate,
     validating,
   };

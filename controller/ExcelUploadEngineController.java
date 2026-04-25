@@ -295,6 +295,8 @@ public class ExcelUploadEngineController {
                 handleGetHistory(ds, params, result); 
             }else if ("progress".equals(mode)) {
                 handleProgress(request, params, result); 
+            }else if ("cancel".equals(mode)) {
+                handleCancel(params, result);
             }// ── upload: 대용량 엑셀 업로드 ───────────────────────────────────
             else if ("upload".equals(mode)) {
                 handleUpload(ds, fileBytes, params, request, result, response);
@@ -764,6 +766,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             result.put("total", prog.total);
             result.put("percent", prog.total > 0
                     ? (int) ((double) prog.current / prog.total * 100) : 0);
+            result.put("cancel_requested", prog.cancelRequested);
             synchronized (prog.logs) {
                 result.put("logs", new ArrayList<>(prog.logs));
             }
@@ -788,6 +791,27 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                 }
             }
         }
+    }
+
+    /**
+     * 업로드 취소 요청
+     */
+    private void handleCancel(Map<String, Object> params, Map<String, Object> result) {
+        String jobId = (String) params.get("job_id");
+        if (jobId == null || jobId.trim().isEmpty()) {
+            result.put("status", "err");
+            result.put("msg", "job_id가 필요합니다.");
+            return;
+        }
+        boolean requested = ProgressStore.requestCancel(jobId);
+        if (!requested) {
+            result.put("status", "none");
+            result.put("msg", "진행 중인 작업을 찾을 수 없습니다.");
+            return;
+        }
+        ProgressStore.addLog(jobId, "🛑 사용자에 의해 취소 요청되었습니다.");
+        result.put("status", "ok");
+        result.put("msg", "취소 요청이 접수되었습니다.");
     }
 
     /**
@@ -1117,6 +1141,9 @@ private void handleClone(DataSource ds, Map<String, Object> params,
 
             // 행별 처리
             for (int rowIdx = startRow; rowIdx <= totalRows; rowIdx++) {
+                if (jobId != null && ProgressStore.isCancelRequested(jobId)) {
+                    throw new Exception("사용자 요청으로 업로드가 취소되었습니다.");
+                }
                 currentRowForLog = rowIdx + 1;
                 org.apache.poi.ss.usermodel.Row row = sheet.getRow(rowIdx);
                 if (row == null) {
@@ -1176,6 +1203,9 @@ private void handleClone(DataSource ds, Map<String, Object> params,
 
                 // 5000행마다 Batch flush
                 if ((rowIdx - startRow + 1) % 5000 == 0) {
+                    if (jobId != null && ProgressStore.isCancelRequested(jobId)) {
+                        throw new Exception("사용자 요청으로 업로드가 취소되었습니다.");
+                    }
                     int done = rowIdx - startRow + 1;
                     log.info("[ExcelUpload] {} / {} 행 처리 중 - Batch Flush...", done, actualTotalRows);
                     addLog.accept("💾 " + done + "행 배치 저장 중...");

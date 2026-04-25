@@ -85,6 +85,8 @@ const UserWorkbenchStep = ({
   setEditedCells,
   renderDebugUploadOptions,
   handleUpload,
+  handleCancelUpload,
+  cancellingUpload,
   handleValidate,
   validating,
   setShowOnlyFailedRows,
@@ -381,6 +383,11 @@ const UserWorkbenchStep = ({
             <div className="progress-meta-row">
               <span>{progress.current.toLocaleString()} / {progress.total.toLocaleString()} 건</span>
               <span>창을 닫지 말고 완료 메시지를 기다려주세요.</span>
+            </div>
+            <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="inline-control-btn" onClick={handleCancelUpload} disabled={cancellingUpload}>
+                {cancellingUpload ? '취소 요청 중...' : '업로드 취소'}
+              </button>
             </div>
           </div>
 

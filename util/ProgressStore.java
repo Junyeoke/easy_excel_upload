@@ -35,6 +35,7 @@ public class ProgressStore {
         public volatile int     total     = 0;
         public volatile boolean done      = false;   // 정상 완료 또는 오류로 종료
         public volatile String  errorMsg  = null;    // null이면 정상
+        public volatile boolean cancelRequested = false; // 사용자 취소 요청 여부
         public final List<String> logs    = Collections.synchronizedList(new ArrayList<>());
         public final long createdAt       = System.currentTimeMillis();
         public volatile long updatedAt    = System.currentTimeMillis();
@@ -105,6 +106,28 @@ public class ProgressStore {
             p.updatedAt = System.currentTimeMillis();
             scheduleRemove(jobId, FINISHED_JOB_TTL_MS);
         }
+    }
+
+    /**
+     * 업로드 취소 요청.
+     * @return job 존재 여부
+     */
+    public static boolean requestCancel(String jobId) {
+        JobProgress p = STORE.get(jobId);
+        if (p == null) {
+            return false;
+        }
+        p.cancelRequested = true;
+        p.updatedAt = System.currentTimeMillis();
+        return true;
+    }
+
+    /**
+     * 업로드 취소 요청 여부 조회.
+     */
+    public static boolean isCancelRequested(String jobId) {
+        JobProgress p = STORE.get(jobId);
+        return p != null && p.cancelRequested;
     }
 
     /**

@@ -474,6 +474,8 @@ const AdminStep3 = (props) => {
     renderDebugUploadOptions,
     isAdmin,
     handleUpload,
+    handleCancelUpload,
+    cancellingUpload,
     handleValidate,
     validating,
   } = props;
@@ -649,6 +651,24 @@ const AdminStep3 = (props) => {
                 <div key={i} style={{ marginBottom: '2px', color: log.includes('❌') ? '#f87171' : log.includes('🎉') ? '#fbbf24' : '#4ade80', paddingBottom: '2px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>{log}</div>
               ))}
               <div ref={logEndRef} />
+            </div>
+            <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={handleCancelUpload}
+                disabled={cancellingUpload}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid #e2e8f0',
+                  background: cancellingUpload ? '#f1f5f9' : 'white',
+                  color: cancellingUpload ? '#94a3b8' : '#475569',
+                  fontWeight: 700,
+                  cursor: cancellingUpload ? 'not-allowed' : 'pointer',
+                  fontSize: '0.8rem'
+                }}
+              >
+                {cancellingUpload ? '취소 요청 중...' : '업로드 취소'}
+              </button>
             </div>
           </div>
         ) : (

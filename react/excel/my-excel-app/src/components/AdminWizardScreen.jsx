@@ -25,6 +25,18 @@ const AdminStageHero = ({ eyebrow, title, desc, status, meta = [] }) => (
   </div>
 );
 
+const AdminOpsStrip = ({ items = [] }) => (
+  <div className="admin-ops-strip">
+    {items.map(item => (
+      <div key={item.label} className={`admin-ops-card${item.tone ? ` ${item.tone}` : ''}`}>
+        <span className="admin-ops-label">{item.label}</span>
+        <strong className="admin-ops-value">{item.value}</strong>
+        {item.desc && <span className="admin-ops-desc">{item.desc}</span>}
+      </div>
+    ))}
+  </div>
+);
+
 const AdminStep0 = ({
   jobName,
   setJobName,
@@ -53,6 +65,40 @@ const AdminStep0 = ({
         { label: '샘플 파일', value: sampleFileName || sampleFile?.name || '없음' },
       ]}
     />
+    <AdminOpsStrip
+      items={[
+        { label: '작업명 점검', value: jobName?.trim() ? '완료' : '입력 필요', desc: jobName?.trim() || '사용자에게 보일 작업 이름을 정하세요.', tone: jobName?.trim() ? 'success' : 'warn' },
+        { label: '헤더 기준', value: `${headerRow || 1}행`, desc: '엑셀 헤더가 인식될 행 번호입니다.' },
+        { label: '샘플 양식', value: sampleFileName || sampleFile?.name || '등록 전', desc: sampleFileName || sampleFile?.name ? '사용자 다운로드 양식으로 활용됩니다.' : '샘플 파일을 등록해두면 문의가 줄어듭니다.', tone: sampleFileName || sampleFile?.name ? 'success' : 'warn' },
+        { label: '안내 문구', value: instructions?.trim() ? '작성됨' : '권장', desc: instructions?.trim() ? '사용자 화면에 바로 노출됩니다.' : '업로드 규칙과 예외사항을 적어두면 좋습니다.', tone: instructions?.trim() ? 'success' : 'warn' },
+      ]}
+    />
+    <div className="preflight-checklist-card admin-checklist-card">
+      <div className="preflight-checklist-head">
+        <div>
+          <div className="preflight-checklist-title">설정 전 체크포인트</div>
+          <div className="preflight-checklist-desc">저장 전에 운영자가 다시 확인해야 할 항목을 한곳에 모았습니다.</div>
+        </div>
+        <div className={`preflight-checklist-summary ${(jobName?.trim() && (sampleFileName || sampleFile?.name)) ? 'ok' : 'warn'}`}>
+          {(jobName?.trim() ? 1 : 0) + ((sampleFileName || sampleFile?.name) ? 1 : 0) + (instructions?.trim() ? 1 : 0)} / 3 점검
+        </div>
+      </div>
+      <div className="preflight-checklist-grid admin-checklist-grid">
+        {[
+          { label: '작업명', detail: jobName?.trim() || '사용자 화면 제목으로 노출됩니다.', ok: !!jobName?.trim() },
+          { label: '샘플 양식', detail: sampleFileName || sampleFile?.name || '등록해두면 재문의가 줄어듭니다.', ok: !!(sampleFileName || sampleFile?.name) },
+          { label: '안내 문구', detail: instructions?.trim() || '입력해두면 업로드 실패를 줄이는 데 도움이 됩니다.', ok: !!instructions?.trim() },
+        ].map(item => (
+          <div key={item.label} className={`preflight-check-item ${item.ok ? 'ok' : 'warn'}`}>
+            <div className="preflight-check-icon">{item.ok ? '✓' : '!'}</div>
+            <div>
+              <div className="preflight-check-label">{item.label}</div>
+              <div className="preflight-check-detail">{item.detail}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
     <div className="wiz-grid-2" style={{ marginTop: '28px' }}>
       <div className="wiz-field-group">
         <label className="wiz-label">작업명 <span style={{ color: '#ef4444' }}>*</span></label>
@@ -111,9 +157,13 @@ const AdminStep1 = ({
   SqlEditor,
   MySelect,
   MyMultiSelect,
-}) => (
-  <div className="wizard-panel">
-    <AdminStageHero
+}) => {
+  const childCount = Math.max(0, structs.length - 1);
+  const upsertCount = structs.filter(s => (s.upsert_keys || []).length > 0).length;
+
+  return (
+    <div className="wizard-panel">
+      <AdminStageHero
       eyebrow="Structure Design"
       title="테이블 구조와 SQL 설계"
       status="Step 2"
@@ -124,6 +174,14 @@ const AdminStep1 = ({
         { label: 'Post-SQL', value: `${postSqls.length}개` },
       ]}
     />
+      <AdminOpsStrip
+        items={[
+          { label: 'ROOT', value: structs[0]?.table || '미선택', desc: '업로드의 시작 테이블입니다.', tone: structs[0]?.table ? 'success' : 'warn' },
+          { label: '하위 테이블', value: `${childCount}개`, desc: childCount > 0 ? '계층 업로드가 구성되어 있습니다.' : '단일 테이블 업로드 구조입니다.' },
+          { label: 'UPSERT 설정', value: `${upsertCount}개`, desc: upsertCount > 0 ? '업데이트 키가 지정된 테이블이 있습니다.' : '모든 테이블이 INSERT 전용입니다.' },
+          { label: '행 단위 SQL', value: `${rowSqls.length}개`, desc: rowSqls.length > 0 ? '행마다 실행되는 후처리가 있습니다.' : '추가 후처리 없이 기본 저장만 수행합니다.' },
+        ]}
+      />
     <div className="wiz-section" style={{ marginTop: '28px' }}>
       <div className="wiz-section-title">테이블 구조</div>
       <div style={{ overflowX: 'auto' }}>
@@ -222,8 +280,9 @@ const AdminStep1 = ({
         </div>
       </div>
     </div>
-  </div>
-);
+    </div>
+  );
+};
 
 const AdminStep2 = ({
   file,
@@ -247,9 +306,13 @@ const AdminStep2 = ({
   previewLoading,
   isDragging,
   setIsDragging,
-}) => (
-  <div className="wizard-panel">
-    <AdminStageHero
+}) => {
+  const mappedCount = filteredCols.filter(c => currentAliasMapping[c.value]).length;
+  const unmappedCount = Math.max(0, filteredCols.length - mappedCount);
+
+  return (
+    <div className="wizard-panel">
+      <AdminStageHero
       eyebrow="Mapping Workbench"
       title="컬럼 매핑"
       status="Step 3"
@@ -260,6 +323,14 @@ const AdminStep2 = ({
         { label: '활성 Alias', value: activeAlias || 'ROOT' },
       ]}
     />
+      <AdminOpsStrip
+        items={[
+          { label: '매핑 완료', value: `${mappedCount}개`, desc: filteredCols.length ? `${filteredCols.length}개 대상 중 연결된 컬럼 수입니다.` : '테이블과 샘플 파일을 먼저 준비하세요.', tone: mappedCount > 0 ? 'success' : 'warn' },
+          { label: '미매핑', value: `${unmappedCount}개`, desc: unmappedCount > 0 ? '필요한 컬럼만 선별적으로 연결할 수 있습니다.' : '현재 표시된 컬럼은 모두 매핑되어 있습니다.' },
+          { label: '검색 상태', value: searchTerm?.trim() ? '필터 적용 중' : '전체 보기', desc: searchTerm?.trim() ? `"${searchTerm}" 기준으로 결과를 좁혀서 보는 중입니다.` : 'DB 컬럼 전체를 보고 있습니다.' },
+          { label: '샘플 헤더', value: `${excelHeaders.length}개`, desc: file ? '선택한 샘플 파일에서 헤더를 읽어왔습니다.' : '샘플 파일을 먼저 선택하면 매핑이 쉬워집니다.', tone: file ? 'success' : 'warn' },
+        ]}
+      />
     <div className="wiz-section" style={{ marginTop: '28px' }}>
       <div className="wiz-section-title" style={{ marginBottom: '10px' }}>샘플 엑셀 파일 선택 (헤더 파악용)</div>
       <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -272,16 +343,19 @@ const AdminStep2 = ({
     </div>
     {structs[0].table && (
       <div className="wiz-section">
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+        <div className="admin-alias-tabs">
           {structs.map(s => (
-            <button key={s.alias} onClick={() => setActiveAlias(s.alias)} style={{ padding: '8px 20px', borderRadius: '8px', border: '1px solid', cursor: 'pointer', fontSize: '0.85rem', fontWeight: activeAlias === s.alias ? 700 : 500, transition: 'all 0.15s', borderColor: activeAlias === s.alias ? 'transparent' : '#e2e8f0', background: activeAlias === s.alias ? '#6366f1' : 'white', color: activeAlias === s.alias ? 'white' : '#64748b' }}>
+            <button key={s.alias} onClick={() => setActiveAlias(s.alias)} className={`admin-alias-tab${activeAlias === s.alias ? ' active' : ''}`}>
               {s.alias} 테이블
             </button>
           ))}
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+        <div className="admin-mapping-toolbar">
           <span style={{ fontSize: '0.82rem', color: '#64748b' }}>총 <b style={{ color: '#1e293b' }}>{filteredCols.length}</b>개 컬럼 <span style={{ marginLeft: '6px', color: '#6366f1', fontWeight: 600 }}>(매핑됨: {filteredCols.filter(c => currentAliasMapping[c.value]).length}개)</span></span>
-          <input type="text" placeholder="컬럼 검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', width: '200px' }} />
+          <div className="workbench-search admin-mapping-search">
+            <span className="workbench-search-icon">⌕</span>
+            <input type="text" placeholder="컬럼 검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+          </div>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table className="data-table" style={{ fontSize: '0.82rem' }}>
@@ -351,8 +425,9 @@ const AdminStep2 = ({
         )}
       </div>
     )}
-  </div>
-);
+    </div>
+  );
+};
 
 const AdminStep3 = (props) => {
   const {
@@ -411,6 +486,31 @@ const AdminStep3 = (props) => {
     if (input) input.value = '';
   };
 
+  const hasFailedRows = Object.keys(failedRows).length > 0;
+  const editedRowCount = Object.keys(editedCells).length;
+  const launchChecklistItems = [
+    {
+      label: '파일 선택',
+      detail: file ? file.name : '업로드할 샘플 엑셀을 선택하세요.',
+      ok: !!file,
+    },
+    {
+      label: '미리보기 준비',
+      detail: previewData.length > 0 ? `${previewData.length.toLocaleString()}행이 현재 페이지에 로드됨` : '미리보기가 아직 비어 있습니다.',
+      ok: previewData.length > 0,
+    },
+    {
+      label: '실패 행 여부',
+      detail: hasFailedRows ? `${Object.keys(failedRows).length}행 점검 필요` : '현재 페이지 기준 실패 행이 없습니다.',
+      ok: !hasFailedRows,
+    },
+    {
+      label: '수정 반영',
+      detail: editedRowCount > 0 ? `${editedRowCount}행을 직접 수정했습니다.` : '직접 수정한 행은 아직 없습니다.',
+      ok: true,
+    },
+  ];
+
   return (
     <div className="wizard-panel">
       <AdminStageHero
@@ -428,10 +528,54 @@ const AdminStep3 = (props) => {
         <button onClick={() => setCurrentStep(0)} className="side-action-btn">← 설정 처음으로</button>
         <button onClick={handleSave} className="side-action-btn side-action-btn-green">💾 다시 저장</button>
       </div>
+      {!uploading && !uploadResult && (
+        <div className="preflight-checklist-card admin-checklist-card">
+          <div className="preflight-checklist-head">
+            <div>
+              <div className="preflight-checklist-title">실행 전 체크리스트</div>
+              <div className="preflight-checklist-desc">테스트 업로드를 누르기 전에 파일 상태와 수정 여부를 마지막으로 확인하세요.</div>
+            </div>
+            <div className={`preflight-checklist-summary ${launchChecklistItems.filter(item => item.ok).length >= 3 ? 'ok' : 'warn'}`}>
+              {launchChecklistItems.filter(item => item.ok).length} / {launchChecklistItems.length} 준비
+            </div>
+          </div>
+          <div className="preflight-checklist-grid admin-checklist-grid">
+            {launchChecklistItems.map(item => (
+              <div key={item.label} className={`preflight-check-item ${item.ok ? 'ok' : 'warn'}`}>
+                <div className="preflight-check-icon">{item.ok ? '✓' : '!'}</div>
+                <div>
+                  <div className="preflight-check-label">{item.label}</div>
+                  <div className="preflight-check-detail">{item.detail}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{ marginTop: '28px' }}>
         <div className="wiz-section-title" style={{ marginBottom: '16px' }}>🚀 데이터 업로드 (테스트 / 직접 실행)</div>
         {uploadResult ? (
           <div>
+            <div className="result-priority-strip" style={{ marginBottom: '14px' }}>
+              {uploadResult.status === 'ok' && (
+                <div className="result-priority-card priority-success">
+                  <div className="result-priority-title">다음 단계</div>
+                  <div className="result-priority-desc">업로드가 정상 완료되었습니다. 샘플 검증이 끝났다면 설정을 그대로 운영 흐름에 연결하면 됩니다.</div>
+                </div>
+              )}
+              {uploadResult.status === 'partial' && (
+                <div className="result-priority-card priority-warning">
+                  <div className="result-priority-title">우선 확인할 작업</div>
+                  <div className="result-priority-desc">실패 행을 다시 미리보기로 불러와 수정한 뒤 재업로드하는 경로가 가장 빠릅니다.</div>
+                </div>
+              )}
+              {uploadResult.status === 'err' && (
+                <div className="result-priority-card priority-danger">
+                  <div className="result-priority-title">우선 확인할 작업</div>
+                  <div className="result-priority-desc">오류 원문과 해결 가이드를 보고 설정 구조나 샘플 데이터를 먼저 점검하는 것이 좋습니다.</div>
+                </div>
+              )}
+            </div>
             {uploadResult.status === 'ok' && (
               <div style={{ textAlign: 'center', padding: '28px', background: '#f0fdf4', border: '1px solid #a7f3d0', borderRadius: '14px' }}>
                 <div style={{ fontSize: '2.8rem', marginBottom: '10px' }}>✅</div>

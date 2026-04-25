@@ -750,6 +750,103 @@ body {
   margin-bottom: 6px;
 }
 
+.admin-ops-strip {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-ops-card {
+  padding: 16px 16px;
+  border-radius: 18px;
+  border: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+}
+
+.admin-ops-card.success {
+  border-color: #bbf7d0;
+  background: linear-gradient(180deg, #f7fff9 0%, #effdf4 100%);
+}
+
+.admin-ops-card.warn {
+  border-color: #fed7aa;
+  background: linear-gradient(180deg, #fffaf3 0%, #fff7ed 100%);
+}
+
+.admin-ops-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.admin-ops-value {
+  display: block;
+  margin-top: 8px;
+  font-size: 1rem;
+  color: #0f172a;
+  line-height: 1.4;
+}
+
+.admin-ops-desc {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.76rem;
+  color: #64748b;
+  line-height: 1.55;
+}
+
+.admin-checklist-card {
+  margin-top: 18px;
+}
+
+.admin-checklist-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.admin-alias-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.admin-alias-tab {
+  padding: 9px 18px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: white;
+  color: #64748b;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.admin-alias-tab.active {
+  border-color: transparent;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  color: white;
+  box-shadow: 0 12px 24px rgba(79, 70, 229, 0.22);
+}
+
+.admin-mapping-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-mapping-search {
+  min-width: 220px;
+}
+
 /* ======================================= */
 /* USER UPLOAD REDESIGN                    */
 /* ======================================= */
@@ -1898,6 +1995,11 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .admin-ops-strip,
+  .admin-checklist-grid {
+    grid-template-columns: 1fr;
+  }
+
   .focus-hero-main,
   .focus-hero-side {
     padding: 18px 18px;
@@ -1922,6 +2024,10 @@ body {
   .workbench-toolbar,
   .log-toolbar {
     align-items: stretch;
+  }
+
+  .admin-mapping-search {
+    min-width: 100%;
   }
 }
 

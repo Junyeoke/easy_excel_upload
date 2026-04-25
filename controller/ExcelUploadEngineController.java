@@ -95,6 +95,7 @@ public class ExcelUploadEngineController {
         // 최대 10분(1200 * 500ms) 대기, 완료 시 조기 종료
         int lastLogIdx = 0;
         final int MAX_ITER = 1200;
+        boolean terminalEventSent = false;
 
         try (PrintWriter writer = response.getWriter()) {
 
@@ -128,6 +129,7 @@ public class ExcelUploadEngineController {
                 // ── 오류 종료 이벤트 ──────────────────────────────────
                 if (prog.done && prog.errorMsg != null) {
                     sseWrite(writer, "{\"type\":\"error\",\"msg\":\"" + sseEscape(prog.errorMsg) + "\"}");
+                    terminalEventSent = true;
                     break;
                 }
 
@@ -157,6 +159,7 @@ public class ExcelUploadEngineController {
                 // ── 정상 완료 이벤트 후 스트림 종료 ──────────────────
                 if (prog.done) {
                     sseWrite(writer, "{\"type\":\"done\"}");
+                    terminalEventSent = true;
                     break;
                 }
 
@@ -168,6 +171,10 @@ public class ExcelUploadEngineController {
             log.info("[SSE] 스트림 인터럽트 (jobId={})", jobId);
         } catch (Throwable e) {
             log.info("[SSE] 스트림 예외 종료 (jobId={}): {}", jobId, e.getMessage());
+        } finally {
+            if (terminalEventSent) {
+                clearProgressSessionArtifacts(request, jobId);
+            }
         }
     }
 
@@ -191,6 +198,17 @@ public class ExcelUploadEngineController {
                 .replace("\n", "\\n")
                 .replace("\r", "\\r")
                 .replace("\t", "\\t");
+    }
+
+    private void clearProgressSessionArtifacts(HttpServletRequest request, String jobId) {
+        if (request == null || jobId == null || jobId.trim().isEmpty()) {
+            return;
+        }
+        try {
+            request.getSession().removeAttribute("EXCEL_LOGS_" + jobId);
+            request.getSession().removeAttribute("EXCEL_PROGRESS_" + jobId);
+        } catch (Throwable ignore) {
+        }
     }
 
     // =====================================================================
@@ -1138,10 +1156,19 @@ private void handleClone(DataSource ds, Map<String, Object> params,
 
             service.closeWorkbook(wb);
 
-            // 이력 저장
-            repository.insertHistory(conn, UUID.randomUUID().toString(),
+            // 이력 저장 실패는 업로드 성공/실패를 뒤집지 않고 경고로 노출한다.
+            String historySaveError = repository.insertHistory(conn, UUID.randomUUID().toString(),
                     (String) params.get("job_name"), (String) params.get("file_name"),
                     successCnt, failCnt, errFileName, nowFuncU);
+            if (historySaveError != null) {
+                String historyWarning = "업로드 이력 저장 실패: " + historySaveError;
+                addLog.accept("⚠ " + historyWarning);
+                result.put("history_saved", false);
+                result.put("warning_msg", historyWarning);
+                log.warn("[ExcelUpload] {}", historyWarning);
+            } else {
+                result.put("history_saved", true);
+            }
 
             // Post-SQL 실행
             if (postSqls != null && !postSqls.isEmpty()) {
@@ -1163,6 +1190,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                     if (!failedRowMsgMap.isEmpty()) {
                         result.put("failed_row_msgs", failedRowMsgMap);
                     }
+                    clearProgressSessionArtifacts(request, jobId);
                     response.setContentType("application/json; charset=UTF-8");
                     response.getWriter().write(jsonToString(result));
                     return;
@@ -1183,14 +1211,16 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             if (!failedRowMsgMap.isEmpty()) {
                 result.put("failed_row_msgs", failedRowMsgMap);
             }
+            clearProgressSessionArtifacts(request, jobId);
 
         } catch (Throwable e) {
             log.error("[ExcelUpload] 💣 치명적 오류 발생 ({}행 쯤): {}", currentRowForLog, e.getMessage(), e);
             addLog.accept("💣 치명적 오류 (" + currentRowForLog + "행): " + e.getMessage());
             if (jobId != null) {
                 ProgressStore.error(jobId, e.getMessage()); // SSE에 오류 신호
-
-                        }if (conn != null) try {
+                clearProgressSessionArtifacts(request, jobId);
+            }
+            if (conn != null) try {
                 conn.rollback();
             } catch (Throwable ex) {
             }

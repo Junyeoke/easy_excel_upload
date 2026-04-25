@@ -253,47 +253,82 @@ public class ExcelUploadEngineRepository {
     // =====================================================================
 
     /**
-     * 업로드 이력 테이블 초기화 (없으면 생성)
+     * 업로드 이력 테이블 스키마 검증
      */
-    public void ensureHistoryTable(Connection conn, String nowFunc) {
+    public void ensureHistoryTable(Connection conn, String nowFunc) throws Exception {
         if (HISTORY_SCHEMA_VERIFIED.get()) {
             return;
         }
-        try (Statement initStmt = conn.createStatement()) {
-            try { initStmt.execute(
-                "CREATE TABLE IF NOT EXISTS ESO_EXCEL_UPLOAD_HISTORY " +
-                "(HIST_ID VARCHAR(64) PRIMARY KEY, JOB_NAME VARCHAR(128), FILE_NAME VARCHAR(256), " +
-                "SUCCESS_CNT INT, FAIL_CNT INT, ERROR_FILE VARCHAR(256), REG_DTTM DATETIME)");
-            } catch (Throwable ignore) {}
-            try { initStmt.execute(
-                "CREATE TABLE ESO_EXCEL_UPLOAD_HISTORY " +
-                "(HIST_ID VARCHAR2(64) PRIMARY KEY, JOB_NAME VARCHAR2(128), FILE_NAME VARCHAR2(256), " +
-                "SUCCESS_CNT NUMBER(10), FAIL_CNT NUMBER(10), ERROR_FILE VARCHAR2(256), REG_DTTM DATE)");
-            } catch (Throwable ignore) {}
-            try { initStmt.execute("ALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD COLUMN FAIL_CNT INT"); }          catch (Throwable ignore) {}
-            try { initStmt.execute("ALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD COLUMN ERROR_FILE VARCHAR(256)"); } catch (Throwable ignore) {}
-            try { initStmt.execute("ALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD FAIL_CNT NUMBER(10)"); }          catch (Throwable ignore) {}
-            try { initStmt.execute("ALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD ERROR_FILE VARCHAR2(256)"); }     catch (Throwable ignore) {}
-            HISTORY_SCHEMA_VERIFIED.set(true);
-        } catch (Throwable ignore) {}
+        validateTableAndColumns(conn, "ESO_EXCEL_UPLOAD_HISTORY",
+                new String[]{"HIST_ID", "JOB_NAME", "FILE_NAME", "SUCCESS_CNT", "FAIL_CNT", "ERROR_FILE", "REG_DTTM"},
+                "CREATE TABLE ESO_EXCEL_UPLOAD_HISTORY (\n" +
+                "    HIST_ID VARCHAR2(64) PRIMARY KEY,\n" +
+                "    JOB_NAME VARCHAR2(128),\n" +
+                "    FILE_NAME VARCHAR2(256),\n" +
+                "    SUCCESS_CNT NUMBER(10),\n" +
+                "    FAIL_CNT NUMBER(10),\n" +
+                "    ERROR_FILE VARCHAR2(256),\n" +
+                "    REG_DTTM DATE\n" +
+                ");");
+        HISTORY_SCHEMA_VERIFIED.set(true);
     }
 
-    private void ensureConfigSchema(Connection conn) {
+    private void ensureConfigSchema(Connection conn) throws Exception {
         if (CONFIG_SCHEMA_VERIFIED.get()) {
             return;
         }
-        try (Statement s = conn.createStatement()) {
-            try { s.execute("ALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD INSTRUCTIONS CLOB"); }        catch (Throwable ignore) {}
-            try { s.execute("ALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD COLUMN INSTRUCTIONS TEXT"); }  catch (Throwable ignore) {}
-            CONFIG_SCHEMA_VERIFIED.set(true);
-        } catch (Throwable ignore) {}
+        validateTableAndColumns(conn, "ESO_EXCEL_UPLOAD_CONFIG",
+                new String[]{"UPLOAD_ID", "JOB_NAME", "HEADER_ROW", "STRUCT_JSON", "MAPPING_JSON",
+                        "PRE_SQL_JSON", "POST_SQL_JSON", "ROW_SQL_JSON", "SAMPLE_FILE_NAME",
+                        "SAMPLE_FILE_ORG_NAME", "INSTRUCTIONS", "REG_DTTM"},
+                "ALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD INSTRUCTIONS CLOB;");
+        CONFIG_SCHEMA_VERIFIED.set(true);
+    }
+
+    private void validateTableAndColumns(Connection conn, String tableName, String[] requiredColumns,
+                                         String migrationGuideSql) throws Exception {
+        DatabaseMetaData metaData = conn.getMetaData();
+        if (!tableExists(metaData, tableName)) {
+            throw new Exception("필수 테이블이 없습니다: " + tableName + "\n필요 SQL 예시:\n" + migrationGuideSql);
+        }
+        for (String columnName : requiredColumns) {
+            if (!columnExists(metaData, tableName, columnName)) {
+                throw new Exception("필수 컬럼이 없습니다: " + tableName + "." + columnName +
+                        "\n필요 SQL 예시:\n" + migrationGuideSql);
+            }
+        }
+    }
+
+    private boolean tableExists(DatabaseMetaData metaData, String tableName) throws SQLException {
+        return metadataLookupExists(() -> metaData.getTables(null, null, tableName, null))
+                || metadataLookupExists(() -> metaData.getTables(null, null, tableName.toUpperCase(Locale.ROOT), null))
+                || metadataLookupExists(() -> metaData.getTables(null, null, tableName.toLowerCase(Locale.ROOT), null));
+    }
+
+    private boolean columnExists(DatabaseMetaData metaData, String tableName, String columnName) throws SQLException {
+        return metadataLookupExists(() -> metaData.getColumns(null, null, tableName, columnName))
+                || metadataLookupExists(() -> metaData.getColumns(null, null,
+                        tableName.toUpperCase(Locale.ROOT), columnName.toUpperCase(Locale.ROOT)))
+                || metadataLookupExists(() -> metaData.getColumns(null, null,
+                        tableName.toLowerCase(Locale.ROOT), columnName.toLowerCase(Locale.ROOT)));
+    }
+
+    private boolean metadataLookupExists(ResultSetSupplier supplier) throws SQLException {
+        try (ResultSet rs = supplier.get()) {
+            return rs.next();
+        }
+    }
+
+    @FunctionalInterface
+    private interface ResultSetSupplier {
+        ResultSet get() throws SQLException;
     }
 
     /**
      * 업로드 이력 저장
      */
-    public void insertHistory(Connection conn, String histId, String jobName, String fileName,
-                              int successCnt, int failCnt, String errorFile, String nowFunc) {
+    public String insertHistory(Connection conn, String histId, String jobName, String fileName,
+                                int successCnt, int failCnt, String errorFile, String nowFunc) {
         try (PreparedStatement histPs = conn.prepareStatement(
                 "INSERT INTO ESO_EXCEL_UPLOAD_HISTORY " +
                 "(HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM) " +
@@ -306,7 +341,13 @@ public class ExcelUploadEngineRepository {
             histPs.setString(6, errorFile);
             histPs.executeUpdate();
             conn.commit();
-        } catch (Throwable ignore) {}
+            return null;
+        } catch (Throwable e) {
+            String message = e.getMessage() != null ? e.getMessage() : e.toString();
+            log.warn("[ExcelUpload] 업로드 이력 저장 실패 - histId={}, jobName={}, fileName={}: {}",
+                    histId, jobName, fileName, message, e);
+            return message;
+        }
     }
 
     /**

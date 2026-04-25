@@ -15,11 +15,19 @@ import java.util.concurrent.*;
  *
  * 개선 포인트:
  *   - ConcurrentHashMap 기반 → 멀티스레드 안전
- *   - 완료 후 1시간 자동 TTL 정리
+ *   - 진행 중 Job은 1시간, 완료 Job은 10분 TTL 후 자동 정리
  *   - SSE 스트리밍 스레드가 직접 읽어 push 가능
  * =====================================================================
  */
 public class ProgressStore {
+    private static final long ACTIVE_JOB_TTL_MS = 3_600_000L;
+    private static final long FINISHED_JOB_TTL_MS = 600_000L;
+    private static final ScheduledExecutorService CLEANUP_EXECUTOR =
+        Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "excel-progress-cleanup");
+            t.setDaemon(true);
+            return t;
+        });
 
     // ── 내부 상태 클래스 ──────────────────────────────────────────────
     public static class JobProgress {
@@ -82,6 +90,7 @@ public class ProgressStore {
             p.current   = p.total;
             p.done      = true;
             p.updatedAt = System.currentTimeMillis();
+            scheduleRemove(jobId, FINISHED_JOB_TTL_MS);
         }
     }
 
@@ -94,6 +103,7 @@ public class ProgressStore {
             p.errorMsg  = msg;
             p.done      = true;
             p.updatedAt = System.currentTimeMillis();
+            scheduleRemove(jobId, FINISHED_JOB_TTL_MS);
         }
     }
 
@@ -111,11 +121,22 @@ public class ProgressStore {
         STORE.remove(jobId);
     }
 
+    public static void scheduleRemove(String jobId, long delayMs) {
+        if (jobId == null || jobId.trim().isEmpty()) {
+            return;
+        }
+        CLEANUP_EXECUTOR.schedule(() -> STORE.remove(jobId), Math.max(delayMs, 0L), TimeUnit.MILLISECONDS);
+    }
+
     // =====================================================================
-    // TTL 자동 정리 (생성 후 1시간 초과 항목 제거)
+    // TTL 자동 정리
     // =====================================================================
     private static void cleanup() {
         long now = System.currentTimeMillis();
-        STORE.entrySet().removeIf(e -> (now - e.getValue().createdAt) > 3_600_000L);
+        STORE.entrySet().removeIf(e -> {
+            JobProgress p = e.getValue();
+            long ttl = p.done ? FINISHED_JOB_TTL_MS : ACTIVE_JOB_TTL_MS;
+            return (now - p.updatedAt) > ttl;
+        });
     }
 }

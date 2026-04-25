@@ -53,40 +53,18 @@ public class ExcelUploadEngineService {
         return sql == null ? null : String.valueOf(sql);
     }
 
-    private void logPreparedSql(String phase, String sql, List<String> paramOrder, Map<String, ?> data) {
+    private void logPreparedSql(String sql) {
         if (sql == null || sql.trim().isEmpty()) {
             return;
         }
-        StringBuilder params = new StringBuilder();
-        if (paramOrder != null && data != null) {
-            for (int i = 0; i < paramOrder.size(); i++) {
-                String key = paramOrder.get(i);
-                if (i > 0) {
-                    params.append(", ");
-                }
-                params.append(key).append("=").append(formatSqlValue(data.get(key)));
-            }
-        }
-        sqlLog.info("[ExcelUpload][{}] SQL={}{}", phase, sql,
-                params.length() > 0 ? " | params={" + params + "}" : "");
+        sqlLog.info(sql.trim());
     }
 
-    private void logPlainSql(String phase, String sql) {
+    private void logPlainSql(String sql) {
         if (sql == null || sql.trim().isEmpty()) {
             return;
         }
-        sqlLog.info("[ExcelUpload][{}] SQL={}", phase, sql);
-    }
-
-    private String formatSqlValue(Object value) {
-        if (value == null) {
-            return "NULL";
-        }
-        String text = String.valueOf(value).replace("\r", "\\r").replace("\n", "\\n");
-        if (text.length() > 300) {
-            text = text.substring(0, 300) + "...(" + text.length() + " chars)";
-        }
-        return "'" + text + "'";
+        sqlLog.info(sql.trim());
     }
 
     // =====================================================================
@@ -447,7 +425,7 @@ public class ExcelUploadEngineService {
                         if (val.isEmpty() && numericColumns != null && numericColumns.contains(col.toLowerCase())) val = "0";
                         updPs.setString(pi + 1, val);
                     }
-                    logPreparedSql("UPDATE-BATCH-ADD", getCachedSqlText(psCache, updCacheKey), updParamOrder, data);
+                    logPreparedSql(getCachedSqlText(psCache, updCacheKey));
                     updPs.addBatch();
 
                     // 배치 트래커에 UPDATE 행 등록
@@ -508,7 +486,7 @@ public class ExcelUploadEngineService {
                         if (sql != null && !sql.trim().isEmpty()) {
                             String trimmedSql = replaceTokens(sql.trim(), tokens).trim();
                             if (!trimmedSql.startsWith("--")) {
-                                logPlainSql("ROW-SQL-BATCH-ADD", trimmedSql);
+                                logPlainSql(trimmedSql);
                                 rowStmt.addBatch(trimmedSql);
                             }
                         }
@@ -565,7 +543,7 @@ public class ExcelUploadEngineService {
             if (val.isEmpty() && numericColumns != null && numericColumns.contains(col.toLowerCase())) val = "0";
             ps.setString(pi + 1, val);
         }
-        logPreparedSql("INSERT-BATCH-ADD", getCachedSqlText(psCache, cacheKey), paramOrder, data);
+        logPreparedSql(getCachedSqlText(psCache, cacheKey));
         ps.addBatch();
 
         // Row 추적 (배치 오류 식별용)
@@ -622,7 +600,7 @@ public class ExcelUploadEngineService {
                 String val = String.valueOf(data.get(keyCols.get(i))).trim();
                 chkPs.setString(i + 1, val);
             }
-            logPreparedSql("UPSERT-CHECK", chkSql, keyCols, data);
+            logPreparedSql(chkSql);
 
             try (ResultSet rs = chkPs.executeQuery()) {
                 return rs.next() && rs.getInt(1) > 0;
@@ -664,8 +642,6 @@ public class ExcelUploadEngineService {
 
                 if ("_TMP_KEY_PS_".equals(key)) {
                     try {
-                        sqlLog.info("[ExcelUpload][BATCH-EXEC] key={} type=TEMP rows={}", key,
-                                trackedRows != null ? trackedRows.size() : 0);
                         ps.executeBatch();
                     } catch (Throwable ignore) {
                         log.info("[ExcelUpload] _TMP_KEY_PS_ 배치 실행 중 무시된 오류: {}", ignore.getMessage());
@@ -677,11 +653,6 @@ public class ExcelUploadEngineService {
                 boolean isUpdateBatch = key.startsWith("UPD::");
 
                 try {
-                    sqlLog.info("[ExcelUpload][BATCH-EXEC] key={} type={} rows={} sql={}",
-                            key,
-                            isUpdateBatch ? "UPDATE" : "INSERT",
-                            trackedRows != null ? trackedRows.size() : "unknown",
-                            getCachedSqlText(psCache, key));
                     int[] updateCounts = ps.executeBatch();
                     counters[0] += (trackedRows != null) ? trackedRows.size() : updateCounts.length;
                     if (isUpdateBatch) log.info("[ExcelUpload] UPDATE 배치 {}건 완료", updateCounts.length);
@@ -741,8 +712,6 @@ public class ExcelUploadEngineService {
 
             } else if (obj instanceof Statement) {
                 try {
-                    sqlLog.info("[ExcelUpload][BATCH-EXEC] key={} type=STATEMENT rows={}", key,
-                            trackedRows != null ? trackedRows.size() : "unknown");
                     ((Statement) obj).executeBatch();
                 }
                 catch (Throwable e) {
@@ -844,7 +813,7 @@ public class ExcelUploadEngineService {
                     String trimmedSql = sql.trim();
                     if (!trimmedSql.startsWith("--")) {
                         log.info("[ExcelUpload] {} 실행: {}", sqlType, trimmedSql);
-                        logPlainSql(sqlType, trimmedSql);
+                        logPlainSql(trimmedSql);
                         stmt.execute(trimmedSql);
                     }
                 }

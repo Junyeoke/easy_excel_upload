@@ -994,10 +994,6 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             }
 
             int[] counters = {0, 0}; // [성공, 실패]
-            org.apache.poi.ss.usermodel.DataFormatter dataFormatter =
-                    new org.apache.poi.ss.usermodel.DataFormatter();
-            org.apache.poi.ss.usermodel.FormulaEvaluator formulaEvaluator =
-                    wb.getCreationHelper().createFormulaEvaluator();
 
             addLog.accept("▶️ 데이터 행 삽입 시작...");
 
@@ -1040,8 +1036,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
 
                 try {
                     service.cascadeExcelInsert(conn, row, structs, allMaps, "ROOT", null,
-                            iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr,
-                            dataFormatter, formulaEvaluator);
+                            iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr);
                 } catch (Exception rowEx) {
                     errorRows.add(row);
                     errorMsgs.add(rowEx.getMessage());

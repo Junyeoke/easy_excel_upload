@@ -41,17 +41,6 @@ public class ExcelUploadEngineRepository {
         return dataSource;
     }
 
-    private String sqlValue(Object value) {
-        if (value == null) {
-            return "NULL";
-        }
-        String text = String.valueOf(value).replace("\r", "\\r").replace("\n", "\\n");
-        if (text.length() > 300) {
-            text = text.substring(0, 300) + "...(" + text.length() + " chars)";
-        }
-        return "'" + text + "'";
-    }
-
     // =====================================================================
     // 1. FastSequenceManager (시퀀스 채번 - 블록 단위 캐싱)
     // =====================================================================
@@ -352,14 +341,7 @@ public class ExcelUploadEngineRepository {
             histPs.setInt(4, successCnt);
             histPs.setInt(5, failCnt);
             histPs.setString(6, errorFile);
-            sqlLog.info("[ExcelUpload][HISTORY-INSERT] SQL={} | params={{HIST_ID={}, JOB_NAME={}, FILE_NAME={}, SUCCESS_CNT={}, FAIL_CNT={}, ERROR_FILE={}}}",
-                    sql,
-                    sqlValue(histId),
-                    sqlValue(jobName == null || jobName.trim().isEmpty() ? "일반 데이터 업로드" : jobName),
-                    sqlValue(fileName),
-                    successCnt,
-                    failCnt,
-                    sqlValue(errorFile));
+            sqlLog.info(sql);
             histPs.executeUpdate();
             conn.commit();
             return null;
@@ -428,8 +410,7 @@ public class ExcelUploadEngineRepository {
             ps.setString(2, tableName);
             ps.setString(3, pkCol);
             ps.setString(4, pkVal);
-            sqlLog.info("[ExcelUpload][TEMP-KEY-BATCH-ADD] SQL={} | params={{alias={}, table_name={}, pk_col={}, pk_val={}}}",
-                    sql, sqlValue(alias), sqlValue(tableName), sqlValue(pkCol), sqlValue(pkVal));
+            sqlLog.info(sql);
             ps.addBatch();
         } catch (Throwable e) {}
     }

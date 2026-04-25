@@ -478,6 +478,7 @@ const AdminStep3 = (props) => {
     cancellingUpload,
     handleValidate,
     validating,
+    validationSummary,
   } = props;
 
   const resetAdminUploadState = () => {
@@ -700,17 +701,47 @@ const AdminStep3 = (props) => {
             {previewData.length > 0 && (
               <div style={{ border: `1px solid ${Object.keys(failedRows).length > 0 ? '#fecdd3' : '#e5e8eb'}`, borderRadius: '10px', overflow: 'hidden', marginBottom: '14px' }}>
                 {Object.keys(failedRows).length > 0 && (
-                  <div style={{ background: '#fff1f2', borderBottom: '1px solid #fecdd3', padding: '8px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                      <span>🚨</span>
-                      <span style={{ fontWeight: 700, color: '#e11d48', fontSize: '0.82rem' }}>{failedRows.__unknown__ ? `${uploadResult?.fail_cnt ?? '일부'}건 실패` : `${Object.keys(failedRows).length}행 실패`}</span>
-                      <span style={{ color: '#9f1239', fontSize: '0.75rem' }}>{failedRows.__unknown__ ? '오류 리포트를 다운로드하거나 수정 후 재업로드하세요.' : '빨간 행을 수정 후 재업로드하세요.'}</span>
+                  <>
+                    <div style={{ background: '#fff1f2', borderBottom: '1px solid #fecdd3', padding: '8px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                        <span>🚨</span>
+                        <span style={{ fontWeight: 700, color: '#e11d48', fontSize: '0.82rem' }}>{failedRows.__unknown__ ? `${uploadResult?.fail_cnt ?? '일부'}건 실패` : `${Object.keys(failedRows).length}행 실패`}</span>
+                        <span style={{ color: '#9f1239', fontSize: '0.75rem' }}>{failedRows.__unknown__ ? '오류 리포트를 다운로드하거나 수정 후 재업로드하세요.' : '빨간 행을 수정 후 재업로드하세요.'}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '5px' }}>
+                        <button onClick={moveToFirstFailedRow} style={{ fontSize: '0.7rem', padding: '2px 9px', borderRadius: '5px', border: '1px solid #fca5a5', background: 'white', color: '#e11d48', cursor: 'pointer', fontWeight: 600 }}>🔴 실패 행으로</button>
+                        <button onClick={() => setFailedRows({})} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '5px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', cursor: 'pointer' }}>✕</button>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '5px' }}>
-                      <button onClick={moveToFirstFailedRow} style={{ fontSize: '0.7rem', padding: '2px 9px', borderRadius: '5px', border: '1px solid #fca5a5', background: 'white', color: '#e11d48', cursor: 'pointer', fontWeight: 600 }}>🔴 실패 행으로</button>
-                      <button onClick={() => setFailedRows({})} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '5px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', cursor: 'pointer' }}>✕</button>
-                    </div>
-                  </div>
+                    {validationSummary?.totalErrItems > 0 && (
+                      <div style={{ margin: '8px 10px 10px', border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: '8px', padding: '8px 10px' }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.76rem', color: '#9a3412', marginBottom: '6px' }}>🔎 검증 요약 리포트</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: '8px' }}>
+                          <div>
+                            <div style={{ fontSize: '0.69rem', color: '#7c2d12', marginBottom: '4px', fontWeight: 700 }}>오류 유형별</div>
+                            {validationSummary.topTypes.map(([name, cnt]) => (
+                              <div key={name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#7c2d12', marginBottom: '1px' }}>
+                                <span>{name}</span><strong>{cnt}건</strong>
+                              </div>
+                            ))}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.69rem', color: '#7c2d12', marginBottom: '4px', fontWeight: 700 }}>문제 컬럼 TOP</div>
+                            {validationSummary.topColumns.map(([name, cnt]) => (
+                              <div key={name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#7c2d12', marginBottom: '1px' }}>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>{name}</span><strong>{cnt}건</strong>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {validationSummary.unknownCnt > 0 && (
+                          <div style={{ marginTop: '4px', fontSize: '0.68rem', color: '#9a3412' }}>
+                            행 특정 불가 오류: {validationSummary.unknownCnt}건
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
                 <div style={{ background: '#f9fafb', padding: '8px 14px', borderBottom: '1px solid #e5e8eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                   <span style={{ fontWeight: 700, fontSize: '0.82rem', color: '#191f28', display: 'flex', alignItems: 'center', gap: '6px' }}>

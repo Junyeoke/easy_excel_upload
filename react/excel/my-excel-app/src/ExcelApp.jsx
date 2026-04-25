@@ -611,6 +611,47 @@ function ExcelApp() {
     return '저장 오류';
   };
 
+  const buildValidationSummary = (failedMap) => {
+    const byType = {};
+    const byColumn = {};
+    let unknownCnt = 0;
+    let totalErrItems = 0;
+
+    Object.entries(failedMap || {}).forEach(([rowKey, msg]) => {
+      if (rowKey === '__unknown__') {
+        unknownCnt += 1;
+        return;
+      }
+      const parsed = parseFailedColsFromMsg(msg);
+      if (!parsed.length) {
+        const fallbackType = friendlyFailMsg(msg);
+        byType[fallbackType] = (byType[fallbackType] || 0) + 1;
+        byColumn['행 특정 불가'] = (byColumn['행 특정 불가'] || 0) + 1;
+        totalErrItems += 1;
+        return;
+      }
+      parsed.forEach(item => {
+        const typeKey = item.errType || friendlyFailMsg(msg);
+        const colKey = item.colLabel || item.dbCol || '행 특정 불가';
+        byType[typeKey] = (byType[typeKey] || 0) + 1;
+        byColumn[colKey] = (byColumn[colKey] || 0) + 1;
+        totalErrItems += 1;
+      });
+    });
+
+    const topTypes = Object.entries(byType).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const topColumns = Object.entries(byColumn).sort((a, b) => b[1] - a[1]).slice(0, 8);
+
+    return {
+      totalErrItems,
+      unknownCnt,
+      topTypes,
+      topColumns,
+    };
+  };
+
+  const validationSummary = buildValidationSummary(failedRows);
+
   const handleUpload = async () => {
     if (!file) return;
     const cr = await Swal.fire({ title: '데이터 업로드 실행', html: '데이터를 서버로 전송하시겠습니까?<br><small style="color:#ef4444">대량 데이터는 수 분이 소요될 수 있습니다.</small>', icon: 'question', showCancelButton: true, confirmButtonColor: '#6366f1', cancelButtonColor: '#94a3b8', confirmButtonText: '🚀 진행', cancelButtonText: '취소', reverseButtons: true });
@@ -957,6 +998,7 @@ function ExcelApp() {
     cancellingUpload,
     handleValidate,
     validating,
+    validationSummary,
     setShowOnlyFailedRows,
   };
 
@@ -1047,6 +1089,7 @@ function ExcelApp() {
     cancellingUpload,
     handleValidate,
     validating,
+    validationSummary,
   };
 
   const renderStep = () => {

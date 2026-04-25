@@ -89,6 +89,7 @@ const UserWorkbenchStep = ({
   cancellingUpload,
   handleValidate,
   validating,
+  validationSummary,
   setShowOnlyFailedRows,
   downloadSampleFile,
 }) => {
@@ -586,18 +587,48 @@ const UserWorkbenchStep = ({
                   </div>
 
                   {Object.keys(failedRows).length > 0 && (
-                    <div className="error-banner-redesign">
-                      <div>
-                        <div className="error-banner-title">{hasUnknownFailedRows ? `${uploadResult?.fail_cnt ?? failedRowCount}건 실패` : `${failedRowCount}개 행에 오류가 있습니다.`}</div>
-                        <div className="error-banner-desc">{hasUnknownFailedRows ? '정확한 행 번호를 특정하지 못했습니다. 오류 리포트와 원문 로그를 함께 확인해 주세요.' : '실패 행 이동으로 첫 문제 구간으로 이동한 뒤, 빨간 셀만 수정하면 됩니다.'}</div>
+                    <>
+                      <div className="error-banner-redesign">
+                        <div>
+                          <div className="error-banner-title">{hasUnknownFailedRows ? `${uploadResult?.fail_cnt ?? failedRowCount}건 실패` : `${failedRowCount}개 행에 오류가 있습니다.`}</div>
+                          <div className="error-banner-desc">{hasUnknownFailedRows ? '정확한 행 번호를 특정하지 못했습니다. 오류 리포트와 원문 로그를 함께 확인해 주세요.' : '실패 행 이동으로 첫 문제 구간으로 이동한 뒤, 빨간 셀만 수정하면 됩니다.'}</div>
+                        </div>
+                        <div className="error-banner-actions">
+                          {hasKnownFailedRows && <button className="side-action-btn side-action-btn-danger" onClick={moveToFirstFailedRow}>첫 실패 행으로 이동</button>}
+                          <button className="side-action-btn" onClick={resetCorrectionState}>표시 초기화</button>
+                        </div>
                       </div>
-                      <div className="error-banner-actions">
-                        {hasKnownFailedRows && <button className="side-action-btn side-action-btn-danger" onClick={moveToFirstFailedRow}>첫 실패 행으로 이동</button>}
-                        <button className="side-action-btn" onClick={resetCorrectionState}>표시 초기화</button>
-                      </div>
-                    </div>
+                      {validationSummary.totalErrItems > 0 && (
+                        <div style={{ marginTop: '10px', border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: '10px', padding: '10px 12px' }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#9a3412', marginBottom: '8px' }}>🔎 검증 요약 리포트</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: '10px' }}>
+                            <div>
+                              <div style={{ fontSize: '0.73rem', color: '#7c2d12', marginBottom: '5px', fontWeight: 700 }}>오류 유형별</div>
+                              {validationSummary.topTypes.map(([name, cnt]) => (
+                                <div key={name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: '#7c2d12', marginBottom: '2px' }}>
+                                  <span>{name}</span><strong>{cnt}건</strong>
+                                </div>
+                              ))}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '0.73rem', color: '#7c2d12', marginBottom: '5px', fontWeight: 700 }}>문제 컬럼 TOP</div>
+                              {validationSummary.topColumns.map(([name, cnt]) => (
+                                <div key={name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: '#7c2d12', marginBottom: '2px' }}>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>{name}</span><strong>{cnt}건</strong>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          {validationSummary.unknownCnt > 0 && (
+                            <div style={{ marginTop: '6px', fontSize: '0.72rem', color: '#9a3412' }}>
+                              행 특정 불가 오류: {validationSummary.unknownCnt}건
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
                   )}
-
+                  
                   {hasPreview && (
                     <>
                       <div className="workbench-toolbar">

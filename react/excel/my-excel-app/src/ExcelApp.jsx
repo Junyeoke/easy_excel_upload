@@ -93,6 +93,7 @@ function ExcelApp() {
   const [editedCells, setEditedCells] = useState({});
   const [failedRows, setFailedRows] = useState({}); // { '3': '오류메시지', ... }
   const [uploading, setUploading] = useState(false);
+  const [validating, setValidating] = useState(false);
   const [showOnlyFailedRows, setShowOnlyFailedRows] = useState(false);
   const [selectedErrorRow, setSelectedErrorRow] = useState(null);
   const [showDetailedUploadLogs, setShowDetailedUploadLogs] = useState(false);
@@ -780,6 +781,62 @@ function ExcelApp() {
     }
   };
 
+  const handleValidate = async () => {
+    if (!file) return;
+    const preparedColsCache = await ensureStructColumnsLoaded(structs);
+    const sanitizedMapping = sanitizeMappingForStructs(mapping, structs, preparedColsCache);
+    setMapping(sanitizedMapping);
+
+    const fd = new FormData();
+    fd.append('mode', 'validate');
+    fd.append('file', file);
+    fd.append('header_row', headerRow);
+    fd.append('struct_json_b64', encodeSafeBase64(JSON.stringify(structs)));
+    fd.append('mapping_json_b64', encodeSafeBase64(JSON.stringify(sanitizedMapping)));
+    if (Object.keys(editedCells).length > 0) {
+      fd.append('edited_rows_b64', encodeSafeBase64(JSON.stringify(editedCells)));
+    }
+
+    const tid = toast.loading('🔎 검증 실행 중...', { position: 'top-left' });
+    setValidating(true);
+    try {
+      const res = await post(API_URL, fd);
+      if (res.status !== 'ok') {
+        toast.update(tid, { render: `❌ 검증 실패: ${res.msg || '서버 오류'}`, type: 'error', isLoading: false, autoClose: 3500 });
+        return;
+      }
+
+      const failedMsgs = (res.failed_row_msgs && Object.keys(res.failed_row_msgs).length > 0)
+        ? res.failed_row_msgs : {};
+      setFailedRows(failedMsgs);
+
+      if (Object.keys(failedMsgs).length > 0) {
+        toast.update(tid, {
+          render: `⚠️ 검증 완료: ${res.fail_cnt || Object.keys(failedMsgs).length}건 오류`,
+          type: 'warning',
+          isLoading: false,
+          autoClose: 4000
+        });
+        const firstFailedRowNum = Math.min(...Object.keys(failedMsgs).map(Number));
+        if (!isNaN(firstFailedRowNum) && firstFailedRowNum > 0) {
+          const failedPage = Math.ceil(firstFailedRowNum / previewPageSize);
+          if (failedPage !== previewPage && failedPage >= 1) {
+            setPreviewPage(failedPage);
+            fetchPreviewPage(file, failedPage, headerRow, null);
+          }
+          setSelectedErrorRow(firstFailedRowNum);
+        }
+      } else {
+        setSelectedErrorRow(null);
+        toast.update(tid, { render: '✅ 검증 통과: 업로드 가능', type: 'success', isLoading: false, autoClose: 3000 });
+      }
+    } catch {
+      toast.update(tid, { render: '❌ 검증 중 통신 오류', type: 'error', isLoading: false, autoClose: 3500 });
+    } finally {
+      setValidating(false);
+    }
+  };
+
   const updateMappingVal = (dbCol, val) => setMapping(prev => ({ ...prev, [activeAlias]: { ...prev[activeAlias], [dbCol]: val || '' } }));
 
   const handleReplaceSetup = async (dbCol, currentMapVal) => {
@@ -866,6 +923,8 @@ function ExcelApp() {
     setEditedCells,
     renderDebugUploadOptions,
     handleUpload,
+    handleValidate,
+    validating,
     setShowOnlyFailedRows,
   };
 
@@ -952,6 +1011,8 @@ function ExcelApp() {
     renderDebugUploadOptions,
     isAdmin,
     handleUpload,
+    handleValidate,
+    validating,
   };
 
   const renderStep = () => {

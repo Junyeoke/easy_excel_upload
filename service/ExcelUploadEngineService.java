@@ -658,6 +658,132 @@ public class ExcelUploadEngineService {
     }
 
     // =====================================================================
+    // 2-1. 업로드 전 검증 전용 (DB 저장 없음)
+    // =====================================================================
+    @SuppressWarnings("unchecked")
+    public void validateCascadeRow(
+            Connection conn,
+            org.apache.poi.ss.usermodel.Row row,
+            List<?> structs,
+            Map<?, ?> allMaps,
+            String currentAlias,
+            String parentId,
+            Map<String, Object> validateCache
+    ) throws Exception {
+        Map<String, Object> currentStruct = null;
+        for (Object sObj : structs) {
+            Map<String, Object> candidate = (Map<String, Object>) sObj;
+            if (currentAlias.equals(candidate.get("alias"))) {
+                currentStruct = candidate;
+                break;
+            }
+        }
+        if (currentStruct == null) return;
+
+        String tableName = (String) currentStruct.get("table");
+        if (!isValidSqlIdentifier(tableName)) throw new Exception("Invalid table name: " + tableName);
+
+        Map<?, ?> aliasMap = (Map<?, ?>) allMaps.get(currentAlias);
+        if (aliasMap == null) aliasMap = new LinkedHashMap<>();
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : aliasMap.entrySet()) {
+            String dbCol = String.valueOf(entry.getKey());
+            if (!isValidSqlIdentifier(dbCol)) throw new Exception("Invalid dest column: [" + dbCol + "]");
+
+            String mappingVal = String.valueOf(entry.getValue());
+            if (mappingVal == null || mappingVal.trim().isEmpty() || "null".equals(mappingVal)) continue;
+
+            data.put(dbCol, resolveMappingValueForValidation(row, mappingVal.trim()));
+        }
+
+        String pkCol = (String) currentStruct.get("pk_col");
+        if (pkCol != null && !pkCol.trim().isEmpty()) data.put(pkCol, "__AUTO__");
+        if (parentId != null) {
+            String fkCol = (String) currentStruct.get("fk");
+            if (fkCol != null && !fkCol.trim().isEmpty()) data.put(fkCol, parentId);
+        }
+
+        Map<String, Object> colConstraints = (Map<String, Object>) validateCache.get("_VAL_COL_CONSTRAINTS_:" + tableName);
+        if (colConstraints == null) {
+            colConstraints = repository.getColumnConstraints(conn, tableName);
+            validateCache.put("_VAL_COL_CONSTRAINTS_:" + tableName, colConstraints);
+        }
+        Map<String, Integer> colLengths = (Map<String, Integer>) colConstraints.get("lengths");
+        Set<String> colNotNulls = (Set<String>) colConstraints.get("notnulls");
+
+        List<String> colErrors = new ArrayList<>();
+        for (Map.Entry<String, Object> entry : data.entrySet()) {
+            String colLower = entry.getKey().toLowerCase();
+            String val = entry.getValue() == null ? "" : String.valueOf(entry.getValue()).trim();
+
+            if (colLengths != null) {
+                Integer maxLen = colLengths.get(colLower);
+                if (maxLen != null && maxLen > 0 && val.length() > maxLen) {
+                    colErrors.add(entry.getKey() + ":길이초과(최대" + maxLen + "자,입력" + val.length() + "자)");
+                }
+            }
+            if (colNotNulls != null && colNotNulls.contains(colLower)) {
+                boolean isPkOrFk = colLower.equals(pkCol != null ? pkCol.toLowerCase() : "__none__")
+                        || (parentId != null && colLower.equals(
+                                currentStruct.get("fk") != null ? String.valueOf(currentStruct.get("fk")).toLowerCase() : "__none__"));
+                if (!isPkOrFk && val.isEmpty()) {
+                    colErrors.add(entry.getKey() + ":필수값누락");
+                }
+            }
+        }
+        if (!colErrors.isEmpty()) throw new Exception("[MULTI_COL] " + String.join("|", colErrors));
+
+        for (Object sObj : structs) {
+            Map<String, Object> child = (Map<String, Object>) sObj;
+            String parentAlias = String.valueOf(child.get("parent"));
+            String childAlias = String.valueOf(child.get("alias"));
+            if (currentAlias.equals(parentAlias)
+                    && childAlias != null && !childAlias.trim().isEmpty()
+                    && !currentAlias.equals(childAlias)) {
+                validateCascadeRow(conn, row, structs, allMaps, childAlias, "__PARENT__", validateCache);
+            }
+        }
+    }
+
+    private String resolveMappingValueForValidation(org.apache.poi.ss.usermodel.Row row, String mappingVal) throws Exception {
+        if ("_AUTO_SEQ_".equals(mappingVal)) return "__AUTO__";
+        if (mappingVal.startsWith("_FIXED_:")) return mappingVal.substring(8);
+
+        if (mappingVal.startsWith("_REPLACE_:")) {
+            String[] parts = mappingVal.split(":", 3);
+            if (parts.length < 3) return "";
+            int excelIdx = parseExcelIndex(parts[1]);
+            String rawVal = getCellValue(row.getCell(excelIdx)).trim();
+            String rulesStr = parts[2];
+            for (String rule : rulesStr.split("\\|\\|")) {
+                String[] kv = rule.split("==", 2);
+                if (kv.length == 2 && rawVal.equals(kv[0].trim())) {
+                    rawVal = kv[1].trim();
+                    break;
+                }
+            }
+            return rawVal;
+        }
+
+        if (mappingVal.startsWith("_UNIQUE_:")) {
+            int excelIdx = parseExcelIndex(mappingVal.split(":", 2)[1]);
+            return getCellValue(row.getCell(excelIdx)).trim();
+        }
+
+        int excelIdx = parseExcelIndex(mappingVal);
+        return getCellValue(row.getCell(excelIdx)).trim();
+    }
+
+    private int parseExcelIndex(String raw) throws Exception {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (Throwable e) {
+            throw new Exception("Invalid excel column index: " + raw);
+        }
+    }
+
+    // =====================================================================
     // 3. Batch 실행 / 캐시 정리
     // =====================================================================
 

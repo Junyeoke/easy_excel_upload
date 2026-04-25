@@ -285,6 +285,8 @@ public class ExcelUploadEngineController {
             } // ← return 추가
             else if ("preview".equals(mode)) {
                 handlePreview(fileBytes, params, result); 
+            } else if ("validate".equals(mode)) {
+                handleValidate(ds, fileBytes, params, result);
             }else if ("download_error".equals(mode)) {
                 handleDownloadError(params, response, result);
                 return;
@@ -785,6 +787,122 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                     result.put("logs", new ArrayList<>(sessionLogs));
                 }
             }
+        }
+    }
+
+    /**
+     * 업로드 전 검증 전용 처리 (DB 저장 없음)
+     * - 엑셀 파싱
+     * - 매핑 규칙 기반 값 추출
+     * - DB 컬럼 제약(길이/NOT NULL) 검사
+     */
+    @SuppressWarnings("unchecked")
+    private void handleValidate(DataSource ds, byte[] fileBytes, Map<String, Object> params,
+            Map<String, Object> result) throws Exception {
+
+        if (fileBytes == null || fileBytes.length == 0) {
+            throw new Exception("파일이 없습니다.");
+        }
+
+        String structJson = decodeParam(params, "struct_json_b64", "struct_json");
+        String mapJson = decodeParam(params, "mapping_json_b64", "mapping");
+        if (mapJson == null) {
+            mapJson = decodeParam(params, "mapping_b64", "mapping_json");
+        }
+
+        int headerIdx = 0;
+        try {
+            headerIdx = Integer.parseInt((String) params.get("header_row")) - 1;
+        } catch (Throwable ignore) {
+        }
+        if (headerIdx < 0) {
+            headerIdx = 0;
+        }
+
+        List<?> structs = (List<?>) service.parseJson(structJson);
+        Map<?, ?> allMaps = (Map<?, ?>) service.parseJson(mapJson);
+
+        org.apache.poi.ss.usermodel.Workbook wb = service.createWorkbook(fileBytes);
+        org.apache.poi.ss.usermodel.Sheet sheet = wb.getSheetAt(0);
+
+        String editedRowsB64 = (String) params.get("edited_rows_b64");
+        if (editedRowsB64 != null && !editedRowsB64.trim().isEmpty()) {
+            try {
+                Map<?, ?> editedMap = (Map<?, ?>) service.parseJson(service.decodeSafeBase64(editedRowsB64));
+                for (Map.Entry<?, ?> rowEntry : editedMap.entrySet()) {
+                    int sheetRowNum = headerIdx + Integer.parseInt(rowEntry.getKey().toString());
+                    org.apache.poi.ss.usermodel.Row row = sheet.getRow(sheetRowNum);
+                    if (row == null) {
+                        row = sheet.createRow(sheetRowNum);
+                    }
+                    for (Map.Entry<?, ?> colEntry : ((Map<?, ?>) rowEntry.getValue()).entrySet()) {
+                        int colIdx = Integer.parseInt(colEntry.getKey().toString());
+                        org.apache.poi.ss.usermodel.Cell cell = row.getCell(colIdx);
+                        if (cell == null) {
+                            cell = row.createCell(colIdx);
+                        }
+                        cell.setCellValue(colEntry.getValue() != null ? colEntry.getValue().toString() : "");
+                    }
+                }
+            } catch (Throwable ignore) {
+            }
+        }
+
+        int startRow = headerIdx + 1;
+        int totalRows = sheet.getLastRowNum();
+        int processedExcelRowCnt = 0;
+        Map<String, String> failedRowMsgMap = new LinkedHashMap<>();
+        Map<String, Object> validateCache = new HashMap<>();
+
+        Connection conn = null;
+        try {
+            conn = ds.getConnection();
+            for (int rowIdx = startRow; rowIdx <= totalRows; rowIdx++) {
+                org.apache.poi.ss.usermodel.Row row = sheet.getRow(rowIdx);
+                if (row == null) {
+                    continue;
+                }
+                boolean rowHasValue = false;
+                for (int ci = 0; ci < row.getLastCellNum(); ci++) {
+                    if (!service.getCellValue(row.getCell(ci)).trim().isEmpty()) {
+                        rowHasValue = true;
+                        break;
+                    }
+                }
+                if (!rowHasValue) {
+                    continue;
+                }
+
+                processedExcelRowCnt++;
+                int dataRowNum = row.getRowNum() - headerIdx;
+                try {
+                    service.validateCascadeRow(conn, row, structs, allMaps, "ROOT", null, validateCache);
+                } catch (Throwable rowEx) {
+                    String msg = rowEx.getMessage() != null ? rowEx.getMessage() : "검증 실패";
+                    failedRowMsgMap.put(String.valueOf(dataRowNum), msg);
+                }
+            }
+
+            int failCnt = failedRowMsgMap.size();
+            int successCnt = Math.max(processedExcelRowCnt - failCnt, 0);
+            result.put("status", "ok");
+            result.put("mode", "validate");
+            result.put("msg", failCnt > 0
+                    ? ("검증 완료: " + failCnt + "건 오류")
+                    : "검증 완료: 업로드 가능");
+            result.put("valid", failCnt == 0);
+            result.put("success_cnt", successCnt);
+            result.put("fail_cnt", failCnt);
+            if (!failedRowMsgMap.isEmpty()) {
+                result.put("failed_row_msgs", failedRowMsgMap);
+            }
+            result.put("total_rows", processedExcelRowCnt);
+        } finally {
+            if (conn != null) try {
+                conn.close();
+            } catch (Throwable ignore) {
+            }
+            service.closeWorkbook(wb);
         }
     }
 

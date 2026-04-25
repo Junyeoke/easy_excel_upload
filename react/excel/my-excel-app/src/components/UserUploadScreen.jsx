@@ -85,6 +85,8 @@ const UserWorkbenchStep = ({
   setEditedCells,
   renderDebugUploadOptions,
   handleUpload,
+  handleValidate,
+  validating,
   setShowOnlyFailedRows,
   downloadSampleFile,
 }) => {
@@ -207,7 +209,7 @@ const UserWorkbenchStep = ({
 
   return (
     <div className="wizard-panel">
-      <div className="wizard-panel-title">📂 파일 업로드 작업대</div>
+      <div className="wizard-panel-title">📂 엑셀업로드 WorkBench</div>
       <div className="wizard-panel-desc">
         {uploading
           ? '현재 업로드가 진행 중입니다. 단계별 진행 상황과 로그를 확인할 수 있습니다.'
@@ -763,7 +765,10 @@ const UserWorkbenchStep = ({
                   <div className="workspace-action-stack">
                     {hasKnownFailedRows && <button className="side-action-btn side-action-btn-danger" onClick={selectedErrorRow ? () => moveBetweenFailedRows(1) : moveToFirstFailedRow}>{selectedErrorRow ? '다음 오류 확인' : '첫 오류 확인'}</button>}
                     {editedRowCount > 0 && <button className="side-action-btn" onClick={() => setEditedCells({})}>수정 내용 초기화</button>}
-                    <button className="side-action-btn side-action-btn-primary" onClick={handleUpload} disabled={previewLoading}>
+                    <button className="side-action-btn" onClick={handleValidate} disabled={previewLoading || validating}>
+                      {validating ? '검증 중...' : '검증 실행'}
+                    </button>
+                    <button className="side-action-btn side-action-btn-primary" onClick={handleUpload} disabled={previewLoading || validating}>
                       {hasKnownFailedRows || hasUnknownFailedRows ? '수정 후 재업로드' : '업로드 실행'}
                     </button>
                   </div>

@@ -474,6 +474,8 @@ const AdminStep3 = (props) => {
     renderDebugUploadOptions,
     isAdmin,
     handleUpload,
+    handleValidate,
+    validating,
   } = props;
 
   const resetAdminUploadState = () => {
@@ -556,7 +558,7 @@ const AdminStep3 = (props) => {
         </div>
       )}
       <div style={{ marginTop: '28px' }}>
-        <div className="wiz-section-title" style={{ marginBottom: '16px' }}>🚀 데이터 업로드 (테스트 / 직접 실행)</div>
+        <div className="wiz-section-title" style={{ marginBottom: '16px' }}>🚀 엑셀업로드 WorkBench (테스트 / 직접 실행)</div>
         {uploadResult ? (
           <div>
             <div className="result-priority-strip" style={{ marginBottom: '14px' }}>
@@ -812,7 +814,10 @@ const AdminStep3 = (props) => {
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                     {isAdmin && renderDebugUploadOptions(true)}
                     {hasFailed && <button onClick={() => { setFailedRows({}); setEditedCells({}); }} style={{ padding: '9px 16px', borderRadius: '9px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontWeight: 600, cursor: 'pointer', fontSize: '0.82rem' }}>초기화</button>}
-                    <button onClick={handleUpload} disabled={previewLoading} style={{ padding: '11px 28px', borderRadius: '10px', border: 'none', background: previewLoading ? '#e2e8f0' : hasFailed ? 'linear-gradient(135deg,#ef4444,#dc2626)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: previewLoading ? '#94a3b8' : 'white', fontWeight: 800, cursor: previewLoading ? 'not-allowed' : 'pointer', fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: '7px', boxShadow: previewLoading ? 'none' : hasFailed ? '0 4px 14px rgba(239,68,68,0.3)' : '0 4px 14px rgba(99,102,241,0.3)', whiteSpace: 'nowrap' }}>
+                    <button onClick={handleValidate} disabled={previewLoading || validating} style={{ padding: '10px 18px', borderRadius: '9px', border: '1px solid #cbd5e1', background: (previewLoading || validating) ? '#f1f5f9' : 'white', color: (previewLoading || validating) ? '#94a3b8' : '#475569', fontWeight: 700, cursor: (previewLoading || validating) ? 'not-allowed' : 'pointer', fontSize: '0.83rem', whiteSpace: 'nowrap' }}>
+                      {validating ? '검증 중...' : '검증 실행'}
+                    </button>
+                    <button onClick={handleUpload} disabled={previewLoading || validating} style={{ padding: '11px 28px', borderRadius: '10px', border: 'none', background: (previewLoading || validating) ? '#e2e8f0' : hasFailed ? 'linear-gradient(135deg,#ef4444,#dc2626)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: (previewLoading || validating) ? '#94a3b8' : 'white', fontWeight: 800, cursor: (previewLoading || validating) ? 'not-allowed' : 'pointer', fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: '7px', boxShadow: (previewLoading || validating) ? 'none' : hasFailed ? '0 4px 14px rgba(239,68,68,0.3)' : '0 4px 14px rgba(99,102,241,0.3)', whiteSpace: 'nowrap' }}>
                       {hasFailed ? '🔄 수정 후 재업로드' : '🚀 업로드 실행'}
                     </button>
                   </div>

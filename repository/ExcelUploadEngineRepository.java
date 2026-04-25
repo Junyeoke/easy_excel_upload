@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ExcelUploadEngineRepository {
 
     private static final Logger log = LoggerFactory.getLogger(ExcelUploadEngineRepository.class);
+    private static final Logger sqlLog = LoggerFactory.getLogger("com.steg.sql");
     private static final AtomicBoolean CONFIG_SCHEMA_VERIFIED = new AtomicBoolean(false);
     private static final AtomicBoolean HISTORY_SCHEMA_VERIFIED = new AtomicBoolean(false);
 
@@ -38,6 +39,17 @@ public class ExcelUploadEngineRepository {
 
     public DataSource getDataSource() {
         return dataSource;
+    }
+
+    private String sqlValue(Object value) {
+        if (value == null) {
+            return "NULL";
+        }
+        String text = String.valueOf(value).replace("\r", "\\r").replace("\n", "\\n");
+        if (text.length() > 300) {
+            text = text.substring(0, 300) + "...(" + text.length() + " chars)";
+        }
+        return "'" + text + "'";
     }
 
     // =====================================================================
@@ -329,16 +341,25 @@ public class ExcelUploadEngineRepository {
      */
     public String insertHistory(Connection conn, String histId, String jobName, String fileName,
                                 int successCnt, int failCnt, String errorFile, String nowFunc) {
-        try (PreparedStatement histPs = conn.prepareStatement(
-                "INSERT INTO ESO_EXCEL_UPLOAD_HISTORY " +
+        String sql = "INSERT INTO ESO_EXCEL_UPLOAD_HISTORY " +
                 "(HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM) " +
-                "VALUES (?, ?, ?, ?, ?, ?, " + nowFunc + ")")) {
+                "VALUES (?, ?, ?, ?, ?, ?, " + nowFunc + ")";
+        try (PreparedStatement histPs = conn.prepareStatement(
+                sql)) {
             histPs.setString(1, histId);
             histPs.setString(2, jobName == null || jobName.trim().isEmpty() ? "일반 데이터 업로드" : jobName);
             histPs.setString(3, fileName);
             histPs.setInt(4, successCnt);
             histPs.setInt(5, failCnt);
             histPs.setString(6, errorFile);
+            sqlLog.info("[ExcelUpload][HISTORY-INSERT] SQL={} | params={{HIST_ID={}, JOB_NAME={}, FILE_NAME={}, SUCCESS_CNT={}, FAIL_CNT={}, ERROR_FILE={}}}",
+                    sql,
+                    sqlValue(histId),
+                    sqlValue(jobName == null || jobName.trim().isEmpty() ? "일반 데이터 업로드" : jobName),
+                    sqlValue(fileName),
+                    successCnt,
+                    failCnt,
+                    sqlValue(errorFile));
             histPs.executeUpdate();
             conn.commit();
             return null;
@@ -398,15 +419,17 @@ public class ExcelUploadEngineRepository {
         final String TMP_KEY_PS = "_TMP_KEY_PS_";
         try {
             PreparedStatement ps = (PreparedStatement) psCache.get(TMP_KEY_PS);
+            String sql = "INSERT INTO TMP_EXCEL_UPLOAD_KEYS (alias, table_name, pk_col, pk_val) VALUES (?, ?, ?, ?)";
             if (ps == null) {
-                ps = conn.prepareStatement(
-                    "INSERT INTO TMP_EXCEL_UPLOAD_KEYS (alias, table_name, pk_col, pk_val) VALUES (?, ?, ?, ?)");
+                ps = conn.prepareStatement(sql);
                 psCache.put(TMP_KEY_PS, ps);
             }
             ps.setString(1, alias);
             ps.setString(2, tableName);
             ps.setString(3, pkCol);
             ps.setString(4, pkVal);
+            sqlLog.info("[ExcelUpload][TEMP-KEY-BATCH-ADD] SQL={} | params={{alias={}, table_name={}, pk_col={}, pk_val={}}}",
+                    sql, sqlValue(alias), sqlValue(tableName), sqlValue(pkCol), sqlValue(pkVal));
             ps.addBatch();
         } catch (Throwable e) {}
     }

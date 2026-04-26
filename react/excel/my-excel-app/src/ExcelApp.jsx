@@ -160,12 +160,7 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
   const targetHistId = histId || snapshot?.hist_id || '';
   const targetUploadId = uploadId || snapshot?.upload_id || '';
   const matchedRows = targetHistId
-    ? historyList.filter((row) => {
-        const histMatch = String(row.hist_id || '') === String(targetHistId);
-        const rowUploadId = String(row.upload_id || '');
-        const uploadMatch = !targetUploadId || !rowUploadId || rowUploadId === String(targetUploadId);
-        return histMatch && uploadMatch;
-      })
+    ? historyList.filter((row) => String(row.hist_id || '') === String(targetHistId))
     : (targetUploadId ? historyList.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : []);
   const rows = matchedRows.length > 0
     ? matchedRows
@@ -220,9 +215,13 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
               <div className="upload-stat-label">실패 건수</div>
               <div className="upload-stat-value danger">{totalFail.toLocaleString()}</div>
             </div>
-              <div className="upload-stat-card">
-                <div className="upload-stat-label">업로드 ID</div>
-              <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetHistId || targetUploadId || latest?.hist_id || latest?.upload_id || snapshot?.job_id || '-'}</div>
+            <div className="upload-stat-card">
+              <div className="upload-stat-label">히스토리 ID</div>
+              <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetHistId || latest?.hist_id || snapshot?.hist_id || '-'}</div>
+            </div>
+            <div className="upload-stat-card">
+              <div className="upload-stat-label">업로드 ID</div>
+              <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetUploadId || latest?.upload_id || snapshot?.upload_id || '-'}</div>
               </div>
             </div>
 
@@ -637,14 +636,13 @@ function ExcelApp() {
       setCompletionError('');
       const targetHistId = completionHistId || completionSeed?.hist_id || '';
       const targetUploadId = completionUploadId || completionSeed?.upload_id || '';
-      const targetFileName = completionFileName || completionSeed?.file_name || '';
       const snapshotRow = snapshotToHistoryRow(completionSeed);
       const fromProgress = (res) => progressToHistoryRow({
         ...res,
         hist_id: targetHistId || res.hist_id || '',
         job_id: completionJobId || res.job_id || '',
         upload_id: targetUploadId || res.upload_id || '',
-        file_name: targetFileName || res.file_name || '',
+        file_name: completionFileName || completionSeed?.file_name || res.file_name || '',
       }, snapshotRow || {});
 
       const finishWithRows = (rows) => {
@@ -690,26 +688,6 @@ function ExcelApp() {
         post(API_URL, getParams({ mode: 'get_history_detail', hist_id: targetHistId, upload_id: targetUploadId || '' })).then((res) => {
           if (res.status === 'ok' && res.row) {
             finishWithRows([res.row]);
-            return;
-          }
-          if (targetUploadId) {
-            loadHistory(targetUploadId).then((list) => {
-              const exact = Array.isArray(list)
-                ? list.filter((row) => {
-                    const rowUploadId = String(row.upload_id || '');
-                    return String(row.hist_id || '') === String(targetHistId) && (!rowUploadId || rowUploadId === String(targetUploadId));
-                  })
-                : [];
-              if (exact.length > 0) {
-                finishWithRows(exact);
-                return;
-              }
-              setCompletionLoading(false);
-              setCompletionError('완료 이력을 찾을 수 없습니다.');
-            }).catch(() => {
-              setCompletionLoading(false);
-              setCompletionError('완료 화면을 불러오지 못했습니다.');
-            });
             return;
           }
           setCompletionLoading(false);

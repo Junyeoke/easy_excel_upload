@@ -761,6 +761,8 @@ public class ExcelUploadEngineController {
             return;
         }
         try (Connection conn = ds.getConnection()) {
+            log.info("[ExcelUpload] history detail lookup hist_id={}, upload_id={}",
+                    histId.trim(), uploadId == null ? "" : uploadId.trim());
             Map<String, Object> row = repository.getHistoryDetail(conn, histId.trim(), uploadId == null ? null : uploadId.trim());
             if (row == null) {
                 result.put("status", "none");
@@ -1915,6 +1917,8 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             result.put("hist_id", histId);
             result.put("upload_id", uploadId);
             result.put("config_snapshot_hash", configSnapshotHash);
+            log.info("[ExcelUpload] completion summary hist_id={}, upload_id={}, job_id={}, file_name={}, success_cnt={}, fail_cnt={}, error_file={}",
+                    histId, uploadId, jobId, params.get("file_name"), successCnt, failCnt, errFileName);
             if (jobId != null) {
                 ProgressStore.setFinalResult(jobId, histId, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
             }

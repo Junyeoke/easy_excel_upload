@@ -307,6 +307,7 @@ public class ExcelUploadEngineRepository {
                 "    REG_DTTM DATE\n" +
                 ");");
         ensureHistoryUploadIdColumn(conn);
+        ensureHistoryUploadIdIndex(conn);
         HISTORY_SCHEMA_VERIFIED.set(true);
     }
 
@@ -321,6 +322,21 @@ public class ExcelUploadEngineRepository {
             if (!columnExists(conn.getMetaData(), "ESO_EXCEL_UPLOAD_HISTORY", "UPLOAD_ID")) {
                 throw new Exception("업로드 이력 테이블에 UPLOAD_ID 컬럼을 추가할 수 없습니다.\n" +
                         "필요 SQL 예시:\nALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD (UPLOAD_ID VARCHAR2(64));", e);
+            }
+        }
+    }
+
+    private void ensureHistoryUploadIdIndex(Connection conn) throws Exception {
+        DatabaseMetaData meta = conn.getMetaData();
+        if (indexExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "IDX_ESO_EXCEL_UPLOAD_HISTORY_UPLOAD_ID")) {
+            return;
+        }
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE INDEX IDX_ESO_EXCEL_UPLOAD_HISTORY_UPLOAD_ID ON ESO_EXCEL_UPLOAD_HISTORY (UPLOAD_ID)");
+        } catch (SQLException e) {
+            if (!indexExists(conn.getMetaData(), "ESO_EXCEL_UPLOAD_HISTORY", "IDX_ESO_EXCEL_UPLOAD_HISTORY_UPLOAD_ID")) {
+                throw new Exception("업로드 이력 테이블의 UPLOAD_ID 인덱스를 추가할 수 없습니다.\n" +
+                        "필요 SQL 예시:\nCREATE INDEX IDX_ESO_EXCEL_UPLOAD_HISTORY_UPLOAD_ID ON ESO_EXCEL_UPLOAD_HISTORY (UPLOAD_ID);", e);
             }
         }
     }
@@ -363,6 +379,24 @@ public class ExcelUploadEngineRepository {
                         tableName.toUpperCase(Locale.ROOT), columnName.toUpperCase(Locale.ROOT)))
                 || metadataLookupExists(() -> metaData.getColumns(null, null,
                         tableName.toLowerCase(Locale.ROOT), columnName.toLowerCase(Locale.ROOT)));
+    }
+
+    private boolean indexExists(DatabaseMetaData metaData, String tableName, String indexName) throws SQLException {
+        return indexExistsForTable(metaData, tableName, indexName)
+                || indexExistsForTable(metaData, tableName.toUpperCase(Locale.ROOT), indexName)
+                || indexExistsForTable(metaData, tableName.toLowerCase(Locale.ROOT), indexName);
+    }
+
+    private boolean indexExistsForTable(DatabaseMetaData metaData, String tableName, String indexName) throws SQLException {
+        try (ResultSet rs = metaData.getIndexInfo(null, null, tableName, false, false)) {
+            while (rs.next()) {
+                String foundIndexName = rs.getString("INDEX_NAME");
+                if (foundIndexName != null && foundIndexName.equalsIgnoreCase(indexName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean metadataLookupExists(ResultSetSupplier supplier) throws SQLException {

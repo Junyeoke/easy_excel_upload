@@ -160,10 +160,18 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
   const targetHistId = histId || snapshot?.hist_id || '';
   const targetUploadId = uploadId || snapshot?.upload_id || '';
   const matchedRows = targetHistId
-    ? historyList.filter((row) => String(row.hist_id || '') === String(targetHistId))
+    ? historyList.filter((row) => {
+        const histMatch = String(row.hist_id || '') === String(targetHistId);
+        const rowUploadId = String(row.upload_id || '');
+        const uploadMatch = !targetUploadId || !rowUploadId || rowUploadId === String(targetUploadId);
+        return histMatch && uploadMatch;
+      })
     : (targetUploadId ? historyList.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : []);
-  const baseRows = matchedRows.length > 0 ? matchedRows : historyList;
-  const rows = baseRows.length > 0 ? baseRows : (snapshot ? [snapshotToHistoryRow(snapshot)] : []);
+  const rows = matchedRows.length > 0
+    ? matchedRows
+    : (!targetHistId && !targetUploadId && historyList.length > 0
+        ? historyList
+        : (snapshot ? [snapshotToHistoryRow(snapshot)] : []));
   const latest = rows[0] || null;
   const totalSuccess = rows.reduce((sum, row) => sum + (Number(row.success_cnt) || 0), 0);
   const totalFail = rows.reduce((sum, row) => sum + (Number(row.fail_cnt) || 0), 0);
@@ -679,9 +687,29 @@ function ExcelApp() {
       };
 
       if (targetHistId) {
-        post(API_URL, getParams({ mode: 'get_history_detail', hist_id: targetHistId })).then((res) => {
+        post(API_URL, getParams({ mode: 'get_history_detail', hist_id: targetHistId, upload_id: targetUploadId || '' })).then((res) => {
           if (res.status === 'ok' && res.row) {
             finishWithRows([res.row]);
+            return;
+          }
+          if (targetUploadId) {
+            loadHistory(targetUploadId).then((list) => {
+              const exact = Array.isArray(list)
+                ? list.filter((row) => {
+                    const rowUploadId = String(row.upload_id || '');
+                    return String(row.hist_id || '') === String(targetHistId) && (!rowUploadId || rowUploadId === String(targetUploadId));
+                  })
+                : [];
+              if (exact.length > 0) {
+                finishWithRows(exact);
+                return;
+              }
+              setCompletionLoading(false);
+              setCompletionError('완료 이력을 찾을 수 없습니다.');
+            }).catch(() => {
+              setCompletionLoading(false);
+              setCompletionError('완료 화면을 불러오지 못했습니다.');
+            });
             return;
           }
           setCompletionLoading(false);

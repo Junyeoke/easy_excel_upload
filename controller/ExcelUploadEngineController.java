@@ -754,13 +754,14 @@ public class ExcelUploadEngineController {
     private void handleGetHistoryDetail(DataSource ds, Map<String, Object> params,
             Map<String, Object> result) throws Exception {
         String histId = (String) params.get("hist_id");
+        String uploadId = (String) params.get("upload_id");
         if (histId == null || histId.trim().isEmpty()) {
             result.put("status", "err");
             result.put("msg", "hist_id가 필요합니다.");
             return;
         }
         try (Connection conn = ds.getConnection()) {
-            Map<String, Object> row = repository.getHistoryDetail(conn, histId.trim());
+            Map<String, Object> row = repository.getHistoryDetail(conn, histId.trim(), uploadId == null ? null : uploadId.trim());
             if (row == null) {
                 result.put("status", "none");
                 return;

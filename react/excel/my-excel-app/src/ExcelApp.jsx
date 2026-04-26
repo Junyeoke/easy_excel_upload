@@ -159,6 +159,8 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
   const snapshot = seed || readCompletionSnapshot();
   const targetHistId = histId || snapshot?.hist_id || '';
   const targetUploadId = uploadId || snapshot?.upload_id || '';
+  const targetJobId = snapshot?.job_id || '';
+  const targetFileName = snapshot?.file_name || '';
   const matchedRows = targetHistId
     ? historyList.filter((row) => String(row.hist_id || '') === String(targetHistId))
     : (targetUploadId ? historyList.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : []);
@@ -179,6 +181,15 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
     : latestStatus === 'partial'
       ? '일부 행이 실패했습니다. 결과 내역에서 오류 파일을 확인하세요.'
       : '완료 이력을 아직 불러오지 못했습니다.';
+  const copyValue = async (label, value) => {
+    const text = value || '-';
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} 복사 완료`);
+    } catch {
+      toast.error(`${label} 복사 실패`);
+    }
+  };
 
   return (
     <div className="upload-flow-stack" style={{ maxWidth: '1100px', margin: '0 auto' }}>
@@ -215,15 +226,33 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
               <div className="upload-stat-label">실패 건수</div>
               <div className="upload-stat-value danger">{totalFail.toLocaleString()}</div>
             </div>
-            <div className="upload-stat-card">
-              <div className="upload-stat-label">히스토리 ID</div>
-              <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetHistId || latest?.hist_id || snapshot?.hist_id || '-'}</div>
             </div>
-            <div className="upload-stat-card">
-              <div className="upload-stat-label">업로드 ID</div>
-              <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetUploadId || latest?.upload_id || snapshot?.upload_id || '-'}</div>
+
+          <div className="result-list-card">
+            <div className="result-list-title">진단 정보</div>
+            <div className="upload-stats-grid" style={{ marginTop: '10px' }}>
+              <div className="upload-stat-card">
+                <div className="upload-stat-label">파일명</div>
+                <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{latest?.file_name || targetFileName || '-'}</div>
+                <button className="itsm-mini-btn" style={{ marginTop: '8px' }} onClick={() => copyValue('파일명', latest?.file_name || targetFileName || '')}>복사</button>
+              </div>
+              <div className="upload-stat-card">
+                <div className="upload-stat-label">작업 ID</div>
+                <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetJobId || latest?.job_id || '-'}</div>
+                <button className="itsm-mini-btn" style={{ marginTop: '8px' }} onClick={() => copyValue('작업 ID', targetJobId || latest?.job_id || '')}>복사</button>
+              </div>
+              <div className="upload-stat-card">
+                <div className="upload-stat-label">히스토리 ID</div>
+                <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetHistId || latest?.hist_id || snapshot?.hist_id || '-'}</div>
+                <button className="itsm-mini-btn" style={{ marginTop: '8px' }} onClick={() => copyValue('히스토리 ID', targetHistId || latest?.hist_id || snapshot?.hist_id || '')}>복사</button>
+              </div>
+              <div className="upload-stat-card">
+                <div className="upload-stat-label">업로드 ID</div>
+                <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetUploadId || latest?.upload_id || snapshot?.upload_id || '-'}</div>
+                <button className="itsm-mini-btn" style={{ marginTop: '8px' }} onClick={() => copyValue('업로드 ID', targetUploadId || latest?.upload_id || snapshot?.upload_id || '')}>복사</button>
               </div>
             </div>
+          </div>
 
           {latest && (
             <div className="result-list-card">

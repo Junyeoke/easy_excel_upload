@@ -288,6 +288,7 @@ function ExcelApp() {
   const completionHistId = queryParams.get('hist_id') || '';
   const completionUploadId = queryParams.get('upload_id') || '';
   const completionJobId = queryParams.get('job_id') || '';
+  const completionFileName = queryParams.get('file_name') || '';
 
   const adminSteps = ['기본 설정', '테이블 구조', '컬럼 매핑', '저장 완료'];
   const userSteps  = ['안내 확인', '파일 선택 및 업로드'];
@@ -628,12 +629,14 @@ function ExcelApp() {
       setCompletionError('');
       const targetHistId = completionHistId || completionSeed?.hist_id || '';
       const targetUploadId = completionUploadId || completionSeed?.upload_id || '';
+      const targetFileName = completionFileName || completionSeed?.file_name || '';
       const snapshotRow = snapshotToHistoryRow(completionSeed);
       const fromProgress = (res) => progressToHistoryRow({
         ...res,
         hist_id: targetHistId || res.hist_id || '',
         job_id: completionJobId || res.job_id || '',
         upload_id: targetUploadId || res.upload_id || '',
+        file_name: targetFileName || res.file_name || '',
       }, snapshotRow || {});
 
       const finishWithRows = (rows) => {
@@ -665,6 +668,22 @@ function ExcelApp() {
       const resolveHistoryRow = (list) => {
         const rows = Array.isArray(list) ? list : [];
         if (rows.length === 0) return null;
+        const sameFileRows = targetFileName
+          ? rows.filter((row) => String(row.file_name || '') === String(targetFileName))
+          : [];
+        if (sameFileRows.length > 0) {
+          return sameFileRows
+            .slice()
+            .sort((a, b) => {
+              const at = (Number(a.success_cnt) || 0) + (Number(a.fail_cnt) || 0);
+              const bt = (Number(b.success_cnt) || 0) + (Number(b.fail_cnt) || 0);
+              if (bt !== at) return bt - at;
+              const ad = Date.parse(a.reg_dttm || '') || 0;
+              const bd = Date.parse(b.reg_dttm || '') || 0;
+              if (bd !== ad) return bd - ad;
+              return String(b.hist_id || '').localeCompare(String(a.hist_id || ''));
+            })[0] || null;
+        }
         const sameUploadRows = targetUploadId
           ? rows.filter((row) => String(row.upload_id || '') === String(targetUploadId))
           : rows;
@@ -723,6 +742,16 @@ function ExcelApp() {
       }
 
       loadHistory(targetUploadId).then((list) => {
+        const sameFileRows = targetFileName
+          ? list.filter((row) => String(row.file_name || '') === String(targetFileName))
+          : [];
+        if (sameFileRows.length > 0) {
+          const row = resolveHistoryRow(sameFileRows);
+          if (row) {
+            loadHistoryDetail(row).then(finishWithRows).catch(() => finishWithRows([row]));
+            return;
+          }
+        }
         const row = resolveHistoryRow(list);
         if (row) {
           loadHistoryDetail(row).then(finishWithRows).catch(() => finishWithRows([row]));

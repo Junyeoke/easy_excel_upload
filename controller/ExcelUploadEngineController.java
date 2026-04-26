@@ -1246,11 +1246,17 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         ProgressStore.JobProgress prog = ProgressStore.get(jobId);
         if (prog != null) {
             result.put("status", "ok");
+            result.put("job_id", jobId);
+            result.put("upload_id", prog.uploadId);
             result.put("current", prog.current);
             result.put("total", prog.total);
             result.put("percent", prog.total > 0
                     ? (int) ((double) prog.current / prog.total * 100) : 0);
             result.put("cancel_requested", prog.cancelRequested);
+            result.put("success_cnt", prog.successCnt);
+            result.put("fail_cnt", prog.failCnt);
+            result.put("error_file", prog.errorFile);
+            result.put("result_status", prog.status);
             synchronized (prog.logs) {
                 result.put("logs", new ArrayList<>(prog.logs));
             }
@@ -1265,6 +1271,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             String[] parts = progObj.split("/");
             int current = Integer.parseInt(parts[0]), total = Integer.parseInt(parts[1]);
             result.put("status", "ok");
+            result.put("job_id", jobId);
             result.put("current", current);
             result.put("total", total);
             result.put("percent", total > 0 ? (int) (((double) current / total) * 100) : 0);
@@ -1809,6 +1816,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             if (jobId != null) {
                 request.getSession().setAttribute("EXCEL_PROGRESS_" + jobId, actualTotalRows + "/" + actualTotalRows);
                 ProgressStore.update(jobId, actualTotalRows);
+                ProgressStore.setFinalResult(jobId, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
                 ProgressStore.complete(jobId);
             }
 
@@ -1877,6 +1885,9 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             result.put("error_file", errFileName);
             result.put("upload_id", uploadId);
             result.put("config_snapshot_hash", configSnapshotHash);
+            if (jobId != null) {
+                ProgressStore.setFinalResult(jobId, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
+            }
             if (!failedRowMsgMap.isEmpty()) {
                 result.put("failed_row_msgs", failedRowMsgMap);
             }
@@ -1886,6 +1897,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             log.error("[ExcelUpload] 💣 치명적 오류 발생 ({}행 쯤): {}", currentRowForLog, e.getMessage(), e);
             addLog.accept("💣 치명적 오류 (" + currentRowForLog + "행): " + e.getMessage());
             if (jobId != null) {
+                ProgressStore.setFinalResult(jobId, uploadId, successCnt, failCnt, errFileName, "err");
                 ProgressStore.error(jobId, e.getMessage()); // SSE에 오류 신호
                 clearProgressSessionArtifacts(request, jobId);
             }

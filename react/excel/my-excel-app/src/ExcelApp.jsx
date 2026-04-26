@@ -123,6 +123,7 @@ const snapshotToHistoryRow = (snapshot) => {
   if (!snapshot) return null;
   return {
     hist_id: snapshot.hist_id || '',
+    job_id: snapshot.job_id || '',
     upload_id: snapshot.upload_id || '',
     job_name: snapshot.job_name || '',
     file_name: snapshot.file_name || '',
@@ -136,9 +137,30 @@ const snapshotToHistoryRow = (snapshot) => {
   };
 };
 
-const CompletionSummaryView = ({ uploadId, historyList, loading, error, onOpenWorkbench, onOpenDashboard, onNewUpload }) => {
-  const snapshot = readCompletionSnapshot();
-  const rows = historyList.length > 0 ? historyList : (snapshot ? [snapshotToHistoryRow(snapshot)] : []);
+const progressToHistoryRow = (state, fallback = {}) => {
+  if (!state) return null;
+  return {
+    hist_id: fallback.hist_id || '',
+    job_id: state.job_id || fallback.job_id || '',
+    upload_id: state.upload_id || fallback.upload_id || '',
+    job_name: state.job_name || fallback.job_name || '',
+    file_name: state.file_name || fallback.file_name || '',
+    success_cnt: Number(state.success_cnt ?? fallback.success_cnt) || 0,
+    fail_cnt: Number(state.fail_cnt ?? fallback.fail_cnt) || 0,
+    error_file: state.error_file || fallback.error_file || '',
+    reg_dttm: state.completed_at || fallback.completed_at || fallback.reg_dttm || new Date().toISOString(),
+    config_snapshot_hash: state.config_snapshot_hash || fallback.config_snapshot_hash || '',
+    retry_mode: state.retry_mode || fallback.retry_mode || '',
+    retry_reason_types: state.retry_reason_types || fallback.retry_reason_types || '',
+  };
+};
+
+const CompletionSummaryView = ({ uploadId, seed, historyList, loading, error, onOpenWorkbench, onOpenDashboard, onNewUpload }) => {
+  const snapshot = seed || readCompletionSnapshot();
+  const targetUploadId = uploadId || snapshot?.upload_id || '';
+  const matchedRows = targetUploadId ? historyList.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : [];
+  const baseRows = matchedRows.length > 0 ? matchedRows : historyList;
+  const rows = baseRows.length > 0 ? baseRows : (snapshot ? [snapshotToHistoryRow(snapshot)] : []);
   const latest = rows[0] || null;
   const totalSuccess = rows.reduce((sum, row) => sum + (Number(row.success_cnt) || 0), 0);
   const totalFail = rows.reduce((sum, row) => sum + (Number(row.fail_cnt) || 0), 0);
@@ -187,11 +209,11 @@ const CompletionSummaryView = ({ uploadId, historyList, loading, error, onOpenWo
               <div className="upload-stat-label">실패 건수</div>
               <div className="upload-stat-value danger">{totalFail.toLocaleString()}</div>
             </div>
-            <div className="upload-stat-card">
-              <div className="upload-stat-label">업로드 ID</div>
-              <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{uploadId || latest?.upload_id || '-'}</div>
+              <div className="upload-stat-card">
+                <div className="upload-stat-label">업로드 ID</div>
+              <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetUploadId || latest?.upload_id || snapshot?.job_id || '-'}</div>
+              </div>
             </div>
-          </div>
 
           {latest && (
             <div className="result-list-card">
@@ -261,6 +283,7 @@ function ExcelApp() {
   const isAdmin = queryParams.get('admin') === 'true';
   const isCompletionView = queryParams.get('view') === 'completion' || queryParams.get('result') === '1';
   const completionUploadId = queryParams.get('upload_id') || '';
+  const completionJobId = queryParams.get('job_id') || '';
 
   const adminSteps = ['기본 설정', '테이블 구조', '컬럼 매핑', '저장 완료'];
   const userSteps  = ['안내 확인', '파일 선택 및 업로드'];
@@ -382,6 +405,7 @@ function ExcelApp() {
       return {};
     }
   };
+  const completionSeed = readCompletionSnapshot() || readSharedUploadState();
   const publishSharedUploadState = (patch = {}) => {
     try {
       const prev = readSharedUploadState();
@@ -599,18 +623,76 @@ function ExcelApp() {
       setCompletionLoading(true);
       setCompletionError('');
       loadHistory(completionUploadId).then((list) => {
-        const snapshotRow = snapshotToHistoryRow(readCompletionSnapshot());
-        const nextList = list.length > 0 ? list : (snapshotRow ? [snapshotRow] : []);
+        const snapshotRow = snapshotToHistoryRow(completionSeed);
+        const targetUploadId = completionUploadId || completionSeed?.upload_id || '';
+        const snapshotHasCounts = snapshotRow && ((Number(snapshotRow.success_cnt) || 0) + (Number(snapshotRow.fail_cnt) || 0) > 0 || !!snapshotRow.error_file);
+        const matchedList = targetUploadId ? list.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : list;
+        let nextList = [];
+        if (matchedList.length > 0) {
+          nextList = matchedList;
+        } else if (targetUploadId && snapshotHasCounts) {
+          nextList = [snapshotRow];
+        } else if (!targetUploadId && !completionJobId) {
+          nextList = list.length > 0 ? list : (snapshotRow ? [snapshotRow] : []);
+        } else if (snapshotHasCounts && !completionJobId) {
+          nextList = [snapshotRow];
+        }
         setCompletionHistoryList(nextList);
         setCompletionLoading(false);
         if (nextList.length === 0) {
+          if (completionJobId) {
+            post(API_URL, getParams({ mode: 'progress', job_id: completionJobId })).then((res) => {
+              if (res.status === 'ok') {
+                const seedRow = snapshotRow || {};
+                const finalRow = progressToHistoryRow({
+                  ...res,
+                  job_id: completionJobId,
+                  upload_id: targetUploadId || res.upload_id || '',
+                }, seedRow);
+                if (finalRow) {
+                  setCompletionHistoryList([finalRow]);
+                  setCompletionError('');
+                  setCompletionLoading(false);
+                  return;
+                }
+              }
+              setCompletionError('완료 이력을 찾을 수 없습니다.');
+            }).catch(() => {
+              setCompletionError('완료 이력을 찾을 수 없습니다.');
+            });
+            return;
+          }
           setCompletionError('완료 이력을 찾을 수 없습니다.');
         }
       }).catch(() => {
-        const snapshotRow = snapshotToHistoryRow(readCompletionSnapshot());
-        if (snapshotRow) {
+        const snapshotRow = snapshotToHistoryRow(completionSeed);
+        const snapshotHasCounts = snapshotRow && ((Number(snapshotRow.success_cnt) || 0) + (Number(snapshotRow.fail_cnt) || 0) > 0 || !!snapshotRow.error_file);
+        if (snapshotHasCounts && !completionJobId) {
           setCompletionHistoryList([snapshotRow]);
           setCompletionLoading(false);
+          return;
+        }
+        if (completionJobId) {
+          post(API_URL, getParams({ mode: 'progress', job_id: completionJobId })).then((res) => {
+            if (res.status === 'ok') {
+              const finalRow = progressToHistoryRow({
+                ...res,
+                job_id: completionJobId,
+                upload_id: completionUploadId || completionSeed?.upload_id || '',
+              }, snapshotRow || {});
+              if (finalRow) {
+                setCompletionHistoryList([finalRow]);
+                setCompletionLoading(false);
+                setCompletionError('');
+                return;
+              }
+            }
+            setCompletionLoading(false);
+            setCompletionError('완료 화면을 불러오지 못했습니다.');
+          }).catch(() => {
+            setCompletionLoading(false);
+            setCompletionError('완료 화면을 불러오지 못했습니다.');
+          });
           return;
         }
         setCompletionLoading(false);
@@ -1377,6 +1459,7 @@ function ExcelApp() {
           setUploadResult({ ...res, failed_row_msgs: failedMsgs, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: Object.keys(failedMsgs).filter(k => k !== '__unknown__').length } : null });
           publishCompletionSnapshot({
             status: 'partial',
+            job_id: uploadJobId || '',
             upload_id: uploadId || res.upload_id || '',
             job_name: jobName || '',
             file_name: file?.name || '',
@@ -1390,12 +1473,19 @@ function ExcelApp() {
             config_snapshot_hash: res.config_snapshot_hash || '',
           });
           publishSharedUploadState({
+            job_id: uploadJobId || '',
+            upload_id: uploadId || res.upload_id || '',
+            job_name: jobName || '',
+            file_name: file?.name || '',
             status: 'partial',
             uploader_alive: false,
             heartbeat_at: new Date().toISOString(),
             percent: 100,
             current: Number(res.success_cnt || 0) + Number(res.fail_cnt || 0),
             total: Number(res.success_cnt || 0) + Number(res.fail_cnt || 0),
+            success_cnt: successCnt,
+            fail_cnt: failCnt,
+            error_file: res.error_file || '',
             last_log: `${res.fail_cnt || 0}건 실패로 부분 완료`,
           });
           toast.update(tid, { render: `⚠️ ${res.fail_cnt}건 실패 — 미리보기에서 수정 후 재업로드`, type: 'warning', isLoading: false, autoClose: 5000 });
@@ -1414,6 +1504,7 @@ function ExcelApp() {
           setUploadResult({ ...res, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: 0 } : null });
           publishCompletionSnapshot({
             status: 'ok',
+            job_id: uploadJobId || '',
             upload_id: uploadId || res.upload_id || '',
             job_name: jobName || '',
             file_name: file?.name || '',
@@ -1426,12 +1517,19 @@ function ExcelApp() {
             config_snapshot_hash: res.config_snapshot_hash || '',
           });
           publishSharedUploadState({
+            job_id: uploadJobId || '',
+            upload_id: uploadId || res.upload_id || '',
+            job_name: jobName || '',
+            file_name: file?.name || '',
             status: 'ok',
             uploader_alive: false,
             heartbeat_at: new Date().toISOString(),
             percent: 100,
             current: Number(res.success_cnt || 0),
             total: Number(res.success_cnt || 0),
+            success_cnt: successCnt,
+            fail_cnt: failCnt,
+            error_file: res.error_file || '',
             last_log: '업로드가 정상 완료되었습니다.',
           });
           toast.update(tid, { render: '🎉 완료', type: 'success', isLoading: false, autoClose: 3000 });
@@ -1446,6 +1544,7 @@ function ExcelApp() {
         setUploadResult({ ...res, friendlyMsg, solution, retry_summary: retrySummaryBase });
         publishCompletionSnapshot({
           status: 'err',
+          job_id: uploadJobId || '',
           upload_id: uploadId || res.upload_id || '',
           job_name: jobName || '',
           file_name: file?.name || '',
@@ -1458,9 +1557,16 @@ function ExcelApp() {
           config_snapshot_hash: res.config_snapshot_hash || '',
         });
         publishSharedUploadState({
+          job_id: uploadJobId || '',
+          upload_id: uploadId || res.upload_id || '',
+          job_name: jobName || '',
+          file_name: file?.name || '',
           status: 'err',
           uploader_alive: false,
           heartbeat_at: new Date().toISOString(),
+          success_cnt: Number(res.success_cnt) || 0,
+          fail_cnt: Number(res.fail_cnt) || 0,
+          error_file: res.error_file || '',
           last_log: res.msg || '업로드 실패',
         });
         void sendOpsAlert('upload_error', {
@@ -1510,6 +1616,7 @@ function ExcelApp() {
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
         const finalSnapshotBase = {
           status: 'ok',
+          job_id: uploadJobId || '',
           upload_id: uploadId || '',
           job_name: jobName || '',
           file_name: file?.name || '',
@@ -1537,6 +1644,10 @@ function ExcelApp() {
           publishCompletionSnapshot(nextSnapshot);
           setUploadResult({ ...nextSnapshot });
           publishSharedUploadState({
+            job_id: uploadJobId || '',
+            upload_id: nextSnapshot.upload_id || '',
+            job_name: nextSnapshot.job_name || '',
+            file_name: nextSnapshot.file_name || '',
             status: 'ok',
             uploader_alive: false,
             heartbeat_at: new Date().toISOString(),
@@ -1557,6 +1668,10 @@ function ExcelApp() {
         }).catch(() => {
           publishCompletionSnapshot(finalSnapshotBase);
           publishSharedUploadState({
+            job_id: uploadJobId || '',
+            upload_id: uploadId || '',
+            job_name: jobName || '',
+            file_name: file?.name || '',
             status: 'ok',
             uploader_alive: false,
             heartbeat_at: new Date().toISOString(),
@@ -1581,6 +1696,7 @@ function ExcelApp() {
       try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
       publishCompletionSnapshot({
         status: 'err',
+        job_id: uploadJobId || '',
         upload_id: uploadId || '',
         job_name: jobName || '',
         file_name: file?.name || '',
@@ -1590,6 +1706,10 @@ function ExcelApp() {
         msg: '통신 오류 (서버 응답 지연 또는 연결 문제)',
       });
       publishSharedUploadState({
+        job_id: uploadJobId || '',
+        upload_id: uploadId || '',
+        job_name: jobName || '',
+        file_name: file?.name || '',
         status: 'err',
         uploader_alive: false,
         heartbeat_at: new Date().toISOString(),
@@ -1898,6 +2018,7 @@ function ExcelApp() {
         <div style={{ maxWidth: '100%', margin: '0 auto', padding: '36px 24px 80px' }}>
           <CompletionSummaryView
             uploadId={completionUploadId}
+            seed={completionSeed}
             historyList={completionHistoryList}
             loading={completionLoading}
             error={completionError}

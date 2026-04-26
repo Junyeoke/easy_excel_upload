@@ -36,6 +36,11 @@ public class ProgressStore {
         public volatile boolean done      = false;   // 정상 완료 또는 오류로 종료
         public volatile String  errorMsg  = null;    // null이면 정상
         public volatile boolean cancelRequested = false; // 사용자 취소 요청 여부
+        public volatile String  uploadId  = "";
+        public volatile String  status    = "running";
+        public volatile int     successCnt = 0;
+        public volatile int     failCnt    = 0;
+        public volatile String  errorFile  = "";
         public final List<String> logs    = Collections.synchronizedList(new ArrayList<>());
         public final long createdAt       = System.currentTimeMillis();
         public volatile long updatedAt    = System.currentTimeMillis();
@@ -90,6 +95,9 @@ public class ProgressStore {
         if (p != null) {
             p.current   = p.total;
             p.done      = true;
+            if (p.status == null || p.status.isEmpty() || "running".equalsIgnoreCase(p.status)) {
+                p.status = "done";
+            }
             p.updatedAt = System.currentTimeMillis();
             scheduleRemove(jobId, FINISHED_JOB_TTL_MS);
         }
@@ -103,8 +111,28 @@ public class ProgressStore {
         if (p != null) {
             p.errorMsg  = msg;
             p.done      = true;
+            p.status    = "err";
             p.updatedAt = System.currentTimeMillis();
             scheduleRemove(jobId, FINISHED_JOB_TTL_MS);
+        }
+    }
+
+    /**
+     * 업로드 최종 집계값 저장.
+     */
+    public static void setFinalResult(String jobId, String uploadId, int successCnt, int failCnt, String errorFile, String status) {
+        JobProgress p = STORE.get(jobId);
+        if (p != null) {
+            if (uploadId != null) {
+                p.uploadId = uploadId;
+            }
+            p.successCnt = Math.max(successCnt, 0);
+            p.failCnt = Math.max(failCnt, 0);
+            p.errorFile = errorFile == null ? "" : errorFile;
+            if (status != null && !status.trim().isEmpty()) {
+                p.status = status;
+            }
+            p.updatedAt = System.currentTimeMillis();
         }
     }
 

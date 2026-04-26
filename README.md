@@ -26,6 +26,12 @@ This repository is not the final runtime location by itself. In your current env
 - Excel frontend:
   `/Users/leejunhyuk/apps/egene/webapps/itsm/xif/jsp/excel`
 
+Recommended deployment helper:
+
+- `scripts/deploy_excel_upload.sh`
+
+The script rebuilds the Excel frontend, copies the Vite output into the exact runtime asset directory, and compiles the Java sources into the target `WEB-INF/classes` tree without creating an extra nested `assets/` directory.
+
 ## What this branch improves
 
 Compared with `main`, this branch focuses on low-risk maintenance improvements:
@@ -34,6 +40,12 @@ Compared with `main`, this branch focuses on low-risk maintenance improvements:
 2. Return a consistent error payload for unsupported `mode` values.
 3. Prevent repeated runtime DDL checks from running on every request path once schema verification has already completed in the JVM.
 4. Ignore common local artifacts such as `.DS_Store`, `node_modules`, and `dist`.
+
+## Database notes
+
+If `ESO_EXCEL_UPLOAD_HISTORY` does not yet have `UPLOAD_ID`, apply the SQL in:
+
+- `sql/eso_excel_upload_history_upload_id.sql`
 
 ## Notes
 

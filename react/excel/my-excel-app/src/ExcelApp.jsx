@@ -9,6 +9,8 @@ const AdminWizardScreen = lazy(() => import('./components/AdminWizardScreen'));
 const UserUploadScreen = lazy(() => import('./components/UserUploadScreen'));
 
 const API_URL = "/api/excel/engine";
+const ACTIVE_UPLOAD_STATE_KEY = 'excel_upload_active_state_v1';
+const ACTIVE_UPLOAD_HEARTBEAT_MS = 3000;
 
 // ─────────────────────────────────────────────
 // 공통 서브 컴포넌트
@@ -166,6 +168,7 @@ function ExcelApp() {
   const uploadLogsRef = useRef([]); // 로그 실시간 참조용
   const sseCompletedRef = useRef(false); // SSE done 수신 여부 추적 (JEUS 타임아웃 대응)
   const uploadWatchdogRef = useRef({ timerId: null, lastEventAt: 0, warned: false });
+  const sharedStateHeartbeatRef = useRef(null);
   const alertCfgLoadedRef = useRef(false);
   const alertCfgSaveTimerRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -211,6 +214,43 @@ function ExcelApp() {
       setUploadLogs(prev => [...prev, `⚠ 운영 알림 전송 실패: ${e.message || 'network error'}`].slice(-120));
     }
   };
+  const readSharedUploadState = () => {
+    try {
+      const raw = localStorage.getItem(ACTIVE_UPLOAD_STATE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+  const publishSharedUploadState = (patch = {}) => {
+    try {
+      const prev = readSharedUploadState();
+      const next = {
+        ...prev,
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+      localStorage.setItem(ACTIVE_UPLOAD_STATE_KEY, JSON.stringify(next));
+    } catch {}
+  };
+  const stopSharedStateHeartbeat = () => {
+    const t = sharedStateHeartbeatRef.current;
+    if (t) clearInterval(t);
+    sharedStateHeartbeatRef.current = null;
+  };
+  const startSharedStateHeartbeat = () => {
+    stopSharedStateHeartbeat();
+    const tick = () => {
+      publishSharedUploadState({
+        uploader_alive: true,
+        heartbeat_at: new Date().toISOString(),
+      });
+    };
+    tick();
+    sharedStateHeartbeatRef.current = setInterval(tick, ACTIVE_UPLOAD_HEARTBEAT_MS);
+  };
   const stopUploadWatchdog = () => {
     const t = uploadWatchdogRef.current?.timerId;
     if (t) {
@@ -241,23 +281,49 @@ function ExcelApp() {
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'progress') {
-          touchUploadWatchdog();
-          setProgress({ current: data.current, total: data.total, percent: data.percent });
-          if (data.logs?.length > 0) {
-            setUploadLogs(prev => [...prev, ...data.logs].slice(-100));
-          }
-        } else if (data.type === 'done') {
-          sseCompletedRef.current = true;
-          es.close(); esRef.current = null;
-        } else if (data.type === 'error') {
-          touchUploadWatchdog();
-          setUploadLogs(prev => [...prev, `💣 오류: ${data.msg}`].slice(-100));
-          es.close(); esRef.current = null;
-          if (resumed) {
-            setUploading(false);
-            setUploadJobId('');
-            sessionStorage.removeItem('excel_active_job_id');
+      if (data.type === 'progress') {
+        touchUploadWatchdog();
+        setProgress({ current: data.current, total: data.total, percent: data.percent });
+        if (data.logs?.length > 0) {
+          setUploadLogs(prev => [...prev, ...data.logs].slice(-100));
+        }
+        const lastLog = Array.isArray(data.logs) && data.logs.length > 0 ? data.logs[data.logs.length - 1] : '';
+        publishSharedUploadState({
+          job_id: jobId,
+          upload_id: uploadId || '',
+          job_name: jobName || '',
+          file_name: file?.name || '',
+          status: 'running',
+          current: Number(data.current) || 0,
+          total: Number(data.total) || 0,
+          percent: Number(data.percent) || 0,
+          last_log: lastLog || '',
+        });
+      } else if (data.type === 'done') {
+        sseCompletedRef.current = true;
+        publishSharedUploadState({
+          status: 'done',
+          uploader_alive: false,
+          heartbeat_at: new Date().toISOString(),
+          percent: 100,
+        });
+        stopSharedStateHeartbeat();
+        es.close(); esRef.current = null;
+      } else if (data.type === 'error') {
+        touchUploadWatchdog();
+        setUploadLogs(prev => [...prev, `💣 오류: ${data.msg}`].slice(-100));
+        publishSharedUploadState({
+          status: 'err',
+          uploader_alive: false,
+          heartbeat_at: new Date().toISOString(),
+          last_log: data.msg || 'SSE error',
+        });
+        stopSharedStateHeartbeat();
+        es.close(); esRef.current = null;
+        if (resumed) {
+          setUploading(false);
+          setUploadJobId('');
+          sessionStorage.removeItem('excel_active_job_id');
           }
         } else if (data.type === 'waiting') {
           touchUploadWatchdog();
@@ -333,7 +399,26 @@ function ExcelApp() {
     }
     if (alertCfgSaveTimerRef.current) clearTimeout(alertCfgSaveTimerRef.current);
     stopUploadWatchdog();
+    stopSharedStateHeartbeat();
   }, []);
+
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      if (!uploading || !uploadJobId) return;
+      publishSharedUploadState({
+        job_id: uploadJobId,
+        upload_id: uploadId || '',
+        job_name: jobName || '',
+        file_name: file?.name || '',
+        status: 'detached',
+        uploader_alive: false,
+        heartbeat_at: new Date().toISOString(),
+        last_log: '업로드 화면 탭이 닫혀 메인 화면 모니터링으로 전환되었습니다.',
+      });
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [uploading, uploadJobId, uploadId, jobName, file]);
 
   useEffect(() => {
     if (isAdmin) post(API_URL, getParams({ mode: 'get_tables' })).then(d => setTableList(Array.isArray(d) ? d : []));
@@ -346,6 +431,18 @@ function ExcelApp() {
         setUploadJobId(activeJobId);
         setUploading(true);
         setUploadLogs(prev => [...prev, '🔄 이전 업로드 작업을 복구하는 중입니다...']);
+        publishSharedUploadState({
+          source: 'excel_upload',
+          job_id: activeJobId,
+          upload_id: uploadId || '',
+          job_name: jobName || '',
+          file_name: file?.name || '',
+          status: 'running',
+          uploader_alive: true,
+          heartbeat_at: new Date().toISOString(),
+          last_log: '이전 작업을 복구 중입니다.',
+        });
+        startSharedStateHeartbeat();
         startUploadWatchdog();
         attachSseStream(activeJobId, { resumed: true });
         post(API_URL, getParams({ mode: 'progress', job_id: activeJobId })).then((res) => {
@@ -354,6 +451,7 @@ function ExcelApp() {
             setUploading(false);
             setUploadJobId('');
             stopUploadWatchdog();
+            stopSharedStateHeartbeat();
             try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
           }
         });
@@ -968,6 +1066,21 @@ function ExcelApp() {
     setUploadJobId(jobId);
     setCancellingUpload(false);
     startUploadWatchdog();
+    publishSharedUploadState({
+      source: 'excel_upload',
+      job_id: jobId,
+      upload_id: uploadId || '',
+      job_name: jobName || '',
+      file_name: file?.name || '',
+      status: 'running',
+      current: 0,
+      total: 0,
+      percent: 0,
+      last_log: useTargetRows ? '실패행 재처리를 시작합니다.' : '업로드를 시작합니다.',
+      uploader_alive: true,
+      heartbeat_at: new Date().toISOString(),
+    });
+    startSharedStateHeartbeat();
     try { sessionStorage.setItem('excel_active_job_id', jobId); } catch {}
 
     attachSseStream(jobId);
@@ -1005,6 +1118,7 @@ function ExcelApp() {
       setCancellingUpload(false);
       setUploadJobId('');
       try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
+      stopSharedStateHeartbeat();
       if (res.status === 'ok' || res.status === 'partial') {
         setProgress(p => ({ ...p, current: p.total, percent: 100 }));
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
@@ -1060,6 +1174,15 @@ function ExcelApp() {
           setFailedRows(failedMsgs);
           // uploadResult에도 failedMsgs 병합 (버튼에서 사용)
           setUploadResult({ ...res, failed_row_msgs: failedMsgs, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: Object.keys(failedMsgs).filter(k => k !== '__unknown__').length } : null });
+          publishSharedUploadState({
+            status: 'partial',
+            uploader_alive: false,
+            heartbeat_at: new Date().toISOString(),
+            percent: 100,
+            current: Number(res.success_cnt || 0) + Number(res.fail_cnt || 0),
+            total: Number(res.success_cnt || 0) + Number(res.fail_cnt || 0),
+            last_log: `${res.fail_cnt || 0}건 실패로 부분 완료`,
+          });
           toast.update(tid, { render: `⚠️ ${res.fail_cnt}건 실패 — 미리보기에서 수정 후 재업로드`, type: 'warning', isLoading: false, autoClose: 5000 });
           // 첫 번째 실패 행 페이지로 자동 이동
           if (Object.keys(failedMsgs).length > 0 && file) {
@@ -1074,6 +1197,15 @@ function ExcelApp() {
           // ok: 완전 성공 → 결과 화면으로
           setFailedRows({});
           setUploadResult({ ...res, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: 0 } : null });
+          publishSharedUploadState({
+            status: 'ok',
+            uploader_alive: false,
+            heartbeat_at: new Date().toISOString(),
+            percent: 100,
+            current: Number(res.success_cnt || 0),
+            total: Number(res.success_cnt || 0),
+            last_log: '업로드가 정상 완료되었습니다.',
+          });
           toast.update(tid, { render: '🎉 완료', type: 'success', isLoading: false, autoClose: 3000 });
           setFile(null); setPreviewData([]); setEditedCells({});
           const el = document.getElementById('fileInput'); if (el) el.value = '';
@@ -1084,6 +1216,12 @@ function ExcelApp() {
         toast.update(tid, { render: '❌ 실패', type: 'error', isLoading: false, autoClose: 3000 });
         const { friendlyMsg, solution } = translateError(res.msg);
         setUploadResult({ ...res, friendlyMsg, solution, retry_summary: retrySummaryBase });
+        publishSharedUploadState({
+          status: 'err',
+          uploader_alive: false,
+          heartbeat_at: new Date().toISOString(),
+          last_log: res.msg || '업로드 실패',
+        });
         void sendOpsAlert('upload_error', {
           status: 'err',
           file_name: file?.name || '',
@@ -1107,6 +1245,7 @@ function ExcelApp() {
     } catch {
       if (esRef.current) { esRef.current.close(); esRef.current = null; }
       stopUploadWatchdog();
+      stopSharedStateHeartbeat();
 
       // ── JEUS 타임아웃 대응 ─────────────────────────────────────────
       // SSE로 'done' 신호를 이미 받은 경우 → 서버는 정상 완료됨
@@ -1118,6 +1257,13 @@ function ExcelApp() {
         try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
         setProgress(p => ({ ...p, percent: 100 }));
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
+        publishSharedUploadState({
+          status: 'ok',
+          uploader_alive: false,
+          heartbeat_at: new Date().toISOString(),
+          percent: 100,
+          last_log: '업로드가 정상 완료되었습니다.',
+        });
         toast.update(tid, { render: '🎉 업로드 완료', type: 'success', isLoading: false, autoClose: 3000 });
         setFailedRows({});
         setUploadResult({ status: 'ok' });
@@ -1133,6 +1279,12 @@ function ExcelApp() {
       setCancellingUpload(false);
       setUploadJobId('');
       try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
+      publishSharedUploadState({
+        status: 'err',
+        uploader_alive: false,
+        heartbeat_at: new Date().toISOString(),
+        last_log: '통신 오류 (서버 응답 지연 또는 연결 문제)',
+      });
       toast.update(tid, { render: '❌ 통신 오류 (서버 응답 지연 또는 연결 문제)', type: 'error', isLoading: false, autoClose: 3500 });
       void sendOpsAlert('upload_network_error', {
         file_name: file?.name || '',

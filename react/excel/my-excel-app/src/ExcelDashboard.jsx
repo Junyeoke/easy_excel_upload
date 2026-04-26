@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Area,
   AreaChart,
@@ -16,6 +16,9 @@ import {
 } from 'recharts';
 
 const API_URL = '/api/excel/engine';
+const ACTIVE_UPLOAD_STATE_KEY = 'excel_upload_active_state_v1';
+const DETACHED_HEARTBEAT_STALE_MS = 9000;
+const DETACHED_PROGRESS_POLL_MS = 2000;
 
 const post = async (params) => {
   const body = new URLSearchParams();
@@ -86,6 +89,9 @@ export default function ExcelDashboard() {
   const [compareDiffTypeFilter, setCompareDiffTypeFilter] = useState('all');
   const [compareSearch, setCompareSearch] = useState('');
   const [compareCollapsed, setCompareCollapsed] = useState({});
+  const [detachedUploadToast, setDetachedUploadToast] = useState(null);
+  const [dismissedDetachedJobId, setDismissedDetachedJobId] = useState('');
+  const detachedPollLockRef = useRef(false);
 
   const isTestUser = (() => {
     try {
@@ -279,6 +285,135 @@ export default function ExcelDashboard() {
     setTimeout(() => setActionMsg(null), 3000);
   };
 
+  const readSharedUploadState = () => {
+    try {
+      const raw = localStorage.getItem(ACTIVE_UPLOAD_STATE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const writeSharedUploadState = (next) => {
+    try {
+      localStorage.setItem(ACTIVE_UPLOAD_STATE_KEY, JSON.stringify(next));
+    } catch {}
+  };
+
+  const shouldShowDetachedToast = (state) => {
+    if (!state?.job_id) return false;
+    const status = String(state.status || '').toLowerCase();
+    if (['ok', 'partial', 'err', 'cancelled', 'done'].includes(status)) return true;
+    const hbTs = state.heartbeat_at ? new Date(state.heartbeat_at).getTime() : 0;
+    const stale = !hbTs || (Date.now() - hbTs) > DETACHED_HEARTBEAT_STALE_MS;
+    return state.uploader_alive === false || stale || status === 'detached';
+  };
+
+  const toDetachedToastView = (state) => {
+    if (!state?.job_id) return null;
+    const status = String(state.status || '').toLowerCase();
+    const title = status === 'ok' || status === 'done'
+      ? '엑셀 업로드 완료'
+      : status === 'partial'
+        ? '엑셀 업로드 부분 완료'
+        : status === 'err'
+          ? '엑셀 업로드 오류'
+          : '엑셀 업로드 진행 중';
+    return {
+      title,
+      status,
+      uploadId: state.upload_id || '',
+      jobName: state.job_name || '',
+      fileName: state.file_name || '',
+      current: Number(state.current) || 0,
+      total: Number(state.total) || 0,
+      percent: Math.max(0, Math.min(100, Number(state.percent) || 0)),
+      lastLog: state.last_log || '',
+    };
+  };
+
+  useEffect(() => {
+    const syncToastState = () => {
+      const state = readSharedUploadState();
+      if (!shouldShowDetachedToast(state)) {
+        setDetachedUploadToast(null);
+        return;
+      }
+      if (dismissedDetachedJobId && state?.job_id === dismissedDetachedJobId) {
+        setDetachedUploadToast(null);
+        return;
+      }
+      if (dismissedDetachedJobId && state?.job_id && state.job_id !== dismissedDetachedJobId) {
+        setDismissedDetachedJobId('');
+      }
+      setDetachedUploadToast(toDetachedToastView(state));
+    };
+
+    const onStorage = (e) => {
+      if (e.key !== ACTIVE_UPLOAD_STATE_KEY) return;
+      syncToastState();
+    };
+
+    syncToastState();
+    window.addEventListener('storage', onStorage);
+    const t = setInterval(syncToastState, 1000);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      clearInterval(t);
+    };
+  }, [dismissedDetachedJobId]);
+
+  useEffect(() => {
+    const pollDetachedProgress = async () => {
+      if (detachedPollLockRef.current) return;
+      const state = readSharedUploadState();
+      if (!state?.job_id) return;
+      if (!shouldShowDetachedToast(state)) return;
+      const status = String(state.status || '').toLowerCase();
+      if (['ok', 'partial', 'err', 'cancelled', 'done'].includes(status)) return;
+
+      detachedPollLockRef.current = true;
+      try {
+        const res = await post({ mode: 'progress', job_id: state.job_id });
+        if (res.status === 'ok') {
+          const logs = Array.isArray(res.logs) ? res.logs : [];
+          const next = {
+            ...state,
+            status: (Number(res.percent) || 0) >= 100 ? 'done' : 'running',
+            uploader_alive: false,
+            current: Number(res.current) || 0,
+            total: Number(res.total) || 0,
+            percent: Number(res.percent) || 0,
+            last_log: logs.length ? logs[logs.length - 1] : (state.last_log || ''),
+            updated_at: new Date().toISOString(),
+          };
+          writeSharedUploadState(next);
+          setDetachedUploadToast(toDetachedToastView(next));
+          return;
+        }
+        if (res.status === 'none') {
+          const next = {
+            ...state,
+            status: 'done',
+            uploader_alive: false,
+            last_log: state.last_log || '업로드 작업이 종료되었습니다.',
+            updated_at: new Date().toISOString(),
+          };
+          writeSharedUploadState(next);
+          setDetachedUploadToast(toDetachedToastView(next));
+        }
+      } finally {
+        detachedPollLockRef.current = false;
+      }
+    };
+
+    pollDetachedProgress();
+    const t = setInterval(pollDetachedProgress, DETACHED_PROGRESS_POLL_MS);
+    return () => clearInterval(t);
+  }, []);
+
   const handleDeleteLoader = async (loader) => {
     if (!window.confirm(`"${loader.job_name}" 로더를 삭제하시겠습니까?\n삭제 후 복구할 수 없습니다.`)) return;
     const res = await post({ mode: 'delete', upload_id: loader.upload_id });
@@ -375,6 +510,17 @@ export default function ExcelDashboard() {
         .itsm-badge.err { background: #fee2e2; color: #991b1b; }
         .itsm-link { font-size: 12px; color: #2563eb; text-decoration: none; font-weight: 600; }
         .itsm-placeholder { color: #9ca3af; font-size: 12px; }
+        .itsm-floating-progress { position: fixed; right: 20px; bottom: 20px; width: min(360px, calc(100vw - 24px)); background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.2); z-index: 3500; overflow: hidden; }
+        .itsm-floating-progress-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #e5e7eb; background: #f8fafc; }
+        .itsm-floating-progress-title { font-size: 12px; font-weight: 700; color: #111827; }
+        .itsm-floating-progress-close { border: 0; background: transparent; font-size: 14px; color: #64748b; cursor: pointer; line-height: 1; }
+        .itsm-floating-progress-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+        .itsm-floating-progress-meta { font-size: 11px; color: #6b7280; }
+        .itsm-floating-progress-percent { font-size: 15px; font-weight: 700; color: #111827; }
+        .itsm-floating-progress-track { width: 100%; height: 8px; border-radius: 999px; background: #e5e7eb; overflow: hidden; }
+        .itsm-floating-progress-fill { height: 100%; background: #2563eb; }
+        .itsm-floating-progress-body.done .itsm-floating-progress-fill { background: #16a34a; }
+        .itsm-floating-progress-body.err .itsm-floating-progress-fill { background: #dc2626; }
         @media (max-width: 1280px) {
           .itsm-layout { grid-template-columns: 250px 1fr; }
           .itsm-stats { grid-template-columns: repeat(2, 1fr); }
@@ -658,6 +804,46 @@ export default function ExcelDashboard() {
           )}
         </main>
       </section>
+
+      {detachedUploadToast && (
+        <div className="itsm-floating-progress">
+          <div className="itsm-floating-progress-head">
+            <div className="itsm-floating-progress-title">{detachedUploadToast.title}</div>
+            <button
+              className="itsm-floating-progress-close"
+              onClick={() => {
+                try {
+                  const state = readSharedUploadState();
+                  if (state?.job_id) setDismissedDetachedJobId(state.job_id);
+                } catch {}
+                setDetachedUploadToast(null);
+              }}
+              title="닫기"
+            >
+              ×
+            </button>
+          </div>
+          <div
+            className={`itsm-floating-progress-body ${detachedUploadToast.status === 'err' ? 'err' : detachedUploadToast.status === 'ok' || detachedUploadToast.status === 'done' || detachedUploadToast.status === 'partial' ? 'done' : ''}`}
+          >
+            <div className="itsm-floating-progress-meta">
+              {detachedUploadToast.jobName || detachedUploadToast.uploadId || '엑셀 업로드'}
+            </div>
+            {detachedUploadToast.fileName && (
+              <div className="itsm-floating-progress-meta">파일: {detachedUploadToast.fileName}</div>
+            )}
+            <div className="itsm-floating-progress-percent">
+              {detachedUploadToast.percent}% ({fmt(detachedUploadToast.current)} / {fmt(detachedUploadToast.total)})
+            </div>
+            <div className="itsm-floating-progress-track">
+              <div className="itsm-floating-progress-fill" style={{ width: `${detachedUploadToast.percent}%` }} />
+            </div>
+            {detachedUploadToast.lastLog && (
+              <div className="itsm-floating-progress-meta">{detachedUploadToast.lastLog}</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {compareModalOpen && compareResult && (
         <div className="itsm-modal-overlay" onClick={() => setCompareModalOpen(false)}>

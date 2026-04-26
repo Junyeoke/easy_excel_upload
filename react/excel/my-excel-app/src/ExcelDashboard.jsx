@@ -81,6 +81,8 @@ export default function ExcelDashboard() {
   const [histKeyword, setHistKeyword] = useState('');
   const [compareHistIds, setCompareHistIds] = useState([]);
   const [compareResult, setCompareResult] = useState(null);
+  const [compareModalOpen, setCompareModalOpen] = useState(false);
+  const [compareLoading, setCompareLoading] = useState(false);
 
   const isTestUser = (() => {
     try {
@@ -145,6 +147,22 @@ export default function ExcelDashboard() {
     }
   };
 
+  const sectionLabelMap = {
+    struct_json: '구조(테이블 계층)',
+    mapping_json: '컬럼 매핑',
+    pre_sql_json: '사전 SQL',
+    post_sql_json: '사후 SQL',
+    row_sql_json: '행 단위 SQL',
+  };
+
+  const diffTypeLabelMap = {
+    added: '추가',
+    removed: '삭제',
+    changed: '변경',
+  };
+
+  const prettyPath = (p) => (p || '').replace(/^\$\./, '').replace(/^\$/, '루트');
+
   const selectedHistory = useMemo(
     () => (selected
       ? history.filter((h) => {
@@ -205,17 +223,22 @@ export default function ExcelDashboard() {
 
   const loadHistoryCompare = async () => {
     if (compareHistIds.length !== 2) return;
+    setCompareLoading(true);
     const [leftId, rightId] = compareHistIds;
     const res = await post({ mode: 'get_history_compare', left_hist_id: leftId, right_hist_id: rightId });
     if (res.status === 'ok') {
       setCompareResult(res);
+      setCompareModalOpen(true);
+      setCompareLoading(false);
       return;
     }
+    setCompareLoading(false);
     notify('err', `스냅샷 비교 실패: ${res.msg || '서버 오류'}`);
   };
 
   const toggleCompareId = (histId) => {
     setCompareResult(null);
+    setCompareModalOpen(false);
     setCompareHistIds((prev) => {
       if (prev.includes(histId)) return prev.filter((id) => id !== histId);
       if (prev.length >= 2) return [prev[1], histId];
@@ -311,6 +334,12 @@ export default function ExcelDashboard() {
         .itsm-diff-row:last-child { border-bottom: none; }
         .itsm-diff-type { font-weight: 700; color: #1d4ed8; text-transform: uppercase; }
         .itsm-diff-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .itsm-modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: flex; align-items: center; justify-content: center; z-index: 3000; padding: 20px; }
+        .itsm-modal { width: min(1200px, 96vw); max-height: 88vh; overflow: hidden; background: #fff; border-radius: 10px; border: 1px solid #dbeafe; display: flex; flex-direction: column; }
+        .itsm-modal-head { padding: 12px 14px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .itsm-modal-title { font-size: 15px; font-weight: 700; color: #111827; }
+        .itsm-modal-body { padding: 12px 14px; overflow: auto; }
+        .itsm-modal-close { height: 30px; padding: 0 10px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #374151; cursor: pointer; font-size: 12px; font-weight: 700; }
         .itsm-file { font-size: 13px; color: #1f2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .itsm-time { margin-top: 3px; font-size: 11px; color: #6b7280; }
         .itsm-badge { display: inline-flex; justify-content: center; min-width: 58px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
@@ -534,52 +563,13 @@ export default function ExcelDashboard() {
                   <button className="itsm-btn" onClick={() => { setHistPeriod('all'); setHistStatus('all'); setHistKeyword(''); }}>
                     필터 초기화
                   </button>
-                  <button className="itsm-btn" onClick={loadHistoryCompare} disabled={compareHistIds.length !== 2}>
-                    스냅샷 비교
+                  <button className="itsm-btn" onClick={loadHistoryCompare} disabled={compareHistIds.length !== 2 || compareLoading}>
+                    {compareLoading ? '비교 중...' : '스냅샷 비교 보기'}
                   </button>
                 </div>
-                {compareResult && (
-                  <div className="itsm-compare-panel">
-                    <div>
-                      비교 결과: {compareResult.same_hash ? '동일 스냅샷' : '스냅샷 변경 감지'}
-                    </div>
-                    <div style={{ marginTop: 4 }}>
-                      좌측 {dt(compareResult.left?.reg_dttm)} / 우측 {dt(compareResult.right?.reg_dttm)}
-                    </div>
-                    <div className="itsm-compare-badges">
-                      {(compareResult.changed_sections || []).map((s) => (
-                        <span key={s} className="itsm-compare-badge">변경: {s}</span>
-                      ))}
-                      {(compareResult.unavailable_sections || []).map((s) => (
-                        <span key={s} className="itsm-compare-badge">미저장: {s}</span>
-                      ))}
-                    </div>
-                    {Object.entries(compareResult.section_diffs || {}).map(([section, diff]) => {
-                      const items = Array.isArray(diff?.items) ? diff.items : [];
-                      return (
-                        <div key={section} style={{ marginTop: 10 }}>
-                          <div style={{ fontWeight: 700, color: '#1e3a8a' }}>
-                            {section} · 변경 {diff?.total_changes ?? 0}건
-                            {diff?.available === false ? ` (${diff?.msg || '미비'})` : ''}
-                          </div>
-                          {diff?.available && items.length > 0 && (
-                            <div className="itsm-diff-list">
-                              {items.slice(0, 60).map((it, i) => (
-                                <div className="itsm-diff-row" key={`${section}_${i}`}>
-                                  <div className="itsm-diff-type">{it.type}</div>
-                                  <div className="itsm-diff-cell" title={`${it.path} | ${it.left}`}>
-                                    {it.path}: {it.left || '-'}
-                                  </div>
-                                  <div className="itsm-diff-cell" title={it.right}>
-                                    {it.right || '-'}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                {compareHistIds.length > 0 && (
+                  <div style={{ marginBottom: 8, fontSize: 12, color: '#4b5563' }}>
+                    비교 선택: {compareHistIds.length}/2
                   </div>
                 )}
                 {selectedHistory.length === 0 ? (
@@ -640,6 +630,70 @@ export default function ExcelDashboard() {
           )}
         </main>
       </section>
+
+      {compareModalOpen && compareResult && (
+        <div className="itsm-modal-overlay" onClick={() => setCompareModalOpen(false)}>
+          <div className="itsm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="itsm-modal-head">
+              <div>
+                <div className="itsm-modal-title">스냅샷 비교 결과</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                  {compareResult.same_hash ? '두 실행의 스냅샷이 동일합니다.' : '두 실행의 스냅샷에 변경이 있습니다.'}
+                </div>
+              </div>
+              <button className="itsm-modal-close" onClick={() => setCompareModalOpen(false)}>닫기</button>
+            </div>
+            <div className="itsm-modal-body">
+              <div style={{ fontSize: 12, color: '#374151', marginBottom: 10 }}>
+                기준 A: {dt(compareResult.left?.reg_dttm)} / 기준 B: {dt(compareResult.right?.reg_dttm)}
+              </div>
+
+              {(compareResult.changed_sections || []).length > 0 && (
+                <div className="itsm-compare-badges" style={{ marginBottom: 10 }}>
+                  {(compareResult.changed_sections || []).map((s) => (
+                    <span key={s} className="itsm-compare-badge">변경 섹션: {sectionLabelMap[s] || s}</span>
+                  ))}
+                </div>
+              )}
+
+              {Object.entries(compareResult.section_diffs || {}).map(([section, diff]) => {
+                const items = Array.isArray(diff?.items) ? diff.items : [];
+                return (
+                  <div key={section} style={{ marginBottom: 14 }}>
+                    <div style={{ fontWeight: 700, color: '#1e3a8a', marginBottom: 6 }}>
+                      {sectionLabelMap[section] || section} · 변경 {diff?.total_changes ?? 0}건
+                    </div>
+                    {diff?.available === false ? (
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>{diff?.msg || '스냅샷 데이터 없음'}</div>
+                    ) : items.length === 0 ? (
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>변경 항목이 없습니다.</div>
+                    ) : (
+                      <div className="itsm-diff-list">
+                        <div className="itsm-diff-row" style={{ fontWeight: 700, background: '#f8fafc' }}>
+                          <div>유형</div>
+                          <div>변경 경로 / 이전값</div>
+                          <div>이후값</div>
+                        </div>
+                        {items.slice(0, 120).map((it, i) => (
+                          <div className="itsm-diff-row" key={`${section}_${i}`}>
+                            <div className="itsm-diff-type">{diffTypeLabelMap[it.type] || it.type}</div>
+                            <div className="itsm-diff-cell" title={`${prettyPath(it.path)} | ${it.left}`}>
+                              {prettyPath(it.path)}: {it.left || '-'}
+                            </div>
+                            <div className="itsm-diff-cell" title={it.right}>
+                              {it.right || '-'}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

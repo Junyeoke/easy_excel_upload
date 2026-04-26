@@ -148,7 +148,9 @@ const writeCompletionSnapshot = (snapshot) => {
   try {
     const empId = snapshot?.uploader_emp_id || getCurrentEmpId();
     const scopedKey = getScopedStorageKey(COMPLETION_SNAPSHOT_KEY, empId);
-    localStorage.setItem(scopedKey, JSON.stringify(snapshot));
+    const serialized = JSON.stringify(snapshot);
+    localStorage.setItem(scopedKey, serialized);
+    localStorage.setItem(COMPLETION_SNAPSHOT_KEY, serialized);
   } catch {}
 };
 
@@ -507,7 +509,9 @@ function ExcelApp() {
         uploader_emp_id: empId,
         updated_at: new Date().toISOString(),
       };
-      localStorage.setItem(getScopedStorageKey(ACTIVE_UPLOAD_STATE_KEY, empId), JSON.stringify(next));
+      const serialized = JSON.stringify(next);
+      localStorage.setItem(getScopedStorageKey(ACTIVE_UPLOAD_STATE_KEY, empId), serialized);
+      localStorage.setItem(ACTIVE_UPLOAD_STATE_KEY, serialized);
     } catch {}
   };
   const publishCompletionSnapshot = (payload = {}) => {

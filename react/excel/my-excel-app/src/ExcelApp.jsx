@@ -118,6 +118,7 @@ function ExcelApp() {
   const esRef     = useRef(null);  // SSE EventSource 참조 (cleanup용)
   const uploadLogsRef = useRef([]); // 로그 실시간 참조용
   const sseCompletedRef = useRef(false); // SSE done 수신 여부 추적 (JEUS 타임아웃 대응)
+  const uploadWatchdogRef = useRef({ timerId: null, lastEventAt: 0, warned: false });
   const [isDragging, setIsDragging] = useState(false);
   const [sampleFile, setSampleFile] = useState(null);
   const [sampleFileName, setSampleFileName] = useState('');
@@ -129,6 +130,29 @@ function ExcelApp() {
 
   const formatFileSize = b => !b ? '' : b < 1024 ? b + ' B' : b < 1024*1024 ? (b/1024).toFixed(1)+' KB' : (b/(1024*1024)).toFixed(2)+' MB';
   const encodeSafeBase64 = str => btoa(encodeURIComponent(str || '').replace(/%([0-9A-F]{2})/g, (m, p1) => String.fromCharCode('0x' + p1)));
+  const stopUploadWatchdog = () => {
+    const t = uploadWatchdogRef.current?.timerId;
+    if (t) {
+      clearInterval(t);
+    }
+    uploadWatchdogRef.current = { timerId: null, lastEventAt: 0, warned: false };
+  };
+  const touchUploadWatchdog = () => {
+    uploadWatchdogRef.current.lastEventAt = Date.now();
+    uploadWatchdogRef.current.warned = false;
+  };
+  const startUploadWatchdog = () => {
+    stopUploadWatchdog();
+    uploadWatchdogRef.current.lastEventAt = Date.now();
+    uploadWatchdogRef.current.warned = false;
+    uploadWatchdogRef.current.timerId = setInterval(() => {
+      const elapsed = Date.now() - (uploadWatchdogRef.current.lastEventAt || Date.now());
+      if (elapsed > 30000 && !uploadWatchdogRef.current.warned) {
+        setUploadLogs(prev => [...prev, '⏱ 진행 로그 수신이 지연되고 있습니다. 서버 처리 상태를 계속 확인 중입니다.'].slice(-120));
+        uploadWatchdogRef.current.warned = true;
+      }
+    }, 5000);
+  };
 
   const post = async (url, formData) => {
     const headers = {};
@@ -148,6 +172,13 @@ function ExcelApp() {
 
   useEffect(() => { if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: 'smooth' }); }, [uploadLogs]);
   useEffect(() => { setMappingPage(1); }, [searchTerm, activeAlias]);
+  useEffect(() => () => {
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+    stopUploadWatchdog();
+  }, []);
 
   useEffect(() => {
     if (isAdmin) post(API_URL, getParams({ mode: 'get_tables' })).then(d => setTableList(Array.isArray(d) ? d : []));
@@ -663,14 +694,20 @@ function ExcelApp() {
         .sort((a, b) => a - b)
       : [];
     const useTargetRows = retryFailedOnly && retryTargetRows.length > 0;
+    const retrySummaryBase = useTargetRows ? {
+      mode: 'failed_rows_only',
+      target_count: retryTargetRows.length,
+      before_fail_count: Object.keys(failedRows).filter(k => k !== '__unknown__').length,
+    } : null;
     const cr = await Swal.fire({ title: '데이터 업로드 실행', html: '데이터를 서버로 전송하시겠습니까?<br><small style="color:#ef4444">대량 데이터는 수 분이 소요될 수 있습니다.</small>', icon: 'question', showCancelButton: true, confirmButtonColor: '#6366f1', cancelButtonColor: '#94a3b8', confirmButtonText: '🚀 진행', cancelButtonText: '취소', reverseButtons: true });
     if (!cr.isConfirmed) return;
 
-    setUploading(true); setProgress({ current: 0, total: 0, percent: 0 }); setUploadLogs(['🚀 파일 전송을 시작합니다...']); setUploadResult(null);
+    setUploading(true); setProgress({ current: 0, total: 0, percent: 0 }); setUploadLogs([useTargetRows ? '🎯 실패행 재처리를 시작합니다...' : '🚀 파일 전송을 시작합니다...']); setUploadResult(null);
     sseCompletedRef.current = false; // SSE 완료 플래그 초기화
     const jobId = 'JOB_' + Date.now();
     setUploadJobId(jobId);
     setCancellingUpload(false);
+    startUploadWatchdog();
 
     // ── SSE 스트리밍 시작 ────────────────────────────────────────────
     // EventSource는 GET 전용이므로 jobId를 쿼리 파라미터로 전달합니다.
@@ -686,6 +723,7 @@ function ExcelApp() {
         const data = JSON.parse(event.data);
 
         if (data.type === 'progress') {
+          touchUploadWatchdog();
           setProgress({ current: data.current, total: data.total, percent: data.percent });
           if (data.logs?.length > 0) {
             setUploadLogs(prev => [...prev, ...data.logs].slice(-100));
@@ -695,8 +733,15 @@ function ExcelApp() {
           sseCompletedRef.current = true; // JEUS 타임아웃으로 fetch가 끊겨도 성공 처리하기 위한 플래그
           es.close(); esRef.current = null;
         } else if (data.type === 'error') {
+          touchUploadWatchdog();
           setUploadLogs(prev => [...prev, `💣 오류: ${data.msg}`]);
           es.close(); esRef.current = null;
+        } else if (data.type === 'waiting') {
+          touchUploadWatchdog();
+          setUploadLogs(prev => {
+            if (prev.some(v => v.includes('작업 대기 중'))) return prev;
+            return [...prev, '⌛ 작업 대기 중... 서버 준비를 확인하고 있습니다.'].slice(-100);
+          });
         }
         // type === 'waiting' 은 무시 (업로드 요청 도달 전 대기 상태)
       } catch { /* JSON 파싱 실패 무시 */ }
@@ -705,6 +750,10 @@ function ExcelApp() {
     es.onerror = () => {
       // 연결 오류 — EventSource는 자동 재연결을 시도하므로
       // 업로드가 완전히 끝난 경우에만 닫기
+      setUploadLogs(prev => {
+        if (prev.some(v => v.includes('SSE 연결이 일시적으로 불안정'))) return prev;
+        return [...prev, '⚠ SSE 연결이 일시적으로 불안정합니다. 자동 재연결을 시도합니다.'].slice(-100);
+      });
       if (esRef.current && esRef.current.readyState === EventSource.CLOSED) {
         esRef.current = null;
       }
@@ -734,6 +783,7 @@ function ExcelApp() {
       const res = await post(API_URL, fd);
       // ── SSE 스트림 정리 ──
       if (esRef.current) { esRef.current.close(); esRef.current = null; }
+      stopUploadWatchdog();
       setUploading(false);
       setCancellingUpload(false);
       setUploadJobId('');
@@ -774,7 +824,7 @@ function ExcelApp() {
           console.log('[ExcelUpload] 최종 failedMsgs:', failedMsgs, '/ res.failed_row_msgs:', res.failed_row_msgs);
           setFailedRows(failedMsgs);
           // uploadResult에도 failedMsgs 병합 (버튼에서 사용)
-          setUploadResult({ ...res, failed_row_msgs: failedMsgs });
+          setUploadResult({ ...res, failed_row_msgs: failedMsgs, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: Object.keys(failedMsgs).filter(k => k !== '__unknown__').length } : null });
           toast.update(tid, { render: `⚠️ ${res.fail_cnt}건 실패 — 미리보기에서 수정 후 재업로드`, type: 'warning', isLoading: false, autoClose: 5000 });
           // 첫 번째 실패 행 페이지로 자동 이동
           if (Object.keys(failedMsgs).length > 0 && file) {
@@ -788,7 +838,7 @@ function ExcelApp() {
         } else {
           // ok: 완전 성공 → 결과 화면으로
           setFailedRows({});
-          setUploadResult(res);
+          setUploadResult({ ...res, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: 0 } : null });
           toast.update(tid, { render: '🎉 완료', type: 'success', isLoading: false, autoClose: 3000 });
           setFile(null); setPreviewData([]); setEditedCells({});
           const el = document.getElementById('fileInput'); if (el) el.value = '';
@@ -798,7 +848,7 @@ function ExcelApp() {
         // err: 파일 유지, 오류 메시지 + 행 강조
         toast.update(tid, { render: '❌ 실패', type: 'error', isLoading: false, autoClose: 3000 });
         const { friendlyMsg, solution } = translateError(res.msg);
-        setUploadResult({ ...res, friendlyMsg, solution });
+        setUploadResult({ ...res, friendlyMsg, solution, retry_summary: retrySummaryBase });
         const rowMatch = res.msg?.match(/엑셀 \[ (\d+) 번째 행 \]/);
         if (rowMatch && file) {
           const errRowNum = parseInt(rowMatch[1]);
@@ -815,6 +865,7 @@ function ExcelApp() {
       }
     } catch {
       if (esRef.current) { esRef.current.close(); esRef.current = null; }
+      stopUploadWatchdog();
 
       // ── JEUS 타임아웃 대응 ─────────────────────────────────────────
       // SSE로 'done' 신호를 이미 받은 경우 → 서버는 정상 완료됨
@@ -839,7 +890,7 @@ function ExcelApp() {
       setUploading(false);
       setCancellingUpload(false);
       setUploadJobId('');
-      toast.update(tid, { render: '❌ 통신 오류', type: 'error', isLoading: false, autoClose: 3000 });
+      toast.update(tid, { render: '❌ 통신 오류 (서버 응답 지연 또는 연결 문제)', type: 'error', isLoading: false, autoClose: 3500 });
     }
   };
 

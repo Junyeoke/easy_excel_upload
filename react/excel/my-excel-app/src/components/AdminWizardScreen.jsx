@@ -577,13 +577,18 @@ const AdminStep3 = (props) => {
                   <div className="result-priority-desc">실패 행을 다시 미리보기로 불러와 수정한 뒤 재업로드하는 경로가 가장 빠릅니다.</div>
                 </div>
               )}
-              {uploadResult.status === 'err' && (
-                <div className="result-priority-card priority-danger">
-                  <div className="result-priority-title">우선 확인할 작업</div>
-                  <div className="result-priority-desc">오류 원문과 해결 가이드를 보고 설정 구조나 샘플 데이터를 먼저 점검하는 것이 좋습니다.</div>
-                </div>
-              )}
-            </div>
+            {uploadResult.status === 'err' && (
+              <div className="result-priority-card priority-danger">
+                <div className="result-priority-title">우선 확인할 작업</div>
+                <div className="result-priority-desc">오류 원문과 해결 가이드를 보고 설정 구조나 샘플 데이터를 먼저 점검하는 것이 좋습니다.</div>
+              </div>
+            )}
+          </div>
+            {uploadResult.retry_summary?.mode === 'failed_rows_only' && (
+              <div style={{ marginBottom: '12px', padding: '10px 12px', borderRadius: '10px', border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#166534', fontSize: '0.82rem', fontWeight: 700 }}>
+                실패행 재처리 결과: 대상 {uploadResult.retry_summary.target_count}건 / 남은 실패 {uploadResult.retry_summary.after_fail_count ?? 0}건
+              </div>
+            )}
             {uploadResult.status === 'ok' && (
               <div style={{ textAlign: 'center', padding: '28px', background: '#f0fdf4', border: '1px solid #a7f3d0', borderRadius: '14px' }}>
                 <div style={{ fontSize: '2.8rem', marginBottom: '10px' }}>✅</div>

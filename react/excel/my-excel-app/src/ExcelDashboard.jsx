@@ -79,6 +79,8 @@ export default function ExcelDashboard() {
   const [histPeriod, setHistPeriod] = useState('all');
   const [histStatus, setHistStatus] = useState('all');
   const [histKeyword, setHistKeyword] = useState('');
+  const [compareHistIds, setCompareHistIds] = useState([]);
+  const [compareResult, setCompareResult] = useState(null);
 
   const isTestUser = (() => {
     try {
@@ -120,6 +122,11 @@ export default function ExcelDashboard() {
     loadAll();
   }, [histPeriod, histStatus, histKeyword]);
 
+  useEffect(() => {
+    setCompareHistIds([]);
+    setCompareResult(null);
+  }, [selected?.upload_id]);
+
   const filteredLoaders = useMemo(() => {
     const q = loaderQuery.trim().toLowerCase();
     if (!q) return loaders;
@@ -127,6 +134,16 @@ export default function ExcelDashboard() {
       [l.job_name || '', l.upload_id || ''].join(' ').toLowerCase().includes(q)
     );
   }, [loaders, loaderQuery]);
+
+  const parseFailTypeJson = (raw) => {
+    if (!raw || typeof raw !== 'string') return {};
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
 
   const selectedHistory = useMemo(
     () => (selected
@@ -169,6 +186,42 @@ export default function ExcelDashboard() {
         .slice(0, 8),
     [history, loaders]
   );
+
+  const failTypeStats = useMemo(() => {
+    const acc = {};
+    selectedHistory.forEach((h) => {
+      const map = parseFailTypeJson(h.fail_type_json);
+      Object.entries(map).forEach(([k, v]) => {
+        const n = Number(v) || 0;
+        if (!n) return;
+        acc[k] = (acc[k] || 0) + n;
+      });
+    });
+    return Object.entries(acc)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [selectedHistory]);
+
+  const loadHistoryCompare = async () => {
+    if (compareHistIds.length !== 2) return;
+    const [leftId, rightId] = compareHistIds;
+    const res = await post({ mode: 'get_history_compare', left_hist_id: leftId, right_hist_id: rightId });
+    if (res.status === 'ok') {
+      setCompareResult(res);
+      return;
+    }
+    notify('err', `스냅샷 비교 실패: ${res.msg || '서버 오류'}`);
+  };
+
+  const toggleCompareId = (histId) => {
+    setCompareResult(null);
+    setCompareHistIds((prev) => {
+      if (prev.includes(histId)) return prev.filter((id) => id !== histId);
+      if (prev.length >= 2) return [prev[1], histId];
+      return [...prev, histId];
+    });
+  };
 
   const notify = (type, text) => {
     setActionMsg({ type, text });
@@ -246,9 +299,13 @@ export default function ExcelDashboard() {
         .itsm-tip { background: #fff; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 10px; font-size: 12px; }
         .itsm-tip-title { font-weight: 700; margin-bottom: 6px; color: #111827; }
         .itsm-tip-row { display: flex; justify-content: space-between; gap: 8px; color: #4b5563; }
-        .itsm-table-head { display: grid; grid-template-columns: 1fr 84px 84px 110px 100px; gap: 8px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; font-weight: 700; }
+        .itsm-table-head { display: grid; grid-template-columns: 40px 1fr 84px 84px 110px 100px; gap: 8px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; font-weight: 700; }
         .itsm-table-body { max-height: 320px; overflow-y: auto; }
-        .itsm-row { display: grid; grid-template-columns: 1fr 84px 84px 110px 100px; gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid #f3f4f6; }
+        .itsm-row { display: grid; grid-template-columns: 40px 1fr 84px 84px 110px 100px; gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid #f3f4f6; }
+        .itsm-row.compare-on { background: #f0f9ff; }
+        .itsm-compare-panel { margin-top: 10px; border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 8px; padding: 10px; font-size: 12px; color: #1e3a8a; }
+        .itsm-compare-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+        .itsm-compare-badge { border: 1px solid #93c5fd; background: #fff; color: #1d4ed8; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
         .itsm-file { font-size: 13px; color: #1f2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .itsm-time { margin-top: 3px; font-size: 11px; color: #6b7280; }
         .itsm-badge { display: inline-flex; justify-content: center; min-width: 58px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
@@ -428,6 +485,27 @@ export default function ExcelDashboard() {
                 )}
               </div>
 
+              <div className="itsm-panel" style={{ marginBottom: 10 }}>
+                <div className="itsm-chart-title">실패 원인 통계 (유형별)</div>
+                {failTypeStats.length === 0 ? (
+                  <div className="itsm-empty" style={{ padding: 24 }}>실패 유형 통계 데이터가 없습니다.</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={failTypeStats} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="name" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip formatter={(value) => [`${fmt(value)}건`, '실패건수']} />
+                      <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                        {failTypeStats.map((_, i) => (
+                          <Cell key={i} fill={i % 2 === 0 ? '#f97316' : '#fb923c'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
               <div className="itsm-panel">
                 <div className="itsm-chart-title">상세 실행 이력</div>
                 <div className="itsm-filter-row">
@@ -451,12 +529,34 @@ export default function ExcelDashboard() {
                   <button className="itsm-btn" onClick={() => { setHistPeriod('all'); setHistStatus('all'); setHistKeyword(''); }}>
                     필터 초기화
                   </button>
+                  <button className="itsm-btn" onClick={loadHistoryCompare} disabled={compareHistIds.length !== 2}>
+                    스냅샷 비교
+                  </button>
                 </div>
+                {compareResult && (
+                  <div className="itsm-compare-panel">
+                    <div>
+                      비교 결과: {compareResult.same_hash ? '동일 스냅샷' : '스냅샷 변경 감지'}
+                    </div>
+                    <div style={{ marginTop: 4 }}>
+                      좌측 {dt(compareResult.left?.reg_dttm)} / 우측 {dt(compareResult.right?.reg_dttm)}
+                    </div>
+                    <div className="itsm-compare-badges">
+                      {(compareResult.changed_sections || []).map((s) => (
+                        <span key={s} className="itsm-compare-badge">변경: {s}</span>
+                      ))}
+                      {(compareResult.unavailable_sections || []).map((s) => (
+                        <span key={s} className="itsm-compare-badge">미저장: {s}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {selectedHistory.length === 0 ? (
                   <div className="itsm-empty" style={{ padding: 30 }}>이 로더의 실행 이력이 없습니다.</div>
                 ) : (
                   <>
                     <div className="itsm-table-head">
+                      <span style={{ textAlign: 'center' }}>비교</span>
                       <span>파일명 / 실행일시</span>
                       <span style={{ textAlign: 'center' }}>성공</span>
                       <span style={{ textAlign: 'center' }}>실패</span>
@@ -465,7 +565,14 @@ export default function ExcelDashboard() {
                     </div>
                     <div className="itsm-table-body">
                       {selectedHistory.map((h, idx) => (
-                        <div className="itsm-row" key={idx}>
+                        <div className={`itsm-row ${compareHistIds.includes(h.hist_id) ? 'compare-on' : ''}`} key={idx}>
+                          <div style={{ textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={compareHistIds.includes(h.hist_id)}
+                              onChange={() => toggleCompareId(h.hist_id)}
+                            />
+                          </div>
                           <div>
                             <div className="itsm-file">{h.file_name || '-'}</div>
                             <div className="itsm-time">{dt(h.reg_dttm)}</div>

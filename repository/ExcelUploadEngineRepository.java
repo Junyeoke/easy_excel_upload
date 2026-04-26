@@ -364,12 +364,20 @@ public class ExcelUploadEngineRepository {
      */
     public String insertHistory(Connection conn, String histId, String jobName, String fileName,
                                 int successCnt, int failCnt, String errorFile, String nowFunc,
-                                String uploadId, String configSnapshotHash) {
+                                String uploadId, String configSnapshotHash, String failTypeJson,
+                                String structSnapshotJson, String mappingSnapshotJson,
+                                String preSqlSnapshotJson, String postSqlSnapshotJson, String rowSqlSnapshotJson) {
         String normalizedJobName = jobName == null || jobName.trim().isEmpty() ? "일반 데이터 업로드" : jobName;
         try {
             DatabaseMetaData meta = conn.getMetaData();
             boolean hasUploadIdCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "UPLOAD_ID");
             boolean hasSnapshotHashCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_SNAPSHOT_HASH");
+            boolean hasFailTypeJsonCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "FAIL_TYPE_JSON");
+            boolean hasStructSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_STRUCT_JSON");
+            boolean hasMappingSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_MAPPING_JSON");
+            boolean hasPreSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_PRE_SQL_JSON");
+            boolean hasPostSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_POST_SQL_JSON");
+            boolean hasRowSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_ROW_SQL_JSON");
 
             StringBuilder colSb = new StringBuilder("HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE");
             StringBuilder valSb = new StringBuilder("?, ?, ?, ?, ?, ?");
@@ -391,6 +399,36 @@ public class ExcelUploadEngineRepository {
                 valSb.append(", ?");
                 sqlParams.add(configSnapshotHash);
             }
+            if (hasFailTypeJsonCol) {
+                colSb.append(", FAIL_TYPE_JSON");
+                valSb.append(", ?");
+                sqlParams.add(failTypeJson);
+            }
+            if (hasStructSnapshotCol) {
+                colSb.append(", CONFIG_STRUCT_JSON");
+                valSb.append(", ?");
+                sqlParams.add(structSnapshotJson);
+            }
+            if (hasMappingSnapshotCol) {
+                colSb.append(", CONFIG_MAPPING_JSON");
+                valSb.append(", ?");
+                sqlParams.add(mappingSnapshotJson);
+            }
+            if (hasPreSqlSnapshotCol) {
+                colSb.append(", CONFIG_PRE_SQL_JSON");
+                valSb.append(", ?");
+                sqlParams.add(preSqlSnapshotJson);
+            }
+            if (hasPostSqlSnapshotCol) {
+                colSb.append(", CONFIG_POST_SQL_JSON");
+                valSb.append(", ?");
+                sqlParams.add(postSqlSnapshotJson);
+            }
+            if (hasRowSqlSnapshotCol) {
+                colSb.append(", CONFIG_ROW_SQL_JSON");
+                valSb.append(", ?");
+                sqlParams.add(rowSqlSnapshotJson);
+            }
 
             colSb.append(", REG_DTTM");
             valSb.append(", ").append(nowFunc);
@@ -409,6 +447,24 @@ public class ExcelUploadEngineRepository {
                 }
                 if (hasSnapshotHashCol) {
                     histPs.setString(idx++, configSnapshotHash);
+                }
+                if (hasFailTypeJsonCol) {
+                    histPs.setString(idx++, failTypeJson);
+                }
+                if (hasStructSnapshotCol) {
+                    histPs.setString(idx++, structSnapshotJson);
+                }
+                if (hasMappingSnapshotCol) {
+                    histPs.setString(idx++, mappingSnapshotJson);
+                }
+                if (hasPreSqlSnapshotCol) {
+                    histPs.setString(idx++, preSqlSnapshotJson);
+                }
+                if (hasPostSqlSnapshotCol) {
+                    histPs.setString(idx++, postSqlSnapshotJson);
+                }
+                if (hasRowSqlSnapshotCol) {
+                    histPs.setString(idx++, rowSqlSnapshotJson);
                 }
                 sqlLog.info(renderSql(sql, sqlParams));
                 histPs.executeUpdate();
@@ -431,10 +487,12 @@ public class ExcelUploadEngineRepository {
         DatabaseMetaData meta = conn.getMetaData();
         boolean hasUploadIdCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "UPLOAD_ID");
         boolean hasSnapshotHashCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_SNAPSHOT_HASH");
+        boolean hasFailTypeJsonCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "FAIL_TYPE_JSON");
 
         StringBuilder sql = new StringBuilder("SELECT HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM");
         if (hasUploadIdCol) sql.append(", UPLOAD_ID");
         if (hasSnapshotHashCol) sql.append(", CONFIG_SNAPSHOT_HASH");
+        if (hasFailTypeJsonCol) sql.append(", FAIL_TYPE_JSON");
         sql.append(" FROM ESO_EXCEL_UPLOAD_HISTORY WHERE 1=1");
 
         List<Object> bindParams = new ArrayList<>();
@@ -482,11 +540,110 @@ public class ExcelUploadEngineRepository {
                     row.put("reg_dttm",     String.valueOf(rs.getObject("REG_DTTM")));
                     if (hasUploadIdCol) row.put("upload_id", rs.getString("UPLOAD_ID"));
                     if (hasSnapshotHashCol) row.put("config_snapshot_hash", rs.getString("CONFIG_SNAPSHOT_HASH"));
+                    if (hasFailTypeJsonCol) row.put("fail_type_json", rs.getString("FAIL_TYPE_JSON"));
                     list.add(row);
                 }
             }
         }
         return list;
+    }
+
+    public Map<String, Object> getHistoryCompare(Connection conn, String leftHistId, String rightHistId) throws Exception {
+        if (leftHistId == null || leftHistId.trim().isEmpty() || rightHistId == null || rightHistId.trim().isEmpty()) {
+            throw new Exception("left_hist_id, right_hist_id가 필요합니다.");
+        }
+        Map<String, Object> left = getHistoryDetailById(conn, leftHistId.trim());
+        Map<String, Object> right = getHistoryDetailById(conn, rightHistId.trim());
+        if (left == null || right == null) {
+            throw new Exception("비교 대상 이력을 찾을 수 없습니다.");
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("left", left);
+        result.put("right", right);
+
+        String leftHash = str(left.get("config_snapshot_hash"));
+        String rightHash = str(right.get("config_snapshot_hash"));
+        result.put("same_hash", !leftHash.isEmpty() && leftHash.equals(rightHash));
+
+        List<String> changedSections = new ArrayList<>();
+        List<String> unavailableSections = new ArrayList<>();
+        collectSectionDiff(changedSections, unavailableSections, "struct_json", left, right);
+        collectSectionDiff(changedSections, unavailableSections, "mapping_json", left, right);
+        collectSectionDiff(changedSections, unavailableSections, "pre_sql_json", left, right);
+        collectSectionDiff(changedSections, unavailableSections, "post_sql_json", left, right);
+        collectSectionDiff(changedSections, unavailableSections, "row_sql_json", left, right);
+
+        result.put("changed_sections", changedSections);
+        result.put("unavailable_sections", unavailableSections);
+        result.put("has_detail_snapshots", unavailableSections.isEmpty() || unavailableSections.size() < 5);
+        return result;
+    }
+
+    private void collectSectionDiff(List<String> changed, List<String> unavailable, String key,
+                                    Map<String, Object> left, Map<String, Object> right) {
+        String lv = str(left.get(key));
+        String rv = str(right.get(key));
+        if (lv.isEmpty() || rv.isEmpty()) {
+            unavailable.add(key);
+            return;
+        }
+        if (!lv.equals(rv)) {
+            changed.add(key);
+        }
+    }
+
+    private Map<String, Object> getHistoryDetailById(Connection conn, String histId) throws Exception {
+        DatabaseMetaData meta = conn.getMetaData();
+        boolean hasUploadIdCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "UPLOAD_ID");
+        boolean hasSnapshotHashCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_SNAPSHOT_HASH");
+        boolean hasFailTypeJsonCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "FAIL_TYPE_JSON");
+        boolean hasStructSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_STRUCT_JSON");
+        boolean hasMappingSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_MAPPING_JSON");
+        boolean hasPreSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_PRE_SQL_JSON");
+        boolean hasPostSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_POST_SQL_JSON");
+        boolean hasRowSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_ROW_SQL_JSON");
+
+        StringBuilder sql = new StringBuilder("SELECT HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM");
+        if (hasUploadIdCol) sql.append(", UPLOAD_ID");
+        if (hasSnapshotHashCol) sql.append(", CONFIG_SNAPSHOT_HASH");
+        if (hasFailTypeJsonCol) sql.append(", FAIL_TYPE_JSON");
+        if (hasStructSnapshotCol) sql.append(", CONFIG_STRUCT_JSON");
+        if (hasMappingSnapshotCol) sql.append(", CONFIG_MAPPING_JSON");
+        if (hasPreSqlSnapshotCol) sql.append(", CONFIG_PRE_SQL_JSON");
+        if (hasPostSqlSnapshotCol) sql.append(", CONFIG_POST_SQL_JSON");
+        if (hasRowSqlSnapshotCol) sql.append(", CONFIG_ROW_SQL_JSON");
+        sql.append(" FROM ESO_EXCEL_UPLOAD_HISTORY WHERE HIST_ID = ?");
+
+        try (PreparedStatement pstmt = conn.prepareStatement(sql.toString())) {
+            pstmt.setString(1, histId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("hist_id", rs.getString("HIST_ID"));
+                row.put("job_name", rs.getString("JOB_NAME"));
+                row.put("file_name", rs.getString("FILE_NAME"));
+                row.put("success_cnt", rs.getInt("SUCCESS_CNT"));
+                row.put("fail_cnt", rs.getInt("FAIL_CNT"));
+                row.put("error_file", rs.getString("ERROR_FILE"));
+                row.put("reg_dttm", String.valueOf(rs.getObject("REG_DTTM")));
+                if (hasUploadIdCol) row.put("upload_id", rs.getString("UPLOAD_ID"));
+                if (hasSnapshotHashCol) row.put("config_snapshot_hash", rs.getString("CONFIG_SNAPSHOT_HASH"));
+                if (hasFailTypeJsonCol) row.put("fail_type_json", rs.getString("FAIL_TYPE_JSON"));
+                if (hasStructSnapshotCol) row.put("struct_json", rs.getString("CONFIG_STRUCT_JSON"));
+                if (hasMappingSnapshotCol) row.put("mapping_json", rs.getString("CONFIG_MAPPING_JSON"));
+                if (hasPreSqlSnapshotCol) row.put("pre_sql_json", rs.getString("CONFIG_PRE_SQL_JSON"));
+                if (hasPostSqlSnapshotCol) row.put("post_sql_json", rs.getString("CONFIG_POST_SQL_JSON"));
+                if (hasRowSqlSnapshotCol) row.put("row_sql_json", rs.getString("CONFIG_ROW_SQL_JSON"));
+                return row;
+            }
+        }
+    }
+
+    private String str(Object v) {
+        return v == null ? "" : String.valueOf(v);
     }
 
     // =====================================================================

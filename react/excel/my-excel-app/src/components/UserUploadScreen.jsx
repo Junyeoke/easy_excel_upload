@@ -256,6 +256,16 @@ const UserWorkbenchStep = ({
             </div>
           </div>
 
+          {uploadResult.retry_summary?.mode === 'failed_rows_only' && (
+            <div className="result-priority-card priority-success" style={{ marginBottom: '10px' }}>
+              <div className="result-priority-title">실패행 재처리 결과</div>
+              <div className="result-priority-desc">
+                재처리 대상 {uploadResult.retry_summary.target_count}건 중
+                {` 남은 실패 ${uploadResult.retry_summary.after_fail_count ?? 0}건`}
+              </div>
+            </div>
+          )}
+
           <div className="result-priority-strip">
             {uploadResult.status === 'ok' && (
               <div className="result-priority-card priority-success">

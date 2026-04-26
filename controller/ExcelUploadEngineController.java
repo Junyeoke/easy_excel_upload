@@ -219,6 +219,36 @@ public class ExcelUploadEngineController {
         }
     }
 
+    private String classifyFailType(String rawMsg) {
+        String m = rawMsg == null ? "" : rawMsg.toLowerCase(Locale.ROOT);
+        if (m.isEmpty()) return "기타";
+        if (m.contains("null") && (m.contains("not") || m.contains("cannot"))) return "필수값 누락";
+        if (m.contains("unique") || m.contains("duplicate") || m.contains("중복")) return "중복키";
+        if (m.contains("too long") || m.contains("data too long") || m.contains("length") || m.contains("max")) return "길이초과";
+        if (m.contains("number") || m.contains("numeric") || m.contains("숫자")) return "숫자형식";
+        if (m.contains("date") || m.contains("time") || m.contains("yyyy")) return "날짜형식";
+        if (m.contains("foreign key") || m.contains("referential") || m.contains("fk")) return "참조무결성";
+        if (m.contains("timeout") || m.contains("timed out")) return "타임아웃";
+        if (m.contains("cancel")) return "사용자취소";
+        return "기타";
+    }
+
+    private String buildFailTypeJson(Map<String, String> failedRowMsgMap) {
+        if (failedRowMsgMap == null || failedRowMsgMap.isEmpty()) {
+            return "{}";
+        }
+        Map<String, Integer> summary = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : failedRowMsgMap.entrySet()) {
+            String rowKey = e.getKey();
+            if (rowKey != null && rowKey.startsWith("__unknown_")) {
+                continue;
+            }
+            String type = classifyFailType(e.getValue());
+            summary.put(type, summary.getOrDefault(type, 0) + 1);
+        }
+        return jsonToString(summary);
+    }
+
     private void clearProgressSessionArtifacts(HttpServletRequest request, String jobId) {
         if (request == null || jobId == null || jobId.trim().isEmpty()) {
             return;
@@ -312,6 +342,8 @@ public class ExcelUploadEngineController {
             } // ← return 추가
             else if ("get_history".equals(mode)) {
                 handleGetHistory(ds, params, result); 
+            }else if ("get_history_compare".equals(mode)) {
+                handleGetHistoryCompare(ds, params, result);
             }else if ("progress".equals(mode)) {
                 handleProgress(request, params, result); 
             }else if ("cancel".equals(mode)) {
@@ -697,6 +729,17 @@ public class ExcelUploadEngineController {
                     (String) params.get("keyword"));
             result.put("status", "ok");
             result.put("list", list);
+        }
+    }
+
+    private void handleGetHistoryCompare(DataSource ds, Map<String, Object> params,
+            Map<String, Object> result) throws Exception {
+        String leftHistId = (String) params.get("left_hist_id");
+        String rightHistId = (String) params.get("right_hist_id");
+        try (Connection conn = ds.getConnection()) {
+            Map<String, Object> compare = repository.getHistoryCompare(conn, leftHistId, rightHistId);
+            result.put("status", "ok");
+            result.putAll(compare);
         }
     }
 
@@ -1360,9 +1403,11 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             service.closeWorkbook(wb);
 
             // 이력 저장 실패는 업로드 성공/실패를 뒤집지 않고 경고로 노출한다.
+            String failTypeJson = buildFailTypeJson(failedRowMsgMap);
             String historySaveError = repository.insertHistory(conn, UUID.randomUUID().toString(),
                     (String) params.get("job_name"), (String) params.get("file_name"),
-                    successCnt, failCnt, errFileName, nowFuncU, uploadId, configSnapshotHash);
+                    successCnt, failCnt, errFileName, nowFuncU, uploadId, configSnapshotHash, failTypeJson,
+                    structJson, mapJson, preSqlJson, postSqlJson, rowSqlJson);
             if (historySaveError != null) {
                 String historyWarning = "업로드 이력 저장 실패: " + historySaveError;
                 addLog.accept("⚠ " + historyWarning);

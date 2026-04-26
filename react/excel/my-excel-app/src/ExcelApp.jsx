@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Select from 'react-select';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -101,6 +101,12 @@ function ExcelApp() {
   const [showDetailedUploadLogs, setShowDetailedUploadLogs] = useState(false);
   const [debugDetailEnabled, setDebugDetailEnabled] = useState(false);
   const [debugRowLimit, setDebugRowLimit] = useState(20);
+  const [retryPolicy, setRetryPolicy] = useState('failed_only'); // failed_only | failed_and_edited | fail_type
+  const [retryFailTypes, setRetryFailTypes] = useState([]);
+  const [alertEnabled, setAlertEnabled] = useState(false);
+  const [alertWebhookUrl, setAlertWebhookUrl] = useState('');
+  const [alertFailRateThreshold, setAlertFailRateThreshold] = useState(30);
+  const [alertFailCountThreshold, setAlertFailCountThreshold] = useState(50);
   const MAPPING_PAGE_SIZE = 10;
   const [mappingPage, setMappingPage] = useState(1);
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0 });
@@ -130,6 +136,37 @@ function ExcelApp() {
 
   const formatFileSize = b => !b ? '' : b < 1024 ? b + ' B' : b < 1024*1024 ? (b/1024).toFixed(1)+' KB' : (b/(1024*1024)).toFixed(2)+' MB';
   const encodeSafeBase64 = str => btoa(encodeURIComponent(str || '').replace(/%([0-9A-F]{2})/g, (m, p1) => String.fromCharCode('0x' + p1)));
+  const classifyFailTypeClient = (rawMsg) => {
+    const m = (rawMsg || '').toLowerCase();
+    if (!m) return '기타';
+    if (m.includes('null') && (m.includes('not') || m.includes('cannot'))) return '필수값 누락';
+    if (m.includes('unique') || m.includes('duplicate') || m.includes('중복')) return '중복키';
+    if (m.includes('too long') || m.includes('data too long') || m.includes('length') || m.includes('max')) return '길이초과';
+    if (m.includes('number') || m.includes('numeric') || m.includes('숫자')) return '숫자형식';
+    if (m.includes('date') || m.includes('time') || m.includes('yyyy')) return '날짜형식';
+    if (m.includes('foreign key') || m.includes('referential') || m.includes('fk')) return '참조무결성';
+    if (m.includes('timeout') || m.includes('timed out')) return '타임아웃';
+    return '기타';
+  };
+  const sendOpsAlert = async (eventType, payload = {}) => {
+    if (!alertEnabled || !alertWebhookUrl?.trim()) return;
+    try {
+      await fetch(alertWebhookUrl.trim(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: eventType,
+          event_time: new Date().toISOString(),
+          upload_id: uploadId || null,
+          job_name: jobName || null,
+          ...payload,
+        }),
+      });
+      setUploadLogs(prev => [...prev, `📣 운영 알림 전송 완료 (${eventType})`].slice(-120));
+    } catch (e) {
+      setUploadLogs(prev => [...prev, `⚠ 운영 알림 전송 실패: ${e.message || 'network error'}`].slice(-120));
+    }
+  };
   const stopUploadWatchdog = () => {
     const t = uploadWatchdogRef.current?.timerId;
     if (t) {
@@ -172,6 +209,27 @@ function ExcelApp() {
 
   useEffect(() => { if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: 'smooth' }); }, [uploadLogs]);
   useEffect(() => { setMappingPage(1); }, [searchTerm, activeAlias]);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('excel_upload_alert_config');
+      if (!raw) return;
+      const cfg = JSON.parse(raw);
+      if (typeof cfg.enabled === 'boolean') setAlertEnabled(cfg.enabled);
+      if (typeof cfg.webhook_url === 'string') setAlertWebhookUrl(cfg.webhook_url);
+      if (Number.isFinite(Number(cfg.fail_rate_threshold))) setAlertFailRateThreshold(Number(cfg.fail_rate_threshold));
+      if (Number.isFinite(Number(cfg.fail_count_threshold))) setAlertFailCountThreshold(Number(cfg.fail_count_threshold));
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem('excel_upload_alert_config', JSON.stringify({
+        enabled: alertEnabled,
+        webhook_url: alertWebhookUrl,
+        fail_rate_threshold: alertFailRateThreshold,
+        fail_count_threshold: alertFailCountThreshold,
+      }));
+    } catch {}
+  }, [alertEnabled, alertWebhookUrl, alertFailRateThreshold, alertFailCountThreshold]);
   useEffect(() => () => {
     if (esRef.current) {
       esRef.current.close();
@@ -499,6 +557,49 @@ function ExcelApp() {
     return { key: 'analyze', label: '파일 분석', desc: '헤더와 업로드 구조를 분석하고 있습니다.' };
   };
 
+  const retryTypeRowMap = useMemo(() => {
+    const map = {};
+    Object.entries(failedRows).forEach(([rowKey, msg]) => {
+      if (rowKey === '__unknown__') return;
+      const rowNum = Number(rowKey);
+      if (!Number.isFinite(rowNum) || rowNum <= 0) return;
+      const t = classifyFailTypeClient(msg);
+      if (!map[t]) map[t] = [];
+      map[t].push(rowNum);
+    });
+    Object.keys(map).forEach((k) => map[k].sort((a, b) => a - b));
+    return map;
+  }, [failedRows]);
+
+  const retryTypeOptions = useMemo(
+    () => Object.keys(retryTypeRowMap).sort((a, b) => retryTypeRowMap[b].length - retryTypeRowMap[a].length),
+    [retryTypeRowMap]
+  );
+
+  const getRetryTargetRows = (mode) => {
+    const failedOnly = getKnownFailedRowNumbers();
+    if (mode === 'failed_only') {
+      return failedOnly;
+    }
+    if (mode === 'failed_and_edited') {
+      const editedOnly = Object.keys(editedCells)
+        .map((k) => Number(k))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      return Array.from(new Set([...failedOnly, ...editedOnly])).sort((a, b) => a - b);
+    }
+    if (mode === 'fail_type') {
+      const rows = [];
+      retryFailTypes.forEach((t) => {
+        const arr = retryTypeRowMap[t] || [];
+        rows.push(...arr);
+      });
+      return Array.from(new Set(rows)).sort((a, b) => a - b);
+    }
+    return [];
+  };
+
+  const runPolicyRetry = () => handleUpload({ retryMode: retryPolicy });
+
   const renderDebugUploadOptions = (compact = false) => (
     <div style={{
       padding: compact ? '10px 12px' : '12px 14px',
@@ -552,6 +653,49 @@ function ExcelApp() {
           }}
         />
         <span style={{ fontSize: '0.72rem', color: '#64748b' }}>1 ~ 200, 기본 20</span>
+      </div>
+      <div style={{ marginTop: '12px', borderTop: '1px dashed #cbd5e1', paddingTop: '10px' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={alertEnabled}
+            onChange={(e) => setAlertEnabled(e.target.checked)}
+            style={{ width: '16px', height: '16px', accentColor: '#0ea5e9' }}
+          />
+          <span style={{ fontWeight: 700, color: '#1e293b', fontSize: compact ? '0.82rem' : '0.86rem' }}>
+            운영 알림(Webhook)
+          </span>
+        </label>
+        <input
+          type="text"
+          value={alertWebhookUrl}
+          onChange={(e) => setAlertWebhookUrl(e.target.value)}
+          placeholder="Webhook URL"
+          disabled={!alertEnabled}
+          style={{ width: '100%', marginTop: '8px', padding: '7px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.74rem', fontFamily: 'inherit', background: alertEnabled ? 'white' : '#f1f5f9' }}
+        />
+        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+          <input
+            type="number"
+            min="1"
+            max="100"
+            value={alertFailRateThreshold}
+            onChange={(e) => setAlertFailRateThreshold(e.target.value)}
+            disabled={!alertEnabled}
+            style={{ width: '110px', padding: '6px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.73rem', fontFamily: 'inherit', background: alertEnabled ? 'white' : '#f1f5f9' }}
+          />
+          <input
+            type="number"
+            min="1"
+            value={alertFailCountThreshold}
+            onChange={(e) => setAlertFailCountThreshold(e.target.value)}
+            disabled={!alertEnabled}
+            style={{ width: '120px', padding: '6px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.73rem', fontFamily: 'inherit', background: alertEnabled ? 'white' : '#f1f5f9' }}
+          />
+        </div>
+        <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '5px' }}>
+          실패율(%) / 실패건수 임계치 초과 시 알림 전송
+        </div>
       </div>
     </div>
   );
@@ -685,17 +829,17 @@ function ExcelApp() {
 
   const handleUpload = async (options = {}) => {
     if (!file) return;
-    const retryFailedOnly = options?.retryFailedOnly === true;
-    const retryTargetRows = retryFailedOnly
-      ? Object.keys(failedRows)
-        .filter(k => k !== '__unknown__')
-        .map(v => parseInt(v, 10))
-        .filter(v => Number.isFinite(v) && v > 0)
-        .sort((a, b) => a - b)
-      : [];
-    const useTargetRows = retryFailedOnly && retryTargetRows.length > 0;
+    const retryMode = options?.retryMode
+      ? options.retryMode
+      : (options?.retryFailedOnly ? 'failed_only' : 'full_upload');
+    const retryTargetRows = getRetryTargetRows(retryMode);
+    const useTargetRows = retryMode !== 'full_upload' && retryTargetRows.length > 0;
+    if (retryMode !== 'full_upload' && !useTargetRows) {
+      toast.warn('재처리 대상 행이 없습니다.');
+      return;
+    }
     const retrySummaryBase = useTargetRows ? {
-      mode: 'failed_rows_only',
+      mode: retryMode,
       target_count: retryTargetRows.length,
       before_fail_count: Object.keys(failedRows).filter(k => k !== '__unknown__').length,
     } : null;
@@ -792,6 +936,23 @@ function ExcelApp() {
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
         loadHistory();
 
+        const successCnt = Number(res.success_cnt) || 0;
+        const failCnt = Number(res.fail_cnt) || 0;
+        const totalCnt = successCnt + failCnt;
+        const failRate = totalCnt > 0 ? (failCnt / totalCnt) * 100 : 0;
+        const thresholdRate = Number(alertFailRateThreshold) || 0;
+        const thresholdCount = Number(alertFailCountThreshold) || 0;
+        if (res.status === 'err' || failCnt >= thresholdCount || failRate >= thresholdRate) {
+          void sendOpsAlert('upload_warning', {
+            status: res.status,
+            file_name: file?.name || '',
+            success_cnt: successCnt,
+            fail_cnt: failCnt,
+            fail_rate: Number(failRate.toFixed(2)),
+            retry_mode: retryMode,
+          });
+        }
+
         if (res.status === 'partial') {
           // partial: 파일/미리보기 항상 유지, 실패 행 강조
           let failedMsgs = (res.failed_row_msgs && Object.keys(res.failed_row_msgs).length > 0)
@@ -849,6 +1010,12 @@ function ExcelApp() {
         toast.update(tid, { render: '❌ 실패', type: 'error', isLoading: false, autoClose: 3000 });
         const { friendlyMsg, solution } = translateError(res.msg);
         setUploadResult({ ...res, friendlyMsg, solution, retry_summary: retrySummaryBase });
+        void sendOpsAlert('upload_error', {
+          status: 'err',
+          file_name: file?.name || '',
+          msg: res.msg || '',
+          retry_mode: retryMode,
+        });
         const rowMatch = res.msg?.match(/엑셀 \[ (\d+) 번째 행 \]/);
         if (rowMatch && file) {
           const errRowNum = parseInt(rowMatch[1]);
@@ -891,6 +1058,10 @@ function ExcelApp() {
       setCancellingUpload(false);
       setUploadJobId('');
       toast.update(tid, { render: '❌ 통신 오류 (서버 응답 지연 또는 연결 문제)', type: 'error', isLoading: false, autoClose: 3500 });
+      void sendOpsAlert('upload_network_error', {
+        file_name: file?.name || '',
+        retry_mode: retryMode,
+      });
     }
   };
 
@@ -903,6 +1074,7 @@ function ExcelApp() {
       if (res.status === 'ok') {
         setUploadLogs(prev => [...prev, '🛑 취소 요청이 접수되었습니다. 서버가 현재 작업을 정리합니다.']);
         toast.info('취소 요청을 보냈습니다.', { position: 'top-left' });
+        void sendOpsAlert('cancel_requested', { job_id: uploadJobId });
       } else {
         setUploadLogs(prev => [...prev, `⚠ 취소 요청 실패: ${res.msg || '작업 없음'}`]);
         setCancellingUpload(false);
@@ -1061,6 +1233,12 @@ function ExcelApp() {
     validating,
     validationSummary,
     setShowOnlyFailedRows,
+    retryPolicy,
+    setRetryPolicy,
+    retryTypeOptions,
+    retryFailTypes,
+    setRetryFailTypes,
+    runPolicyRetry,
   };
 
   const adminStepProps = {
@@ -1151,6 +1329,12 @@ function ExcelApp() {
     handleValidate,
     validating,
     validationSummary,
+    retryPolicy,
+    setRetryPolicy,
+    retryTypeOptions,
+    retryFailTypes,
+    setRetryFailTypes,
+    runPolicyRetry,
   };
 
   const renderStep = () => {

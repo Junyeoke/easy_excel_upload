@@ -479,6 +479,12 @@ const AdminStep3 = (props) => {
     handleValidate,
     validating,
     validationSummary,
+    retryPolicy,
+    setRetryPolicy,
+    retryTypeOptions,
+    retryFailTypes,
+    setRetryFailTypes,
+    runPolicyRetry,
   } = props;
 
   const resetAdminUploadState = () => {
@@ -879,6 +885,40 @@ const AdminStep3 = (props) => {
                       <button onClick={() => handleUpload({ retryFailedOnly: true })} disabled={previewLoading || validating} style={{ padding: '10px 18px', borderRadius: '9px', border: '1px solid #fecaca', background: 'white', color: '#b91c1c', fontWeight: 700, cursor: (previewLoading || validating) ? 'not-allowed' : 'pointer', fontSize: '0.83rem', whiteSpace: 'nowrap' }}>
                         실패행만 재처리
                       </button>
+                    )}
+                    {(hasKnownFailed || Object.keys(editedCells).length > 0) && (
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: '9px', padding: '8px', background: '#f8fafc', minWidth: '240px' }}>
+                        <div style={{ fontSize: '0.73rem', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>재처리 정책</div>
+                        <select
+                          value={retryPolicy}
+                          onChange={(e) => setRetryPolicy(e.target.value)}
+                          style={{ width: '100%', height: '32px', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '0 8px', fontSize: '0.78rem', fontFamily: 'inherit' }}
+                        >
+                          <option value="failed_only">실패행만</option>
+                          <option value="failed_and_edited">실패행 + 수정행</option>
+                          <option value="fail_type">실패유형 선택</option>
+                        </select>
+                        {retryPolicy === 'fail_type' && retryTypeOptions.length > 0 && (
+                          <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {retryTypeOptions.map((t) => (
+                              <label key={t} style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px', color: '#475569', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '999px', padding: '3px 8px' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={retryFailTypes.includes(t)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) setRetryFailTypes([...retryFailTypes, t]);
+                                    else setRetryFailTypes(retryFailTypes.filter((x) => x !== t));
+                                  }}
+                                />
+                                {t}
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                        <button onClick={runPolicyRetry} disabled={previewLoading || validating} style={{ marginTop: '8px', width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', color: '#334155', fontWeight: 700, cursor: (previewLoading || validating) ? 'not-allowed' : 'pointer', fontSize: '0.78rem' }}>
+                          정책 기준 재처리 실행
+                        </button>
+                      </div>
                     )}
                     <button onClick={handleUpload} disabled={previewLoading || validating} style={{ padding: '11px 28px', borderRadius: '10px', border: 'none', background: (previewLoading || validating) ? '#e2e8f0' : hasFailed ? 'linear-gradient(135deg,#ef4444,#dc2626)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: (previewLoading || validating) ? '#94a3b8' : 'white', fontWeight: 800, cursor: (previewLoading || validating) ? 'not-allowed' : 'pointer', fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: '7px', boxShadow: (previewLoading || validating) ? 'none' : hasFailed ? '0 4px 14px rgba(239,68,68,0.3)' : '0 4px 14px rgba(99,102,241,0.3)', whiteSpace: 'nowrap' }}>
                       {hasFailed ? '🔄 수정 후 재업로드' : '🚀 업로드 실행'}

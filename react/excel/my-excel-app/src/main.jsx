@@ -1,8 +1,9 @@
-import React from 'react'
+import React, { lazy, Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
-import ExcelApp from './ExcelApp.jsx'
-import ExcelDashboard from './ExcelDashboard.jsx'
 import './App.css'
+
+const ExcelApp = lazy(() => import('./ExcelApp.jsx'))
+const ExcelDashboard = lazy(() => import('./ExcelDashboard.jsx'))
 
 /**
  * URL 파라미터 기반 라우팅
@@ -20,6 +21,8 @@ const Root = view === 'dashboard' ? ExcelDashboard : ExcelApp
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <Root />
+    <Suspense fallback={<div style={{ padding: '24px', fontSize: '14px', color: '#475569' }}>화면을 불러오는 중...</div>}>
+      <Root />
+    </Suspense>
   </React.StrictMode>,
 )

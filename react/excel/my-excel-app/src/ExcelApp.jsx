@@ -665,10 +665,21 @@ function ExcelApp() {
       const resolveHistoryRow = (list) => {
         const rows = Array.isArray(list) ? list : [];
         if (rows.length === 0) return null;
-        const matchedByUpload = targetUploadId
-          ? rows.find((row) => String(row.upload_id || '') === String(targetUploadId))
-          : null;
-        return matchedByUpload || rows[0] || null;
+        const sameUploadRows = targetUploadId
+          ? rows.filter((row) => String(row.upload_id || '') === String(targetUploadId))
+          : rows;
+        const candidates = sameUploadRows.length > 0 ? sameUploadRows : rows;
+        return candidates
+          .slice()
+          .sort((a, b) => {
+            const at = (Number(a.success_cnt) || 0) + (Number(a.fail_cnt) || 0);
+            const bt = (Number(b.success_cnt) || 0) + (Number(b.fail_cnt) || 0);
+            if (bt !== at) return bt - at;
+            const ad = Date.parse(a.reg_dttm || '') || 0;
+            const bd = Date.parse(b.reg_dttm || '') || 0;
+            if (bd !== ad) return bd - ad;
+            return String(b.hist_id || '').localeCompare(String(a.hist_id || ''));
+          })[0] || null;
       };
 
       const loadHistoryDetail = (row) => {

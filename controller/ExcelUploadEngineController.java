@@ -22,6 +22,8 @@ import java.io.*;
 import java.sql.*;
 import java.util.*;
 import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 /**
  * =====================================================================
@@ -198,6 +200,23 @@ public class ExcelUploadEngineController {
                 .replace("\n", "\\n")
                 .replace("\r", "\\r")
                 .replace("\t", "\\t");
+    }
+
+    private String sha256Hex(String text) {
+        if (text == null) {
+            return "";
+        }
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = md.digest(text.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(bytes.length * 2);
+            for (byte b : bytes) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Throwable ignore) {
+            return "";
+        }
     }
 
     private void clearProgressSessionArtifacts(HttpServletRequest request, String jobId) {
@@ -670,7 +689,12 @@ public class ExcelUploadEngineController {
     private void handleGetHistory(DataSource ds, Map<String, Object> params,
             Map<String, Object> result) throws Exception {
         try (Connection conn = ds.getConnection()) {
-            List<Map<String, Object>> list = repository.getHistory(conn, (String) params.get("upload_id"));
+            List<Map<String, Object>> list = repository.getHistory(
+                    conn,
+                    (String) params.get("upload_id"),
+                    (String) params.get("period"),
+                    (String) params.get("result_status"),
+                    (String) params.get("keyword"));
             result.put("status", "ok");
             result.put("list", list);
         }
@@ -960,6 +984,13 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         String preSqlJson = decodeParam(params, "pre_sql_json_b64", "pre_sql_json");
         String postSqlJson = decodeParam(params, "post_sql_json_b64", "post_sql_json");
         String rowSqlJson = decodeParam(params, "row_sql_json_b64", "row_sql_json");
+        String uploadId = (String) params.get("upload_id");
+        String configSnapshotHash = sha256Hex(
+                String.valueOf(structJson == null ? "" : structJson) + "||"
+                        + String.valueOf(mapJson == null ? "" : mapJson) + "||"
+                        + String.valueOf(preSqlJson == null ? "" : preSqlJson) + "||"
+                        + String.valueOf(postSqlJson == null ? "" : postSqlJson) + "||"
+                        + String.valueOf(rowSqlJson == null ? "" : rowSqlJson));
 
         int headerIdx = 0;
         try {
@@ -972,6 +1003,26 @@ private void handleClone(DataSource ds, Map<String, Object> params,
 
         List<?> structs = (List<?>) service.parseJson(structJson);
         Map<?, ?> allMaps = (Map<?, ?>) service.parseJson(mapJson);
+        Set<Integer> targetRows = null;
+        String targetRowsB64 = (String) params.get("target_rows_b64");
+        if (targetRowsB64 != null && !targetRowsB64.trim().isEmpty()) {
+            try {
+                Object parsed = service.parseJson(service.decodeSafeBase64(targetRowsB64));
+                if (parsed instanceof List) {
+                    targetRows = new LinkedHashSet<>();
+                    for (Object n : (List<?>) parsed) {
+                        try {
+                            int v = Integer.parseInt(String.valueOf(n));
+                            if (v > 0) targetRows.add(v);
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                    if (targetRows.isEmpty()) targetRows = null;
+                }
+            } catch (Throwable ignore) {
+                targetRows = null;
+            }
+        }
 
         List<?> preSqls = null, postSqls = null, rowSqls = null;
         try {
@@ -1033,7 +1084,9 @@ private void handleClone(DataSource ds, Map<String, Object> params,
 
         int startRow = headerIdx + 1;
         int totalRows = sheet.getLastRowNum();
-        int actualTotalRows = Math.max(totalRows - startRow + 1, 0);
+        int actualTotalRows = (targetRows != null)
+                ? targetRows.size()
+                : Math.max(totalRows - startRow + 1, 0);
         log.info("[ExcelUpload] 파싱 완료 - 대상 데이터 총 {}행 감지 ({}행부터 시작)", actualTotalRows, startRow + 1);
 
         Connection conn = null;
@@ -1064,6 +1117,9 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         };
 
         addLog.accept("📂 파일 파싱 완료 - 총 " + actualTotalRows + "행 감지");
+        if (targetRows != null) {
+            addLog.accept("🎯 실패행 재처리 모드: 지정된 " + targetRows.size() + "개 행만 처리");
+        }
         if (debugDetail) {
             addLog.accept("🔎 상세 디버그 로그 활성화");
             addLog.accept("🔎 상세 로그 대상: 상위 " + debugRowLimit + "개 행");
@@ -1145,6 +1201,10 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                     throw new Exception("사용자 요청으로 업로드가 취소되었습니다.");
                 }
                 currentRowForLog = rowIdx + 1;
+                int dataRowNum = rowIdx - headerIdx;
+                if (targetRows != null && !targetRows.contains(dataRowNum)) {
+                    continue;
+                }
                 org.apache.poi.ss.usermodel.Row row = sheet.getRow(rowIdx);
                 if (row == null) {
                     continue;
@@ -1164,15 +1224,15 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                 processedExcelRowCnt++;
 
                 if (debugDetail && debugLoggedRows < debugRowLimit) {
-                    int dataRowNum = row.getRowNum() - headerIdx;
-                    addLog.accept("🔍 [" + dataRowNum + "행] 상세 업로드 계획 시작");
+                    int debugDataRowNum = row.getRowNum() - headerIdx;
+                    addLog.accept("🔍 [" + debugDataRowNum + "행] 상세 업로드 계획 시작");
                     try {
-                        debugCascadePlan(row, structs, allMaps, "ROOT", null, rowSqls, metaMap, addLog, dataRowNum);
+                        debugCascadePlan(row, structs, allMaps, "ROOT", null, rowSqls, metaMap, addLog, debugDataRowNum);
                     } catch (Throwable debugEx) {
-                        addLog.accept("⚠️ [" + dataRowNum + "행] 상세 로그 생성 실패: " + debugEx.getMessage());
-                        log.info("[ExcelUpload][Debug] {}행 상세 로그 생성 실패: {}", dataRowNum, debugEx.getMessage());
+                        addLog.accept("⚠️ [" + debugDataRowNum + "행] 상세 로그 생성 실패: " + debugEx.getMessage());
+                        log.info("[ExcelUpload][Debug] {}행 상세 로그 생성 실패: {}", debugDataRowNum, debugEx.getMessage());
                     }
-                    addLog.accept("🔍 [" + dataRowNum + "행] 상세 업로드 계획 종료");
+                    addLog.accept("🔍 [" + debugDataRowNum + "행] 상세 업로드 계획 종료");
                     debugLoggedRows++;
                     if (debugLoggedRows == debugRowLimit) {
                         addLog.accept("🔎 상세 로그 행 제한 도달: 이후 행은 요약 로그만 출력됩니다.");
@@ -1185,7 +1245,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                 } catch (Exception rowEx) {
                     errorRows.add(row);
                     errorMsgs.add(rowEx.getMessage());
-                    int dataRowNum = row.getRowNum() - headerIdx; // 1-based 데이터 행 번호
+                    dataRowNum = row.getRowNum() - headerIdx; // 1-based 데이터 행 번호
                     failedRowMsgMap.put(String.valueOf(dataRowNum), rowEx.getMessage() != null ? rowEx.getMessage() : "알 수 없는 오류");
                     failedExcelRowNums.add(String.valueOf(dataRowNum));
                     addLog.accept("❌ " + currentRowForLog + "행 오류: " + rowEx.getMessage());
@@ -1194,19 +1254,19 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                 }
 
                 // 진행률 업데이트 (100행마다)
-                if (jobId != null && (rowIdx - startRow + 1) % 100 == 0) {
-                    int done = rowIdx - startRow + 1;
+                if (jobId != null && processedExcelRowCnt > 0 && processedExcelRowCnt % 100 == 0) {
+                    int done = processedExcelRowCnt;
                     request.getSession().setAttribute("EXCEL_PROGRESS_" + jobId, done + "/" + actualTotalRows); // 폴백 유지
                     ProgressStore.update(jobId, done);
                     addLog.accept("📋 " + done + " / " + actualTotalRows + " 행 처리 중...");
                 }
 
                 // 5000행마다 Batch flush
-                if ((rowIdx - startRow + 1) % 5000 == 0) {
+                if (processedExcelRowCnt > 0 && processedExcelRowCnt % 5000 == 0) {
                     if (jobId != null && ProgressStore.isCancelRequested(jobId)) {
                         throw new Exception("사용자 요청으로 업로드가 취소되었습니다.");
                     }
-                    int done = rowIdx - startRow + 1;
+                    int done = processedExcelRowCnt;
                     log.info("[ExcelUpload] {} / {} 행 처리 중 - Batch Flush...", done, actualTotalRows);
                     addLog.accept("💾 " + done + "행 배치 저장 중...");
                     int beforeFlush = errorRows.size();
@@ -1302,7 +1362,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             // 이력 저장 실패는 업로드 성공/실패를 뒤집지 않고 경고로 노출한다.
             String historySaveError = repository.insertHistory(conn, UUID.randomUUID().toString(),
                     (String) params.get("job_name"), (String) params.get("file_name"),
-                    successCnt, failCnt, errFileName, nowFuncU);
+                    successCnt, failCnt, errFileName, nowFuncU, uploadId, configSnapshotHash);
             if (historySaveError != null) {
                 String historyWarning = "업로드 이력 저장 실패: " + historySaveError;
                 addLog.accept("⚠ " + historyWarning);
@@ -1351,6 +1411,8 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             result.put("success_cnt", successCnt);
             result.put("fail_cnt", failCnt);
             result.put("error_file", errFileName);
+            result.put("upload_id", uploadId);
+            result.put("config_snapshot_hash", configSnapshotHash);
             if (!failedRowMsgMap.isEmpty()) {
                 result.put("failed_row_msgs", failedRowMsgMap);
             }

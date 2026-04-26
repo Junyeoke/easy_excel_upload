@@ -363,27 +363,56 @@ public class ExcelUploadEngineRepository {
      * 업로드 이력 저장
      */
     public String insertHistory(Connection conn, String histId, String jobName, String fileName,
-                                int successCnt, int failCnt, String errorFile, String nowFunc) {
-        String sql = "INSERT INTO ESO_EXCEL_UPLOAD_HISTORY " +
-                "(HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM) " +
-                "VALUES (?, ?, ?, ?, ?, ?, " + nowFunc + ")";
-        try (PreparedStatement histPs = conn.prepareStatement(
-                sql)) {
-            histPs.setString(1, histId);
-            histPs.setString(2, jobName == null || jobName.trim().isEmpty() ? "일반 데이터 업로드" : jobName);
-            histPs.setString(3, fileName);
-            histPs.setInt(4, successCnt);
-            histPs.setInt(5, failCnt);
-            histPs.setString(6, errorFile);
-            sqlLog.info(renderSql(sql, Arrays.asList(
-                    histId,
-                    jobName == null || jobName.trim().isEmpty() ? "일반 데이터 업로드" : jobName,
-                    fileName,
-                    successCnt,
-                    failCnt,
-                    errorFile
-            )));
-            histPs.executeUpdate();
+                                int successCnt, int failCnt, String errorFile, String nowFunc,
+                                String uploadId, String configSnapshotHash) {
+        String normalizedJobName = jobName == null || jobName.trim().isEmpty() ? "일반 데이터 업로드" : jobName;
+        try {
+            DatabaseMetaData meta = conn.getMetaData();
+            boolean hasUploadIdCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "UPLOAD_ID");
+            boolean hasSnapshotHashCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_SNAPSHOT_HASH");
+
+            StringBuilder colSb = new StringBuilder("HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE");
+            StringBuilder valSb = new StringBuilder("?, ?, ?, ?, ?, ?");
+            List<Object> sqlParams = new ArrayList<>();
+            sqlParams.add(histId);
+            sqlParams.add(normalizedJobName);
+            sqlParams.add(fileName);
+            sqlParams.add(successCnt);
+            sqlParams.add(failCnt);
+            sqlParams.add(errorFile);
+
+            if (hasUploadIdCol) {
+                colSb.append(", UPLOAD_ID");
+                valSb.append(", ?");
+                sqlParams.add(uploadId);
+            }
+            if (hasSnapshotHashCol) {
+                colSb.append(", CONFIG_SNAPSHOT_HASH");
+                valSb.append(", ?");
+                sqlParams.add(configSnapshotHash);
+            }
+
+            colSb.append(", REG_DTTM");
+            valSb.append(", ").append(nowFunc);
+
+            String sql = "INSERT INTO ESO_EXCEL_UPLOAD_HISTORY (" + colSb + ") VALUES (" + valSb + ")";
+            try (PreparedStatement histPs = conn.prepareStatement(sql)) {
+                int idx = 1;
+                histPs.setString(idx++, histId);
+                histPs.setString(idx++, normalizedJobName);
+                histPs.setString(idx++, fileName);
+                histPs.setInt(idx++, successCnt);
+                histPs.setInt(idx++, failCnt);
+                histPs.setString(idx++, errorFile);
+                if (hasUploadIdCol) {
+                    histPs.setString(idx++, uploadId);
+                }
+                if (hasSnapshotHashCol) {
+                    histPs.setString(idx++, configSnapshotHash);
+                }
+                sqlLog.info(renderSql(sql, sqlParams));
+                histPs.executeUpdate();
+            }
             conn.commit();
             return null;
         } catch (Throwable e) {
@@ -397,22 +426,64 @@ public class ExcelUploadEngineRepository {
     /**
      * 업로드 이력 목록 조회
      */
-    public List<Map<String, Object>> getHistory(Connection conn, String uploadId) throws Exception {
+    public List<Map<String, Object>> getHistory(Connection conn, String uploadId, String period, String resultStatus, String keyword) throws Exception {
         List<Map<String, Object>> list = new ArrayList<>();
-        String sql = "SELECT HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM " +
-                     "FROM ESO_EXCEL_UPLOAD_HISTORY ORDER BY REG_DTTM DESC";
-        try (PreparedStatement pstmt = conn.prepareStatement(sql);
-             ResultSet rs = pstmt.executeQuery()) {
-            while (rs.next()) {
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("hist_id",      rs.getString("HIST_ID"));
-                row.put("job_name",     rs.getString("JOB_NAME"));
-                row.put("file_name",    rs.getString("FILE_NAME"));
-                row.put("success_cnt",  rs.getInt("SUCCESS_CNT"));
-                row.put("fail_cnt",     rs.getInt("FAIL_CNT"));
-                row.put("error_file",   rs.getString("ERROR_FILE"));
-                row.put("reg_dttm",     String.valueOf(rs.getObject("REG_DTTM")));
-                list.add(row);
+        DatabaseMetaData meta = conn.getMetaData();
+        boolean hasUploadIdCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "UPLOAD_ID");
+        boolean hasSnapshotHashCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_SNAPSHOT_HASH");
+
+        StringBuilder sql = new StringBuilder("SELECT HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM");
+        if (hasUploadIdCol) sql.append(", UPLOAD_ID");
+        if (hasSnapshotHashCol) sql.append(", CONFIG_SNAPSHOT_HASH");
+        sql.append(" FROM ESO_EXCEL_UPLOAD_HISTORY WHERE 1=1");
+
+        List<Object> bindParams = new ArrayList<>();
+        if (hasUploadIdCol && uploadId != null && !uploadId.trim().isEmpty()) {
+            sql.append(" AND UPLOAD_ID = ?");
+            bindParams.add(uploadId.trim());
+        }
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            sql.append(" AND (lower(JOB_NAME) LIKE ? OR lower(FILE_NAME) LIKE ?)");
+            String kw = "%" + keyword.trim().toLowerCase(Locale.ROOT) + "%";
+            bindParams.add(kw);
+            bindParams.add(kw);
+        }
+        if ("fail".equalsIgnoreCase(resultStatus)) {
+            sql.append(" AND FAIL_CNT > 0");
+        } else if ("success".equalsIgnoreCase(resultStatus)) {
+            sql.append(" AND FAIL_CNT = 0");
+        }
+        if (period != null && !"all".equalsIgnoreCase(period)) {
+            String nowFunc = detectNowFunction(conn);
+            if ("today".equalsIgnoreCase(period)) {
+                sql.append(" AND REG_DTTM >= ").append(nowFunc).append(" - 1");
+            } else if ("7d".equalsIgnoreCase(period)) {
+                sql.append(" AND REG_DTTM >= ").append(nowFunc).append(" - 7");
+            } else if ("30d".equalsIgnoreCase(period)) {
+                sql.append(" AND REG_DTTM >= ").append(nowFunc).append(" - 30");
+            }
+        }
+        sql.append(" ORDER BY REG_DTTM DESC");
+
+        try (PreparedStatement pstmt = conn.prepareStatement(sql.toString())) {
+            int idx = 1;
+            for (Object param : bindParams) {
+                pstmt.setString(idx++, String.valueOf(param));
+            }
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("hist_id",      rs.getString("HIST_ID"));
+                    row.put("job_name",     rs.getString("JOB_NAME"));
+                    row.put("file_name",    rs.getString("FILE_NAME"));
+                    row.put("success_cnt",  rs.getInt("SUCCESS_CNT"));
+                    row.put("fail_cnt",     rs.getInt("FAIL_CNT"));
+                    row.put("error_file",   rs.getString("ERROR_FILE"));
+                    row.put("reg_dttm",     String.valueOf(rs.getObject("REG_DTTM")));
+                    if (hasUploadIdCol) row.put("upload_id", rs.getString("UPLOAD_ID"));
+                    if (hasSnapshotHashCol) row.put("config_snapshot_hash", rs.getString("CONFIG_SNAPSHOT_HASH"));
+                    list.add(row);
+                }
             }
         }
         return list;

@@ -855,7 +855,9 @@ const AdminStep3 = (props) => {
             )}
 
             {file && (() => {
+              const knownFailedRows = Object.keys(failedRows).filter(k => k !== '__unknown__');
               const hasFailed = Object.keys(failedRows).length > 0;
+              const hasKnownFailed = knownFailedRows.length > 0;
               return (
                 <div style={{ padding: '16px 20px', background: hasFailed ? 'linear-gradient(135deg,#fff1f2,#fef2f2)' : 'linear-gradient(135deg,#eef2ff,#f5f3ff)', borderRadius: '12px', border: hasFailed ? '1px solid #fecdd3' : '1px solid #e0e7ff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                   <div>
@@ -868,6 +870,11 @@ const AdminStep3 = (props) => {
                     <button onClick={handleValidate} disabled={previewLoading || validating} style={{ padding: '10px 18px', borderRadius: '9px', border: '1px solid #cbd5e1', background: (previewLoading || validating) ? '#f1f5f9' : 'white', color: (previewLoading || validating) ? '#94a3b8' : '#475569', fontWeight: 700, cursor: (previewLoading || validating) ? 'not-allowed' : 'pointer', fontSize: '0.83rem', whiteSpace: 'nowrap' }}>
                       {validating ? '검증 중...' : '검증 실행'}
                     </button>
+                    {hasKnownFailed && (
+                      <button onClick={() => handleUpload({ retryFailedOnly: true })} disabled={previewLoading || validating} style={{ padding: '10px 18px', borderRadius: '9px', border: '1px solid #fecaca', background: 'white', color: '#b91c1c', fontWeight: 700, cursor: (previewLoading || validating) ? 'not-allowed' : 'pointer', fontSize: '0.83rem', whiteSpace: 'nowrap' }}>
+                        실패행만 재처리
+                      </button>
+                    )}
                     <button onClick={handleUpload} disabled={previewLoading || validating} style={{ padding: '11px 28px', borderRadius: '10px', border: 'none', background: (previewLoading || validating) ? '#e2e8f0' : hasFailed ? 'linear-gradient(135deg,#ef4444,#dc2626)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: (previewLoading || validating) ? '#94a3b8' : 'white', fontWeight: 800, cursor: (previewLoading || validating) ? 'not-allowed' : 'pointer', fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: '7px', boxShadow: (previewLoading || validating) ? 'none' : hasFailed ? '0 4px 14px rgba(239,68,68,0.3)' : '0 4px 14px rgba(99,102,241,0.3)', whiteSpace: 'nowrap' }}>
                       {hasFailed ? '🔄 수정 후 재업로드' : '🚀 업로드 실행'}
                     </button>

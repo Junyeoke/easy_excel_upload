@@ -76,6 +76,9 @@ export default function ExcelDashboard() {
   const [error, setError] = useState('');
   const [actionMsg, setActionMsg] = useState(null);
   const [loaderQuery, setLoaderQuery] = useState('');
+  const [histPeriod, setHistPeriod] = useState('all');
+  const [histStatus, setHistStatus] = useState('all');
+  const [histKeyword, setHistKeyword] = useState('');
 
   const isTestUser = (() => {
     try {
@@ -89,7 +92,15 @@ export default function ExcelDashboard() {
     setLoading(true);
     setError('');
     try {
-      const [listRes, histRes] = await Promise.all([post({ mode: 'get_list' }), post({ mode: 'get_history' })]);
+      const [listRes, histRes] = await Promise.all([
+        post({ mode: 'get_list' }),
+        post({
+          mode: 'get_history',
+          period: histPeriod,
+          result_status: histStatus,
+          keyword: histKeyword.trim(),
+        }),
+      ]);
       const loaderList = Array.isArray(listRes.list) ? listRes.list : [];
       const histList = Array.isArray(histRes.list) ? histRes.list : [];
 
@@ -107,7 +118,7 @@ export default function ExcelDashboard() {
 
   useEffect(() => {
     loadAll();
-  }, []);
+  }, [histPeriod, histStatus, histKeyword]);
 
   const filteredLoaders = useMemo(() => {
     const q = loaderQuery.trim().toLowerCase();
@@ -118,7 +129,12 @@ export default function ExcelDashboard() {
   }, [loaders, loaderQuery]);
 
   const selectedHistory = useMemo(
-    () => (selected ? history.filter((h) => h.job_name === selected.job_name) : []),
+    () => (selected
+      ? history.filter((h) => {
+          if (h.upload_id && selected.upload_id) return h.upload_id === selected.upload_id;
+          return h.job_name === selected.job_name;
+        })
+      : []),
     [history, selected]
   );
 
@@ -224,12 +240,15 @@ export default function ExcelDashboard() {
         .itsm-stat-desc { font-size: 12px; color: #6b7280; }
         .itsm-grid-2 { display: grid; grid-template-columns: 1fr 340px; gap: 10px; margin-bottom: 10px; }
         .itsm-chart-title { font-size: 13px; font-weight: 700; color: #374151; margin-bottom: 8px; }
+        .itsm-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+        .itsm-filter-select, .itsm-filter-input { height: 32px; border: 1px solid #d1d5db; border-radius: 6px; padding: 0 10px; font-size: 12px; color: #374151; background: #fff; }
+        .itsm-filter-input { min-width: 180px; }
         .itsm-tip { background: #fff; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 10px; font-size: 12px; }
         .itsm-tip-title { font-weight: 700; margin-bottom: 6px; color: #111827; }
         .itsm-tip-row { display: flex; justify-content: space-between; gap: 8px; color: #4b5563; }
-        .itsm-table-head { display: grid; grid-template-columns: 1fr 84px 84px 100px; gap: 8px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; font-weight: 700; }
+        .itsm-table-head { display: grid; grid-template-columns: 1fr 84px 84px 110px 100px; gap: 8px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; font-weight: 700; }
         .itsm-table-body { max-height: 320px; overflow-y: auto; }
-        .itsm-row { display: grid; grid-template-columns: 1fr 84px 84px 100px; gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid #f3f4f6; }
+        .itsm-row { display: grid; grid-template-columns: 1fr 84px 84px 110px 100px; gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid #f3f4f6; }
         .itsm-file { font-size: 13px; color: #1f2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .itsm-time { margin-top: 3px; font-size: 11px; color: #6b7280; }
         .itsm-badge { display: inline-flex; justify-content: center; min-width: 58px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
@@ -411,6 +430,28 @@ export default function ExcelDashboard() {
 
               <div className="itsm-panel">
                 <div className="itsm-chart-title">상세 실행 이력</div>
+                <div className="itsm-filter-row">
+                  <select className="itsm-filter-select" value={histPeriod} onChange={(e) => setHistPeriod(e.target.value)}>
+                    <option value="all">전체 기간</option>
+                    <option value="today">오늘</option>
+                    <option value="7d">최근 7일</option>
+                    <option value="30d">최근 30일</option>
+                  </select>
+                  <select className="itsm-filter-select" value={histStatus} onChange={(e) => setHistStatus(e.target.value)}>
+                    <option value="all">전체 결과</option>
+                    <option value="success">성공만</option>
+                    <option value="fail">실패만</option>
+                  </select>
+                  <input
+                    className="itsm-filter-input"
+                    value={histKeyword}
+                    onChange={(e) => setHistKeyword(e.target.value)}
+                    placeholder="작업명/파일명 검색"
+                  />
+                  <button className="itsm-btn" onClick={() => { setHistPeriod('all'); setHistStatus('all'); setHistKeyword(''); }}>
+                    필터 초기화
+                  </button>
+                </div>
                 {selectedHistory.length === 0 ? (
                   <div className="itsm-empty" style={{ padding: 30 }}>이 로더의 실행 이력이 없습니다.</div>
                 ) : (
@@ -419,6 +460,7 @@ export default function ExcelDashboard() {
                       <span>파일명 / 실행일시</span>
                       <span style={{ textAlign: 'center' }}>성공</span>
                       <span style={{ textAlign: 'center' }}>실패</span>
+                      <span style={{ textAlign: 'center' }}>스냅샷</span>
                       <span style={{ textAlign: 'center' }}>오류파일</span>
                     </div>
                     <div className="itsm-table-body">
@@ -437,6 +479,9 @@ export default function ExcelDashboard() {
                             ) : (
                               <span className="itsm-placeholder">0</span>
                             )}
+                          </div>
+                          <div style={{ textAlign: 'center', fontSize: 11, color: '#4b5563' }}>
+                            {h.config_snapshot_hash ? `${String(h.config_snapshot_hash).substring(0, 10)}...` : '-'}
                           </div>
                           <div style={{ textAlign: 'center' }}>
                             {h.error_file ? (
@@ -460,4 +505,3 @@ export default function ExcelDashboard() {
     </div>
   );
 }
-

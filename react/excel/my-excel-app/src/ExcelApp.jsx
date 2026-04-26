@@ -652,8 +652,17 @@ function ExcelApp() {
 
   const validationSummary = buildValidationSummary(failedRows);
 
-  const handleUpload = async () => {
+  const handleUpload = async (options = {}) => {
     if (!file) return;
+    const retryFailedOnly = options?.retryFailedOnly === true;
+    const retryTargetRows = retryFailedOnly
+      ? Object.keys(failedRows)
+        .filter(k => k !== '__unknown__')
+        .map(v => parseInt(v, 10))
+        .filter(v => Number.isFinite(v) && v > 0)
+        .sort((a, b) => a - b)
+      : [];
+    const useTargetRows = retryFailedOnly && retryTargetRows.length > 0;
     const cr = await Swal.fire({ title: '데이터 업로드 실행', html: '데이터를 서버로 전송하시겠습니까?<br><small style="color:#ef4444">대량 데이터는 수 분이 소요될 수 있습니다.</small>', icon: 'question', showCancelButton: true, confirmButtonColor: '#6366f1', cancelButtonColor: '#94a3b8', confirmButtonText: '🚀 진행', cancelButtonText: '취소', reverseButtons: true });
     if (!cr.isConfirmed) return;
 
@@ -718,8 +727,9 @@ function ExcelApp() {
       fd.append('debug_row_limit', String(Math.min(Math.max(Number(debugRowLimit) || 20, 1), 200)));
     }
     if (Object.keys(editedCells).length > 0) fd.append('edited_rows_b64', encodeSafeBase64(JSON.stringify(editedCells)));
+    if (useTargetRows) fd.append('target_rows_b64', encodeSafeBase64(JSON.stringify(retryTargetRows)));
 
-    const tid = toast.loading('🚀 서버 전송 중...', { position: 'top-left' });
+    const tid = toast.loading(useTargetRows ? '🎯 실패행만 재처리 중...' : '🚀 서버 전송 중...', { position: 'top-left' });
     try {
       const res = await post(API_URL, fd);
       // ── SSE 스트림 정리 ──

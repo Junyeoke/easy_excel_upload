@@ -785,6 +785,11 @@ const UserWorkbenchStep = ({
                     <button className="side-action-btn" onClick={handleValidate} disabled={previewLoading || validating}>
                       {validating ? '검증 중...' : '검증 실행'}
                     </button>
+                    {hasKnownFailedRows && (
+                      <button className="side-action-btn" onClick={() => handleUpload({ retryFailedOnly: true })} disabled={previewLoading || validating}>
+                        실패행만 재처리
+                      </button>
+                    )}
                     <button className="side-action-btn side-action-btn-primary" onClick={handleUpload} disabled={previewLoading || validating}>
                       {hasKnownFailedRows || hasUnknownFailedRows ? '수정 후 재업로드' : '업로드 실행'}
                     </button>

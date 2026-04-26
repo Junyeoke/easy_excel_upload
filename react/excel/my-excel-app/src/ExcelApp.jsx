@@ -11,6 +11,7 @@ const UserUploadScreen = lazy(() => import('./components/UserUploadScreen'));
 const API_URL = "/api/excel/engine";
 const ACTIVE_UPLOAD_STATE_KEY = 'excel_upload_active_state_v1';
 const ACTIVE_UPLOAD_HEARTBEAT_MS = 3000;
+const COMPLETION_SNAPSHOT_KEY = 'excel_upload_last_completion_v1';
 
 // ─────────────────────────────────────────────
 // 공통 서브 컴포넌트
@@ -101,10 +102,46 @@ const MyMultiSelect = ({ options = [], value = [], onChange, placeholder, isDisa
   );
 };
 
+const readCompletionSnapshot = () => {
+  try {
+    const raw = localStorage.getItem(COMPLETION_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeCompletionSnapshot = (snapshot) => {
+  try {
+    localStorage.setItem(COMPLETION_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch {}
+};
+
+const snapshotToHistoryRow = (snapshot) => {
+  if (!snapshot) return null;
+  return {
+    hist_id: snapshot.hist_id || '',
+    upload_id: snapshot.upload_id || '',
+    job_name: snapshot.job_name || '',
+    file_name: snapshot.file_name || '',
+    success_cnt: Number(snapshot.success_cnt) || 0,
+    fail_cnt: Number(snapshot.fail_cnt) || 0,
+    error_file: snapshot.error_file || '',
+    reg_dttm: snapshot.completed_at || snapshot.reg_dttm || new Date().toISOString(),
+    config_snapshot_hash: snapshot.config_snapshot_hash || '',
+    retry_mode: snapshot.retry_mode || '',
+    retry_reason_types: snapshot.retry_reason_types || '',
+  };
+};
+
 const CompletionSummaryView = ({ uploadId, historyList, loading, error, onOpenWorkbench, onOpenDashboard, onNewUpload }) => {
-  const latest = historyList[0] || null;
-  const totalSuccess = historyList.reduce((sum, row) => sum + (Number(row.success_cnt) || 0), 0);
-  const totalFail = historyList.reduce((sum, row) => sum + (Number(row.fail_cnt) || 0), 0);
+  const snapshot = readCompletionSnapshot();
+  const rows = historyList.length > 0 ? historyList : (snapshot ? [snapshotToHistoryRow(snapshot)] : []);
+  const latest = rows[0] || null;
+  const totalSuccess = rows.reduce((sum, row) => sum + (Number(row.success_cnt) || 0), 0);
+  const totalFail = rows.reduce((sum, row) => sum + (Number(row.fail_cnt) || 0), 0);
   const latestStatus = latest
     ? (Number(latest.fail_cnt) > 0 ? 'partial' : 'ok')
     : 'none';
@@ -189,11 +226,11 @@ const CompletionSummaryView = ({ uploadId, historyList, loading, error, onOpenWo
             </button>
           </div>
 
-          {historyList.length > 0 && (
+          {rows.length > 0 && (
             <div className="result-list-card">
               <div className="result-list-title">최근 완료 이력</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px', maxHeight: '260px', overflowY: 'auto' }}>
-                {historyList.slice(0, 5).map((h, i) => (
+                {rows.slice(0, 5).map((h, i) => (
                   <div key={i} className="history-item">
                     <div className="history-item-header">
                       <span className="history-item-job">{h.job_name || '(이름 없음)'}</span>
@@ -354,6 +391,12 @@ function ExcelApp() {
       };
       localStorage.setItem(ACTIVE_UPLOAD_STATE_KEY, JSON.stringify(next));
     } catch {}
+  };
+  const publishCompletionSnapshot = (payload = {}) => {
+    writeCompletionSnapshot({
+      ...payload,
+      saved_at: new Date().toISOString(),
+    });
   };
   const stopSharedStateHeartbeat = () => {
     const t = sharedStateHeartbeatRef.current;
@@ -547,12 +590,20 @@ function ExcelApp() {
       setCompletionLoading(true);
       setCompletionError('');
       loadHistory(completionUploadId).then((list) => {
-        setCompletionHistoryList(list);
+        const snapshotRow = snapshotToHistoryRow(readCompletionSnapshot());
+        const nextList = list.length > 0 ? list : (snapshotRow ? [snapshotRow] : []);
+        setCompletionHistoryList(nextList);
         setCompletionLoading(false);
-        if (list.length === 0) {
+        if (nextList.length === 0) {
           setCompletionError('완료 이력을 찾을 수 없습니다.');
         }
       }).catch(() => {
+        const snapshotRow = snapshotToHistoryRow(readCompletionSnapshot());
+        if (snapshotRow) {
+          setCompletionHistoryList([snapshotRow]);
+          setCompletionLoading(false);
+          return;
+        }
         setCompletionLoading(false);
         setCompletionError('완료 화면을 불러오지 못했습니다.');
       });
@@ -1315,6 +1366,20 @@ function ExcelApp() {
           setFailedRows(failedMsgs);
           // uploadResult에도 failedMsgs 병합 (버튼에서 사용)
           setUploadResult({ ...res, failed_row_msgs: failedMsgs, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: Object.keys(failedMsgs).filter(k => k !== '__unknown__').length } : null });
+          publishCompletionSnapshot({
+            status: 'partial',
+            upload_id: uploadId || res.upload_id || '',
+            job_name: jobName || '',
+            file_name: file?.name || '',
+            success_cnt: successCnt,
+            fail_cnt: failCnt,
+            error_file: res.error_file || '',
+            msg: res.msg || '',
+            failed_row_msgs: failedMsgs,
+            retry_mode: retryMode,
+            retry_reason_types: retryMode === 'fail_type' ? retryFailTypes.join(',') : '',
+            config_snapshot_hash: res.config_snapshot_hash || '',
+          });
           publishSharedUploadState({
             status: 'partial',
             uploader_alive: false,
@@ -1338,6 +1403,19 @@ function ExcelApp() {
           // ok: 완전 성공 → 결과 화면으로
           setFailedRows({});
           setUploadResult({ ...res, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: 0 } : null });
+          publishCompletionSnapshot({
+            status: 'ok',
+            upload_id: uploadId || res.upload_id || '',
+            job_name: jobName || '',
+            file_name: file?.name || '',
+            success_cnt: successCnt,
+            fail_cnt: failCnt,
+            error_file: res.error_file || '',
+            msg: res.msg || '',
+            retry_mode: retryMode,
+            retry_reason_types: retryMode === 'fail_type' ? retryFailTypes.join(',') : '',
+            config_snapshot_hash: res.config_snapshot_hash || '',
+          });
           publishSharedUploadState({
             status: 'ok',
             uploader_alive: false,
@@ -1357,6 +1435,19 @@ function ExcelApp() {
         toast.update(tid, { render: '❌ 실패', type: 'error', isLoading: false, autoClose: 3000 });
         const { friendlyMsg, solution } = translateError(res.msg);
         setUploadResult({ ...res, friendlyMsg, solution, retry_summary: retrySummaryBase });
+        publishCompletionSnapshot({
+          status: 'err',
+          upload_id: uploadId || res.upload_id || '',
+          job_name: jobName || '',
+          file_name: file?.name || '',
+          success_cnt: Number(res.success_cnt) || 0,
+          fail_cnt: Number(res.fail_cnt) || 0,
+          error_file: res.error_file || '',
+          msg: res.msg || '',
+          retry_mode: retryMode,
+          retry_reason_types: retryMode === 'fail_type' ? retryFailTypes.join(',') : '',
+          config_snapshot_hash: res.config_snapshot_hash || '',
+        });
         publishSharedUploadState({
           status: 'err',
           uploader_alive: false,
@@ -1398,6 +1489,16 @@ function ExcelApp() {
         try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
         setProgress(p => ({ ...p, percent: 100 }));
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
+        publishCompletionSnapshot({
+          status: 'ok',
+          upload_id: uploadId || '',
+          job_name: jobName || '',
+          file_name: file?.name || '',
+          success_cnt: 0,
+          fail_cnt: 0,
+          error_file: '',
+          msg: '업로드 완료',
+        });
         publishSharedUploadState({
           status: 'ok',
           uploader_alive: false,
@@ -1420,6 +1521,16 @@ function ExcelApp() {
       setCancellingUpload(false);
       setUploadJobId('');
       try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
+      publishCompletionSnapshot({
+        status: 'err',
+        upload_id: uploadId || '',
+        job_name: jobName || '',
+        file_name: file?.name || '',
+        success_cnt: 0,
+        fail_cnt: 0,
+        error_file: '',
+        msg: '통신 오류 (서버 응답 지연 또는 연결 문제)',
+      });
       publishSharedUploadState({
         status: 'err',
         uploader_alive: false,

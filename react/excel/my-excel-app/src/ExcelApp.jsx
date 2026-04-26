@@ -678,96 +678,25 @@ function ExcelApp() {
         });
       };
 
-      const resolveHistoryRow = (list) => {
-        const rows = Array.isArray(list) ? list : [];
-        if (rows.length === 0) return null;
-        const sameFileRows = targetFileName
-          ? rows.filter((row) => String(row.file_name || '') === String(targetFileName))
-          : [];
-        if (sameFileRows.length > 0) {
-          return sameFileRows
-            .slice()
-            .sort((a, b) => {
-              const at = (Number(a.success_cnt) || 0) + (Number(a.fail_cnt) || 0);
-              const bt = (Number(b.success_cnt) || 0) + (Number(b.fail_cnt) || 0);
-              if (bt !== at) return bt - at;
-              const ad = Date.parse(a.reg_dttm || '') || 0;
-              const bd = Date.parse(b.reg_dttm || '') || 0;
-              if (bd !== ad) return bd - ad;
-              return String(b.hist_id || '').localeCompare(String(a.hist_id || ''));
-            })[0] || null;
-        }
-        const sameUploadRows = targetUploadId
-          ? rows.filter((row) => String(row.upload_id || '') === String(targetUploadId))
-          : rows;
-        const candidates = sameUploadRows.length > 0 ? sameUploadRows : rows;
-        return candidates
-          .slice()
-          .sort((a, b) => {
-            const at = (Number(a.success_cnt) || 0) + (Number(a.fail_cnt) || 0);
-            const bt = (Number(b.success_cnt) || 0) + (Number(b.fail_cnt) || 0);
-            if (bt !== at) return bt - at;
-            const ad = Date.parse(a.reg_dttm || '') || 0;
-            const bd = Date.parse(b.reg_dttm || '') || 0;
-            if (bd !== ad) return bd - ad;
-            return String(b.hist_id || '').localeCompare(String(a.hist_id || ''));
-          })[0] || null;
-      };
-
-      const loadHistoryDetail = (row) => {
-        const histId = row?.hist_id || '';
-        if (!histId) {
-          return Promise.resolve(row ? [row] : []);
-        }
-        return post(API_URL, getParams({ mode: 'get_history_detail', hist_id: histId })).then((res) => {
-          if (res.status === 'ok' && res.row) {
-            return [res.row];
-          }
-          return row ? [row] : [];
-        }).catch(() => (row ? [row] : []));
-      };
-
       if (targetHistId) {
         post(API_URL, getParams({ mode: 'get_history_detail', hist_id: targetHistId })).then((res) => {
           if (res.status === 'ok' && res.row) {
             finishWithRows([res.row]);
             return;
           }
-          loadHistory(targetUploadId).then((list) => {
-            const row = resolveHistoryRow(list);
-            if (row) {
-              loadHistoryDetail(row).then(finishWithRows).catch(() => finishWithRows([row]));
-              return;
-            }
-            fetchByProgress();
-          }).catch(fetchByProgress);
+          setCompletionLoading(false);
+          setCompletionError('완료 이력을 찾을 수 없습니다.');
         }).catch(() => {
-          loadHistory(targetUploadId).then((list) => {
-            const row = resolveHistoryRow(list);
-            if (row) {
-              loadHistoryDetail(row).then(finishWithRows).catch(() => finishWithRows([row]));
-              return;
-            }
-            fetchByProgress();
-          }).catch(fetchByProgress);
+          setCompletionLoading(false);
+          setCompletionError('완료 화면을 불러오지 못했습니다.');
         });
         return;
       }
 
       loadHistory(targetUploadId).then((list) => {
-        const sameFileRows = targetFileName
-          ? list.filter((row) => String(row.file_name || '') === String(targetFileName))
-          : [];
-        if (sameFileRows.length > 0) {
-          const row = resolveHistoryRow(sameFileRows);
-          if (row) {
-            loadHistoryDetail(row).then(finishWithRows).catch(() => finishWithRows([row]));
-            return;
-          }
-        }
-        const row = resolveHistoryRow(list);
+        const row = Array.isArray(list) && list.length > 0 ? list[0] : null;
         if (row) {
-          loadHistoryDetail(row).then(finishWithRows).catch(() => finishWithRows([row]));
+          finishWithRows([row]);
           return;
         }
         fetchByProgress();

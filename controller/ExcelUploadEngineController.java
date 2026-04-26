@@ -1268,6 +1268,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         if (prog != null) {
             result.put("status", "ok");
             result.put("job_id", jobId);
+            result.put("hist_id", prog.histId);
             result.put("upload_id", prog.uploadId);
             result.put("current", prog.current);
             result.put("total", prog.total);
@@ -1475,6 +1476,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         String uploadId = (String) params.get("upload_id");
         String retryMode = (String) params.get("retry_mode");
         String retryReasonTypes = (String) params.get("retry_reason_types");
+        String histId = null;
         String configSnapshotHash = sha256Hex(
                 String.valueOf(structJson == null ? "" : structJson) + "||"
                         + String.valueOf(mapJson == null ? "" : mapJson) + "||"
@@ -1837,7 +1839,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             if (jobId != null) {
                 request.getSession().setAttribute("EXCEL_PROGRESS_" + jobId, actualTotalRows + "/" + actualTotalRows);
                 ProgressStore.update(jobId, actualTotalRows);
-                ProgressStore.setFinalResult(jobId, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
+                ProgressStore.setFinalResult(jobId, null, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
                 ProgressStore.complete(jobId);
             }
 
@@ -1852,7 +1854,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
 
             // 이력 저장 실패는 업로드 성공/실패를 뒤집지 않고 경고로 노출한다.
             String failTypeJson = buildFailTypeJson(failedRowMsgMap);
-            String histId = UUID.randomUUID().toString();
+            histId = UUID.randomUUID().toString();
             String historySaveError = repository.insertHistory(conn, histId,
                     (String) params.get("job_name"), (String) params.get("file_name"),
                     successCnt, failCnt, errFileName, nowFuncU, uploadId, configSnapshotHash, failTypeJson,
@@ -1865,6 +1867,9 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                 log.warn("[ExcelUpload] {}", historyWarning);
             } else {
                 result.put("history_saved", true);
+            }
+            if (jobId != null) {
+                ProgressStore.setFinalResult(jobId, histId, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
             }
 
             // Post-SQL 실행
@@ -1910,7 +1915,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             result.put("upload_id", uploadId);
             result.put("config_snapshot_hash", configSnapshotHash);
             if (jobId != null) {
-                ProgressStore.setFinalResult(jobId, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
+                ProgressStore.setFinalResult(jobId, histId, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
             }
             if (!failedRowMsgMap.isEmpty()) {
                 result.put("failed_row_msgs", failedRowMsgMap);
@@ -1921,7 +1926,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             log.error("[ExcelUpload] 💣 치명적 오류 발생 ({}행 쯤): {}", currentRowForLog, e.getMessage(), e);
             addLog.accept("💣 치명적 오류 (" + currentRowForLog + "행): " + e.getMessage());
             if (jobId != null) {
-                ProgressStore.setFinalResult(jobId, uploadId, successCnt, failCnt, errFileName, "err");
+                ProgressStore.setFinalResult(jobId, histId, uploadId, successCnt, failCnt, errFileName, "err");
                 ProgressStore.error(jobId, e.getMessage()); // SSE에 오류 신호
                 clearProgressSessionArtifacts(request, jobId);
             }

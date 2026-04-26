@@ -655,8 +655,21 @@ function ExcelApp() {
         }
         post(API_URL, getParams({ mode: 'progress', job_id: completionJobId })).then((res) => {
           if (res.status === 'ok') {
-            const row = fromProgress(res);
-            finishWithRows(row ? [row] : []);
+            const progressRow = fromProgress(res);
+            const progressHistId = res.hist_id || progressRow?.hist_id || '';
+            if (progressHistId) {
+              post(API_URL, getParams({ mode: 'get_history_detail', hist_id: progressHistId })).then((detailRes) => {
+                if (detailRes.status === 'ok' && detailRes.row) {
+                  finishWithRows([detailRes.row]);
+                  return;
+                }
+                finishWithRows(progressRow ? [progressRow] : []);
+              }).catch(() => {
+                finishWithRows(progressRow ? [progressRow] : []);
+              });
+              return;
+            }
+            finishWithRows(progressRow ? [progressRow] : []);
             return;
           }
           finishWithRows(snapshotRow ? [snapshotRow] : []);

@@ -381,6 +381,7 @@ export default function ExcelDashboard() {
           const logs = Array.isArray(res.logs) ? res.logs : [];
           const next = {
             ...state,
+            hist_id: res.hist_id || state.hist_id || '',
             status: (Number(res.percent) || 0) >= 100 ? 'done' : 'running',
             uploader_alive: false,
             current: Number(res.current) || 0,

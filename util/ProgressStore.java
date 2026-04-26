@@ -37,6 +37,7 @@ public class ProgressStore {
         public volatile String  errorMsg  = null;    // null이면 정상
         public volatile boolean cancelRequested = false; // 사용자 취소 요청 여부
         public volatile String  uploadId  = "";
+        public volatile String  histId    = "";
         public volatile String  status    = "running";
         public volatile int     successCnt = 0;
         public volatile int     failCnt    = 0;
@@ -120,9 +121,12 @@ public class ProgressStore {
     /**
      * 업로드 최종 집계값 저장.
      */
-    public static void setFinalResult(String jobId, String uploadId, int successCnt, int failCnt, String errorFile, String status) {
+    public static void setFinalResult(String jobId, String histId, String uploadId, int successCnt, int failCnt, String errorFile, String status) {
         JobProgress p = STORE.get(jobId);
         if (p != null) {
+            if (histId != null) {
+                p.histId = histId;
+            }
             if (uploadId != null) {
                 p.uploadId = uploadId;
             }

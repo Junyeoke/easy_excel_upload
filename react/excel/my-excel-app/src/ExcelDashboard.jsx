@@ -306,6 +306,11 @@ export default function ExcelDashboard() {
         .itsm-compare-panel { margin-top: 10px; border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 8px; padding: 10px; font-size: 12px; color: #1e3a8a; }
         .itsm-compare-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
         .itsm-compare-badge { border: 1px solid #93c5fd; background: #fff; color: #1d4ed8; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
+        .itsm-diff-list { margin-top: 8px; max-height: 220px; overflow-y: auto; border: 1px solid #bfdbfe; border-radius: 6px; background: #fff; }
+        .itsm-diff-row { display: grid; grid-template-columns: 70px 1fr 1fr; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #dbeafe; font-size: 11px; color: #1f2937; }
+        .itsm-diff-row:last-child { border-bottom: none; }
+        .itsm-diff-type { font-weight: 700; color: #1d4ed8; text-transform: uppercase; }
+        .itsm-diff-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .itsm-file { font-size: 13px; color: #1f2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .itsm-time { margin-top: 3px; font-size: 11px; color: #6b7280; }
         .itsm-badge { display: inline-flex; justify-content: center; min-width: 58px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
@@ -549,6 +554,32 @@ export default function ExcelDashboard() {
                         <span key={s} className="itsm-compare-badge">미저장: {s}</span>
                       ))}
                     </div>
+                    {Object.entries(compareResult.section_diffs || {}).map(([section, diff]) => {
+                      const items = Array.isArray(diff?.items) ? diff.items : [];
+                      return (
+                        <div key={section} style={{ marginTop: 10 }}>
+                          <div style={{ fontWeight: 700, color: '#1e3a8a' }}>
+                            {section} · 변경 {diff?.total_changes ?? 0}건
+                            {diff?.available === false ? ` (${diff?.msg || '미비'})` : ''}
+                          </div>
+                          {diff?.available && items.length > 0 && (
+                            <div className="itsm-diff-list">
+                              {items.slice(0, 60).map((it, i) => (
+                                <div className="itsm-diff-row" key={`${section}_${i}`}>
+                                  <div className="itsm-diff-type">{it.type}</div>
+                                  <div className="itsm-diff-cell" title={`${it.path} | ${it.left}`}>
+                                    {it.path}: {it.left || '-'}
+                                  </div>
+                                  <div className="itsm-diff-cell" title={it.right}>
+                                    {it.right || '-'}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {selectedHistory.length === 0 ? (

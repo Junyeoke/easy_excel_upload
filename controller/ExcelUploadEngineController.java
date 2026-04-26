@@ -738,9 +738,148 @@ public class ExcelUploadEngineController {
         String rightHistId = (String) params.get("right_hist_id");
         try (Connection conn = ds.getConnection()) {
             Map<String, Object> compare = repository.getHistoryCompare(conn, leftHistId, rightHistId);
+            Map<String, Object> left = (Map<String, Object>) compare.get("left");
+            Map<String, Object> right = (Map<String, Object>) compare.get("right");
+
+            Map<String, Object> sectionDiffs = new LinkedHashMap<>();
+            sectionDiffs.put("struct_json", buildSectionDiff("struct_json", left, right));
+            sectionDiffs.put("mapping_json", buildSectionDiff("mapping_json", left, right));
+            sectionDiffs.put("pre_sql_json", buildSectionDiff("pre_sql_json", left, right));
+            sectionDiffs.put("post_sql_json", buildSectionDiff("post_sql_json", left, right));
+            sectionDiffs.put("row_sql_json", buildSectionDiff("row_sql_json", left, right));
+
+            compare.put("section_diffs", sectionDiffs);
             result.put("status", "ok");
             result.putAll(compare);
         }
+    }
+
+    private Map<String, Object> buildSectionDiff(String sectionKey, Map<String, Object> left, Map<String, Object> right) {
+        String leftJson = left == null ? null : (String) left.get(sectionKey);
+        String rightJson = right == null ? null : (String) right.get(sectionKey);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("section", sectionKey);
+
+        if (leftJson == null || leftJson.trim().isEmpty() || rightJson == null || rightJson.trim().isEmpty()) {
+            out.put("available", false);
+            out.put("msg", "스냅샷 원문이 없어 상세 비교를 제공할 수 없습니다.");
+            out.put("items", Collections.emptyList());
+            out.put("added_cnt", 0);
+            out.put("removed_cnt", 0);
+            out.put("changed_cnt", 0);
+            out.put("total_changes", 0);
+            return out;
+        }
+
+        try {
+            Object leftObj = service.parseJson(leftJson);
+            Object rightObj = service.parseJson(rightJson);
+            Map<String, String> leftFlat = new LinkedHashMap<>();
+            Map<String, String> rightFlat = new LinkedHashMap<>();
+            flattenJson(leftObj, "$", leftFlat);
+            flattenJson(rightObj, "$", rightFlat);
+
+            List<Map<String, Object>> items = new ArrayList<>();
+            int addedCnt = 0;
+            int removedCnt = 0;
+            int changedCnt = 0;
+
+            Set<String> allKeys = new TreeSet<>();
+            allKeys.addAll(leftFlat.keySet());
+            allKeys.addAll(rightFlat.keySet());
+
+            for (String k : allKeys) {
+                boolean inL = leftFlat.containsKey(k);
+                boolean inR = rightFlat.containsKey(k);
+                String lv = leftFlat.get(k);
+                String rv = rightFlat.get(k);
+                if (inL && !inR) {
+                    removedCnt++;
+                    if (items.size() < 200) {
+                        items.add(diffItem("removed", k, lv, ""));
+                    }
+                } else if (!inL && inR) {
+                    addedCnt++;
+                    if (items.size() < 200) {
+                        items.add(diffItem("added", k, "", rv));
+                    }
+                } else if (!Objects.equals(lv, rv)) {
+                    changedCnt++;
+                    if (items.size() < 200) {
+                        items.add(diffItem("changed", k, lv, rv));
+                    }
+                }
+            }
+
+            out.put("available", true);
+            out.put("items", items);
+            out.put("added_cnt", addedCnt);
+            out.put("removed_cnt", removedCnt);
+            out.put("changed_cnt", changedCnt);
+            out.put("total_changes", addedCnt + removedCnt + changedCnt);
+            return out;
+        } catch (Throwable e) {
+            out.put("available", false);
+            out.put("msg", "스냅샷 JSON 파싱 실패: " + e.getMessage());
+            out.put("items", Collections.emptyList());
+            out.put("added_cnt", 0);
+            out.put("removed_cnt", 0);
+            out.put("changed_cnt", 0);
+            out.put("total_changes", 0);
+            return out;
+        }
+    }
+
+    private Map<String, Object> diffItem(String type, String path, String leftVal, String rightVal) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("type", type);
+        item.put("path", path);
+        item.put("left", shrink(leftVal, 240));
+        item.put("right", shrink(rightVal, 240));
+        return item;
+    }
+
+    private String shrink(String s, int max) {
+        if (s == null) {
+            return "";
+        }
+        String v = s.replace("\r", "\\r").replace("\n", "\\n");
+        if (v.length() <= max) {
+            return v;
+        }
+        return v.substring(0, max) + "...";
+    }
+
+    private void flattenJson(Object node, String path, Map<String, String> out) {
+        if (node == null) {
+            out.put(path, "null");
+            return;
+        }
+        if (node instanceof Map) {
+            Map<?, ?> m = (Map<?, ?>) node;
+            if (m.isEmpty()) {
+                out.put(path, "{}");
+                return;
+            }
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                String k = String.valueOf(e.getKey());
+                flattenJson(e.getValue(), path + "." + k, out);
+            }
+            return;
+        }
+        if (node instanceof List) {
+            List<?> l = (List<?>) node;
+            if (l.isEmpty()) {
+                out.put(path, "[]");
+                return;
+            }
+            for (int i = 0; i < l.size(); i++) {
+                flattenJson(l.get(i), path + "[" + i + "]", out);
+            }
+            return;
+        }
+        out.put(path, String.valueOf(node));
     }
 
     /**

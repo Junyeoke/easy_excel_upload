@@ -12,11 +12,22 @@ const API_URL = "/api/excel/engine";
 const ACTIVE_UPLOAD_STATE_KEY = 'excel_upload_active_state_v1';
 const ACTIVE_UPLOAD_HEARTBEAT_MS = 3000;
 const COMPLETION_SNAPSHOT_KEY = 'excel_upload_last_completion_v1';
+const CURRENT_EMP_ID_KEY = 'excel_upload_current_emp_id';
 const getCurrentEmpId = () => {
   try {
-    return window.$egene?._user?.emp_id || window.$egene?.emp_id || '';
+    const fromGlobal = window.$egene?._user?.emp_id || window.$egene?.emp_id || '';
+    if (fromGlobal) {
+      localStorage.setItem(CURRENT_EMP_ID_KEY, String(fromGlobal));
+      return fromGlobal;
+    }
+    const fromStorage = localStorage.getItem(CURRENT_EMP_ID_KEY) || '';
+    return fromStorage;
   } catch {
-    return '';
+    try {
+      return localStorage.getItem(CURRENT_EMP_ID_KEY) || '';
+    } catch {
+      return '';
+    }
   }
 };
 const getScopedStorageKey = (baseKey, empId = getCurrentEmpId()) => {

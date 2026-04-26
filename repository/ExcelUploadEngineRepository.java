@@ -909,6 +909,87 @@ public String cloneConfig(Connection conn, String sourceId, String newId, String
     // 6. 공통 유틸
     // =====================================================================
 
+    public void ensureAlertConfigTable(Connection conn, String nowFunc) throws Exception {
+        DatabaseMetaData meta = conn.getMetaData();
+        if (tableExists(meta, "ESO_EXCEL_ALERT_CONFIG")) {
+            return;
+        }
+        String[] tryDdls = new String[]{
+                "CREATE TABLE ESO_EXCEL_ALERT_CONFIG (" +
+                        "UPLOAD_ID VARCHAR2(64) PRIMARY KEY, " +
+                        "ENABLED VARCHAR2(1), " +
+                        "WEBHOOK_URL_ENC CLOB, " +
+                        "FAIL_RATE_THRESHOLD NUMBER(5), " +
+                        "FAIL_COUNT_THRESHOLD NUMBER(10), " +
+                        "UPDATED_DTTM " + ("SYSDATE".equals(nowFunc) ? "DATE" : "DATETIME") +
+                        ")",
+                "CREATE TABLE ESO_EXCEL_ALERT_CONFIG (" +
+                        "UPLOAD_ID VARCHAR(64) PRIMARY KEY, " +
+                        "ENABLED VARCHAR(1), " +
+                        "WEBHOOK_URL_ENC LONGTEXT, " +
+                        "FAIL_RATE_THRESHOLD INT, " +
+                        "FAIL_COUNT_THRESHOLD INT, " +
+                        "UPDATED_DTTM DATETIME" +
+                        ")"
+        };
+        Exception last = null;
+        for (String ddl : tryDdls) {
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(ddl);
+                return;
+            } catch (Exception e) {
+                last = e;
+            }
+        }
+        if (last != null) throw last;
+    }
+
+    public Map<String, Object> getAlertConfig(Connection conn, String uploadId) throws Exception {
+        String sql = "SELECT UPLOAD_ID, ENABLED, WEBHOOK_URL_ENC, FAIL_RATE_THRESHOLD, FAIL_COUNT_THRESHOLD " +
+                "FROM ESO_EXCEL_ALERT_CONFIG WHERE UPLOAD_ID = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, uploadId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (!rs.next()) {
+                    return new LinkedHashMap<>();
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("upload_id", rs.getString("UPLOAD_ID"));
+                out.put("enabled", rs.getString("ENABLED"));
+                out.put("webhook_url_enc", rs.getString("WEBHOOK_URL_ENC"));
+                out.put("fail_rate_threshold", rs.getObject("FAIL_RATE_THRESHOLD"));
+                out.put("fail_count_threshold", rs.getObject("FAIL_COUNT_THRESHOLD"));
+                return out;
+            }
+        }
+    }
+
+    public void saveAlertConfig(Connection conn, String uploadId, String enabled, String webhookUrlEnc,
+                                int failRateThreshold, int failCountThreshold, String nowFunc) throws Exception {
+        String updateSql = "UPDATE ESO_EXCEL_ALERT_CONFIG SET ENABLED=?, WEBHOOK_URL_ENC=?, FAIL_RATE_THRESHOLD=?, " +
+                "FAIL_COUNT_THRESHOLD=?, UPDATED_DTTM=" + nowFunc + " WHERE UPLOAD_ID=?";
+        try (PreparedStatement up = conn.prepareStatement(updateSql)) {
+            up.setString(1, enabled);
+            up.setString(2, webhookUrlEnc);
+            up.setInt(3, failRateThreshold);
+            up.setInt(4, failCountThreshold);
+            up.setString(5, uploadId);
+            int affected = up.executeUpdate();
+            if (affected > 0) return;
+        }
+        String insertSql = "INSERT INTO ESO_EXCEL_ALERT_CONFIG " +
+                "(UPLOAD_ID, ENABLED, WEBHOOK_URL_ENC, FAIL_RATE_THRESHOLD, FAIL_COUNT_THRESHOLD, UPDATED_DTTM) " +
+                "VALUES (?, ?, ?, ?, ?, " + nowFunc + ")";
+        try (PreparedStatement ins = conn.prepareStatement(insertSql)) {
+            ins.setString(1, uploadId);
+            ins.setString(2, enabled);
+            ins.setString(3, webhookUrlEnc);
+            ins.setInt(4, failRateThreshold);
+            ins.setInt(5, failCountThreshold);
+            ins.executeUpdate();
+        }
+    }
+
     /**
      * DB 종류에 맞는 현재시각 함수 반환 (NOW() or SYSDATE)
      */

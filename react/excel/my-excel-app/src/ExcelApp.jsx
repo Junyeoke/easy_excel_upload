@@ -5,8 +5,6 @@ import 'react-toastify/dist/ReactToastify.css';
 import Swal from 'sweetalert2';
 import './App.css';
 
-import CodeMirror from '@uiw/react-codemirror';
-import { sql } from '@codemirror/lang-sql';
 const AdminWizardScreen = lazy(() => import('./components/AdminWizardScreen'));
 const UserUploadScreen = lazy(() => import('./components/UserUploadScreen'));
 
@@ -15,6 +13,48 @@ const API_URL = "/api/excel/engine";
 // ─────────────────────────────────────────────
 // 공통 서브 컴포넌트
 // ─────────────────────────────────────────────
+
+const AsyncSqlCodeEditor = ({ value, onChange }) => {
+  const [CmComp, setCmComp] = useState(null);
+  const [sqlExtFactory, setSqlExtFactory] = useState(null);
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([
+      import('@uiw/react-codemirror'),
+      import('@codemirror/lang-sql'),
+    ]).then(([cmMod, sqlMod]) => {
+      if (!mounted) return;
+      setCmComp(() => cmMod.default);
+      setSqlExtFactory(() => sqlMod.sql);
+    }).catch(() => {
+      if (!mounted) return;
+      setCmComp(null);
+      setSqlExtFactory(null);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  if (!CmComp || !sqlExtFactory) {
+    return (
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="SQL 문을 작성하세요..."
+        style={{ width: '100%', minHeight: '100px', border: 'none', padding: '10px', fontSize: '0.85rem', fontFamily: 'inherit', resize: 'vertical' }}
+      />
+    );
+  }
+  return (
+    <CmComp
+      value={value}
+      height="100px"
+      extensions={[sqlExtFactory()]}
+      onChange={onChange}
+      placeholder="SQL 문을 작성하세요..."
+      style={{ fontSize: '0.85rem' }}
+    />
+  );
+};
 
 const SqlEditor = ({ title, sqls, setSqls, tooltip }) => (
   <div style={{ marginBottom: '20px' }}>
@@ -28,9 +68,10 @@ const SqlEditor = ({ title, sqls, setSqls, tooltip }) => (
     {sqls.map((s, i) => (
       <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '10px', alignItems: 'flex-start' }}>
         <div style={{ flex: 1, border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-          <CodeMirror value={s.sql} height="100px" extensions={[sql()]}
+          <AsyncSqlCodeEditor
+            value={s.sql}
             onChange={v => { const n = [...sqls]; n[i].sql = v; setSqls(n); }}
-            placeholder="SQL 문을 작성하세요..." style={{ fontSize: '0.85rem' }} />
+          />
         </div>
         <button className="btn btn-mini btn-del" onClick={() => setSqls(sqls.filter((_, idx) => idx !== i))} style={{ height: '32px' }}>삭제</button>
       </div>
@@ -193,6 +234,50 @@ function ExcelApp() {
       }
     }, 5000);
   };
+  const attachSseStream = (jobId, options = {}) => {
+    const resumed = options.resumed === true;
+    const es = new EventSource(`${API_URL}/stream?job_id=${encodeURIComponent(jobId)}`);
+    esRef.current = es;
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'progress') {
+          touchUploadWatchdog();
+          setProgress({ current: data.current, total: data.total, percent: data.percent });
+          if (data.logs?.length > 0) {
+            setUploadLogs(prev => [...prev, ...data.logs].slice(-100));
+          }
+        } else if (data.type === 'done') {
+          sseCompletedRef.current = true;
+          es.close(); esRef.current = null;
+        } else if (data.type === 'error') {
+          touchUploadWatchdog();
+          setUploadLogs(prev => [...prev, `💣 오류: ${data.msg}`].slice(-100));
+          es.close(); esRef.current = null;
+          if (resumed) {
+            setUploading(false);
+            setUploadJobId('');
+            sessionStorage.removeItem('excel_active_job_id');
+          }
+        } else if (data.type === 'waiting') {
+          touchUploadWatchdog();
+          setUploadLogs(prev => {
+            if (prev.some(v => v.includes('작업 대기 중'))) return prev;
+            return [...prev, resumed ? '⌛ 이전 작업 상태를 조회 중입니다...' : '⌛ 작업 대기 중... 서버 준비를 확인하고 있습니다.'].slice(-100);
+          });
+        }
+      } catch {}
+    };
+    es.onerror = () => {
+      setUploadLogs(prev => {
+        if (prev.some(v => v.includes('SSE 연결이 일시적으로 불안정'))) return prev;
+        return [...prev, '⚠ SSE 연결이 일시적으로 불안정합니다. 자동 재연결을 시도합니다.'].slice(-100);
+      });
+      if (esRef.current && esRef.current.readyState === EventSource.CLOSED) {
+        esRef.current = null;
+      }
+    };
+  };
 
   const post = async (url, formData) => {
     const headers = {};
@@ -255,6 +340,25 @@ function ExcelApp() {
     const uId = new URLSearchParams(window.location.search).get('upload_id');
     if (uId) loadConfiguration(uId);
     loadHistory();
+    try {
+      const activeJobId = sessionStorage.getItem('excel_active_job_id');
+      if (activeJobId) {
+        setUploadJobId(activeJobId);
+        setUploading(true);
+        setUploadLogs(prev => [...prev, '🔄 이전 업로드 작업을 복구하는 중입니다...']);
+        startUploadWatchdog();
+        attachSseStream(activeJobId, { resumed: true });
+        post(API_URL, getParams({ mode: 'progress', job_id: activeJobId })).then((res) => {
+          if (res.status === 'none') {
+            setUploadLogs(prev => [...prev, '⚠ 이전 작업 상태를 찾지 못했습니다. 서버 재시작 또는 세션 만료일 수 있습니다.']);
+            setUploading(false);
+            setUploadJobId('');
+            stopUploadWatchdog();
+            try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
+          }
+        });
+      }
+    } catch {}
   }, []);
 
   const loadHistory = async () => { const res = await post(API_URL, getParams({ mode: 'get_history' })); if (res.status === 'ok') setHistoryList(res.list || []); };
@@ -864,56 +968,9 @@ function ExcelApp() {
     setUploadJobId(jobId);
     setCancellingUpload(false);
     startUploadWatchdog();
+    try { sessionStorage.setItem('excel_active_job_id', jobId); } catch {}
 
-    // ── SSE 스트리밍 시작 ────────────────────────────────────────────
-    // EventSource는 GET 전용이므로 jobId를 쿼리 파라미터로 전달합니다.
-    // 기존 setInterval 폴링 방식 대비:
-    //   ✅ 서버 → 클라이언트 push (불필요한 요청 없음)
-    //   ✅ 세션 타임아웃에 무관 (ProgressStore 인메모리)
-    //   ✅ 로그 중복 없음 (서버에서 새 로그만 전송)
-    const es = new EventSource(`${API_URL}/stream?job_id=${encodeURIComponent(jobId)}`);
-    esRef.current = es;
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        if (data.type === 'progress') {
-          touchUploadWatchdog();
-          setProgress({ current: data.current, total: data.total, percent: data.percent });
-          if (data.logs?.length > 0) {
-            setUploadLogs(prev => [...prev, ...data.logs].slice(-100));
-          }
-        } else if (data.type === 'done') {
-          // 업로드 완료 — SSE 스트림 닫기 (fetch 응답 처리는 아래에서)
-          sseCompletedRef.current = true; // JEUS 타임아웃으로 fetch가 끊겨도 성공 처리하기 위한 플래그
-          es.close(); esRef.current = null;
-        } else if (data.type === 'error') {
-          touchUploadWatchdog();
-          setUploadLogs(prev => [...prev, `💣 오류: ${data.msg}`]);
-          es.close(); esRef.current = null;
-        } else if (data.type === 'waiting') {
-          touchUploadWatchdog();
-          setUploadLogs(prev => {
-            if (prev.some(v => v.includes('작업 대기 중'))) return prev;
-            return [...prev, '⌛ 작업 대기 중... 서버 준비를 확인하고 있습니다.'].slice(-100);
-          });
-        }
-        // type === 'waiting' 은 무시 (업로드 요청 도달 전 대기 상태)
-      } catch { /* JSON 파싱 실패 무시 */ }
-    };
-
-    es.onerror = () => {
-      // 연결 오류 — EventSource는 자동 재연결을 시도하므로
-      // 업로드가 완전히 끝난 경우에만 닫기
-      setUploadLogs(prev => {
-        if (prev.some(v => v.includes('SSE 연결이 일시적으로 불안정'))) return prev;
-        return [...prev, '⚠ SSE 연결이 일시적으로 불안정합니다. 자동 재연결을 시도합니다.'].slice(-100);
-      });
-      if (esRef.current && esRef.current.readyState === EventSource.CLOSED) {
-        esRef.current = null;
-      }
-    };
+    attachSseStream(jobId);
 
     const preparedColsCache = await ensureStructColumnsLoaded(structs);
     const sanitizedMapping = sanitizeMappingForStructs(mapping, structs, preparedColsCache);
@@ -947,6 +1004,7 @@ function ExcelApp() {
       setUploading(false);
       setCancellingUpload(false);
       setUploadJobId('');
+      try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
       if (res.status === 'ok' || res.status === 'partial') {
         setProgress(p => ({ ...p, current: p.total, percent: 100 }));
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
@@ -1057,6 +1115,7 @@ function ExcelApp() {
         setUploading(false);
         setCancellingUpload(false);
         setUploadJobId('');
+        try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
         setProgress(p => ({ ...p, percent: 100 }));
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
         toast.update(tid, { render: '🎉 업로드 완료', type: 'success', isLoading: false, autoClose: 3000 });
@@ -1073,6 +1132,7 @@ function ExcelApp() {
       setUploading(false);
       setCancellingUpload(false);
       setUploadJobId('');
+      try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
       toast.update(tid, { render: '❌ 통신 오류 (서버 응답 지연 또는 연결 문제)', type: 'error', isLoading: false, autoClose: 3500 });
       void sendOpsAlert('upload_network_error', {
         file_name: file?.name || '',

@@ -24,15 +24,12 @@ import java.util.*;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.SecureRandom;
+import javax.crypto.Mac;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
@@ -359,11 +356,11 @@ public class ExcelUploadEngineController {
             }else if ("get_history_compare".equals(mode)) {
                 handleGetHistoryCompare(ds, params, result);
             }else if ("get_alert_config".equals(mode)) {
-                handleGetAlertConfig(params, result);
+                handleGetAlertConfig(ds, params, result);
             }else if ("save_alert_config".equals(mode)) {
-                handleSaveAlertConfig(params, result);
+                handleSaveAlertConfig(ds, params, result);
             }else if ("send_alert".equals(mode)) {
-                handleSendAlert(params, result);
+                handleSendAlert(ds, params, result);
             }else if ("progress".equals(mode)) {
                 handleProgress(request, params, result); 
             }else if ("cancel".equals(mode)) {
@@ -902,15 +899,18 @@ public class ExcelUploadEngineController {
         out.put(path, String.valueOf(node));
     }
 
-    private void handleGetAlertConfig(Map<String, Object> params, Map<String, Object> result) {
+    private void handleGetAlertConfig(DataSource ds, Map<String, Object> params, Map<String, Object> result) {
         String uploadId = (String) params.get("upload_id");
         if (uploadId == null || uploadId.trim().isEmpty()) {
             result.put("status", "err");
             result.put("msg", "upload_id가 필요합니다.");
             return;
         }
-        try {
-            Map<String, Object> cfg = loadAlertConfig(uploadId.trim());
+        try (Connection conn = ds.getConnection()) {
+            conn.setAutoCommit(false);
+            String nowFunc = repository.detectNowFunction(conn);
+            repository.ensureAlertConfigTable(conn, nowFunc);
+            Map<String, Object> cfg = repository.getAlertConfig(conn, uploadId.trim());
             result.put("status", "ok");
             result.put("enabled", isTruthy(cfg.get("enabled")));
             result.put("fail_rate_threshold", String.valueOf(cfg.getOrDefault("fail_rate_threshold", "30")));
@@ -922,21 +922,24 @@ public class ExcelUploadEngineController {
         }
     }
 
-    private void handleSaveAlertConfig(Map<String, Object> params, Map<String, Object> result) {
+    private void handleSaveAlertConfig(DataSource ds, Map<String, Object> params, Map<String, Object> result) {
         String uploadId = (String) params.get("upload_id");
         if (uploadId == null || uploadId.trim().isEmpty()) {
             result.put("status", "err");
             result.put("msg", "upload_id가 필요합니다.");
             return;
         }
-        try {
-            Map<String, Object> cfg = new LinkedHashMap<>();
-            cfg.put("enabled", isTruthy(params.get("enabled")) ? "Y" : "N");
-            cfg.put("fail_rate_threshold", String.valueOf(parseIntParam((String) params.get("fail_rate_threshold"), 30)));
-            cfg.put("fail_count_threshold", String.valueOf(parseIntParam((String) params.get("fail_count_threshold"), 50)));
+        try (Connection conn = ds.getConnection()) {
+            conn.setAutoCommit(false);
+            String nowFunc = repository.detectNowFunction(conn);
+            repository.ensureAlertConfigTable(conn, nowFunc);
+            String enabled = isTruthy(params.get("enabled")) ? "Y" : "N";
+            int failRateThreshold = parseIntParam((String) params.get("fail_rate_threshold"), 30);
+            int failCountThreshold = parseIntParam((String) params.get("fail_count_threshold"), 50);
             String webhookUrl = (String) params.get("webhook_url");
-            cfg.put("webhook_url_enc", encryptAlertValue(webhookUrl == null ? "" : webhookUrl.trim()));
-            saveAlertConfig(uploadId.trim(), cfg);
+            String webhookUrlEnc = encryptAlertValue(webhookUrl == null ? "" : webhookUrl.trim());
+            repository.saveAlertConfig(conn, uploadId.trim(), enabled, webhookUrlEnc, failRateThreshold, failCountThreshold, nowFunc);
+            conn.commit();
             result.put("status", "ok");
         } catch (Throwable e) {
             result.put("status", "err");
@@ -944,7 +947,7 @@ public class ExcelUploadEngineController {
         }
     }
 
-    private void handleSendAlert(Map<String, Object> params, Map<String, Object> result) {
+    private void handleSendAlert(DataSource ds, Map<String, Object> params, Map<String, Object> result) {
         String uploadId = (String) params.get("upload_id");
         String eventType = (String) params.get("event_type");
         if (uploadId == null || uploadId.trim().isEmpty()) {
@@ -957,8 +960,11 @@ public class ExcelUploadEngineController {
             result.put("msg", "event_type이 필요합니다.");
             return;
         }
-        try {
-            Map<String, Object> cfg = loadAlertConfig(uploadId.trim());
+        try (Connection conn = ds.getConnection()) {
+            conn.setAutoCommit(false);
+            String nowFunc = repository.detectNowFunction(conn);
+            repository.ensureAlertConfigTable(conn, nowFunc);
+            Map<String, Object> cfg = repository.getAlertConfig(conn, uploadId.trim());
             if (!isTruthy(cfg.get("enabled"))) {
                 result.put("status", "skip");
                 result.put("msg", "알림 비활성화");
@@ -999,7 +1005,7 @@ public class ExcelUploadEngineController {
                 return;
             }
 
-            boolean sent = sendWebhookWithRetry(webhookUrl, jsonToString(payload), 3);
+            boolean sent = sendWebhookWithRetry(webhookUrl, jsonToString(payload), 3, dedupKey);
             if (!sent) {
                 result.put("status", "err");
                 result.put("msg", "알림 전송 실패");
@@ -1011,31 +1017,6 @@ public class ExcelUploadEngineController {
             result.put("status", "err");
             result.put("msg", "알림 전송 오류: " + e.getMessage());
         }
-    }
-
-    private Path getAlertConfigPath(String uploadId) {
-        String safeId = uploadId.replaceAll("[^a-zA-Z0-9_-]", "_");
-        String baseDir = System.getProperty("java.io.tmpdir");
-        return Paths.get(baseDir, "excel_upload_alert_cfg_" + safeId + ".json");
-    }
-
-    private Map<String, Object> loadAlertConfig(String uploadId) throws Exception {
-        Path p = getAlertConfigPath(uploadId);
-        if (!Files.exists(p)) {
-            return new LinkedHashMap<>();
-        }
-        String raw = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
-        Object parsed = service.parseJson(raw);
-        if (parsed instanceof Map) {
-            return new LinkedHashMap<>((Map<String, Object>) parsed);
-        }
-        return new LinkedHashMap<>();
-    }
-
-    private void saveAlertConfig(String uploadId, Map<String, Object> cfg) throws Exception {
-        Path p = getAlertConfigPath(uploadId);
-        Files.write(p, jsonToString(cfg).getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
     }
 
     private SecretKeySpec getAlertKey() throws Exception {
@@ -1091,18 +1072,69 @@ public class ExcelUploadEngineController {
         }
     }
 
-    private boolean sendWebhookWithRetry(String webhookUrl, String bodyJson, int maxTry) {
+    private boolean isWebhookAllowed(String webhookUrl) {
+        try {
+            String allowlist = System.getenv("EXCEL_ALERT_ALLOWLIST");
+            if (allowlist == null || allowlist.trim().isEmpty()) {
+                allowlist = System.getProperty("excel.alert.allowlist");
+            }
+            URL url = new URL(webhookUrl);
+            String host = url.getHost() == null ? "" : url.getHost().toLowerCase(Locale.ROOT);
+            if (allowlist == null || allowlist.trim().isEmpty()) {
+                return true;
+            }
+            for (String raw : allowlist.split(",")) {
+                String d = raw.trim().toLowerCase(Locale.ROOT);
+                if (d.isEmpty()) continue;
+                if (host.equals(d) || host.endsWith("." + d)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    private String buildAlertSignature(String timestamp, String bodyJson) throws Exception {
+        String signSecret = System.getenv("EXCEL_ALERT_SIGN_SECRET");
+        if (signSecret == null || signSecret.trim().isEmpty()) {
+            signSecret = System.getProperty("excel.alert.sign.secret");
+        }
+        if (signSecret == null || signSecret.trim().isEmpty()) {
+            signSecret = "excel-alert-sign-default-change-me";
+        }
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(signSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        byte[] sig = mac.doFinal((timestamp + "." + bodyJson).getBytes(StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder(sig.length * 2);
+        for (byte b : sig) sb.append(String.format("%02x", b));
+        return sb.toString();
+    }
+
+    private boolean sendWebhookWithRetry(String webhookUrl, String bodyJson, int maxTry, String dedupKey) {
+        if (!isWebhookAllowed(webhookUrl)) {
+            log.warn("[ExcelUpload] Webhook allowlist 거부: {}", webhookUrl);
+            return false;
+        }
         int[] delays = new int[]{200, 700, 1600};
         for (int i = 0; i < maxTry; i++) {
             HttpURLConnection conn = null;
             try {
                 URL url = new URL(webhookUrl);
                 conn = (HttpURLConnection) url.openConnection();
+                String ts = String.valueOf(System.currentTimeMillis());
+                String sig = buildAlertSignature(ts, bodyJson);
                 conn.setRequestMethod("POST");
                 conn.setDoOutput(true);
                 conn.setConnectTimeout(4000);
                 conn.setReadTimeout(6000);
                 conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                conn.setRequestProperty("X-Excel-Alert-Timestamp", ts);
+                conn.setRequestProperty("X-Excel-Alert-Signature", sig);
+                if (dedupKey != null && !dedupKey.trim().isEmpty()) {
+                    conn.setRequestProperty("X-Excel-Alert-Dedup-Key", dedupKey);
+                }
                 try (OutputStream os = conn.getOutputStream()) {
                     os.write(bodyJson.getBytes(StandardCharsets.UTF_8));
                 }

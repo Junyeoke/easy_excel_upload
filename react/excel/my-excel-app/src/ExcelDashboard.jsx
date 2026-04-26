@@ -85,6 +85,7 @@ export default function ExcelDashboard() {
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareDiffTypeFilter, setCompareDiffTypeFilter] = useState('all');
   const [compareSearch, setCompareSearch] = useState('');
+  const [compareCollapsed, setCompareCollapsed] = useState({});
 
   const isTestUser = (() => {
     try {
@@ -243,6 +244,7 @@ export default function ExcelDashboard() {
     setCompareModalOpen(false);
     setCompareDiffTypeFilter('all');
     setCompareSearch('');
+    setCompareCollapsed({});
     setCompareHistIds((prev) => {
       if (prev.includes(histId)) return prev.filter((id) => id !== histId);
       if (prev.length >= 2) return [prev[1], histId];
@@ -694,6 +696,20 @@ export default function ExcelDashboard() {
                   placeholder="경로/값 검색"
                 />
               </div>
+              {(() => {
+                const sec = compareResult.section_diffs || {};
+                const sum = { added: 0, removed: 0, changed: 0 };
+                Object.values(sec).forEach((d) => {
+                  sum.added += Number(d?.added_cnt || 0);
+                  sum.removed += Number(d?.removed_cnt || 0);
+                  sum.changed += Number(d?.changed_cnt || 0);
+                });
+                return (
+                  <div style={{ marginBottom: 10, fontSize: 12, color: '#334155' }}>
+                    변경 요약: 추가 {sum.added}건 · 삭제 {sum.removed}건 · 변경 {sum.changed}건
+                  </div>
+                );
+              })()}
 
               {(compareResult.changed_sections || []).length > 0 && (
                 <div className="itsm-compare-badges" style={{ marginBottom: 10 }}>
@@ -712,11 +728,18 @@ export default function ExcelDashboard() {
                 });
                 return (
                   <div key={section} style={{ marginBottom: 14 }}>
-                    <div style={{ fontWeight: 700, color: '#1e3a8a', marginBottom: 6 }}>
-                      {sectionLabelMap[section] || section} · 변경 {diff?.total_changes ?? 0}건
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+                      <div style={{ fontWeight: 700, color: '#1e3a8a' }}>
+                        {sectionLabelMap[section] || section} · 변경 {diff?.total_changes ?? 0}건
+                      </div>
+                      <button className="itsm-modal-close" onClick={() => setCompareCollapsed(prev => ({ ...prev, [section]: !prev[section] }))}>
+                        {compareCollapsed[section] ? '펼치기' : '접기'}
+                      </button>
                     </div>
                     {diff?.available === false ? (
                       <div style={{ fontSize: 12, color: '#6b7280' }}>{diff?.msg || '스냅샷 데이터 없음'}</div>
+                    ) : compareCollapsed[section] ? (
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>접힘</div>
                     ) : items.length === 0 ? (
                       <div style={{ fontSize: 12, color: '#6b7280' }}>변경 항목이 없습니다.</div>
                     ) : (

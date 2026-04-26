@@ -455,12 +455,20 @@ function ExcelApp() {
     }
   };
   const completionSeed = readCompletionSnapshot() || readSharedUploadState();
+  const getCurrentEmpId = () => {
+    try {
+      return window.$egene?._user?.emp_id || window.$egene?.emp_id || '';
+    } catch {
+      return '';
+    }
+  };
   const publishSharedUploadState = (patch = {}) => {
     try {
       const prev = readSharedUploadState();
       const next = {
         ...prev,
         ...patch,
+        uploader_emp_id: patch.uploader_emp_id || prev?.uploader_emp_id || getCurrentEmpId(),
         updated_at: new Date().toISOString(),
       };
       localStorage.setItem(ACTIVE_UPLOAD_STATE_KEY, JSON.stringify(next));
@@ -469,6 +477,7 @@ function ExcelApp() {
   const publishCompletionSnapshot = (payload = {}) => {
     writeCompletionSnapshot({
       ...payload,
+      uploader_emp_id: payload.uploader_emp_id || getCurrentEmpId(),
       saved_at: new Date().toISOString(),
     });
   };

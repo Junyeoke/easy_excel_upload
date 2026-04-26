@@ -667,6 +667,10 @@ public class ExcelUploadEngineRepository {
         }
     }
 
+    public Map<String, Object> getHistoryDetail(Connection conn, String histId) throws Exception {
+        return getHistoryDetailById(conn, histId);
+    }
+
     private String str(Object v) {
         return v == null ? "" : String.valueOf(v);
     }

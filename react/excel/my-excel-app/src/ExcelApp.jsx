@@ -155,10 +155,13 @@ const progressToHistoryRow = (state, fallback = {}) => {
   };
 };
 
-const CompletionSummaryView = ({ uploadId, seed, historyList, loading, error, onOpenWorkbench, onOpenDashboard, onNewUpload }) => {
+const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, error, onOpenWorkbench, onOpenDashboard, onNewUpload }) => {
   const snapshot = seed || readCompletionSnapshot();
+  const targetHistId = histId || snapshot?.hist_id || '';
   const targetUploadId = uploadId || snapshot?.upload_id || '';
-  const matchedRows = targetUploadId ? historyList.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : [];
+  const matchedRows = targetHistId
+    ? historyList.filter((row) => String(row.hist_id || '') === String(targetHistId))
+    : (targetUploadId ? historyList.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : []);
   const baseRows = matchedRows.length > 0 ? matchedRows : historyList;
   const rows = baseRows.length > 0 ? baseRows : (snapshot ? [snapshotToHistoryRow(snapshot)] : []);
   const latest = rows[0] || null;
@@ -211,7 +214,7 @@ const CompletionSummaryView = ({ uploadId, seed, historyList, loading, error, on
             </div>
               <div className="upload-stat-card">
                 <div className="upload-stat-label">업로드 ID</div>
-              <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetUploadId || latest?.upload_id || snapshot?.job_id || '-'}</div>
+              <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetHistId || targetUploadId || latest?.hist_id || latest?.upload_id || snapshot?.job_id || '-'}</div>
               </div>
             </div>
 
@@ -282,6 +285,7 @@ function ExcelApp() {
   const queryParams = new URLSearchParams(window.location.search);
   const isAdmin = queryParams.get('admin') === 'true';
   const isCompletionView = queryParams.get('view') === 'completion' || queryParams.get('result') === '1';
+  const completionHistId = queryParams.get('hist_id') || '';
   const completionUploadId = queryParams.get('upload_id') || '';
   const completionJobId = queryParams.get('job_id') || '';
 
@@ -622,82 +626,77 @@ function ExcelApp() {
     if (isCompletionView) {
       setCompletionLoading(true);
       setCompletionError('');
-      loadHistory(completionUploadId).then((list) => {
-        const snapshotRow = snapshotToHistoryRow(completionSeed);
-        const targetUploadId = completionUploadId || completionSeed?.upload_id || '';
-        const snapshotHasCounts = snapshotRow && ((Number(snapshotRow.success_cnt) || 0) + (Number(snapshotRow.fail_cnt) || 0) > 0 || !!snapshotRow.error_file);
-        const matchedList = targetUploadId ? list.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : list;
-        let nextList = [];
-        if (matchedList.length > 0) {
-          nextList = matchedList;
-        } else if (targetUploadId && snapshotHasCounts) {
-          nextList = [snapshotRow];
-        } else if (!targetUploadId && !completionJobId) {
-          nextList = list.length > 0 ? list : (snapshotRow ? [snapshotRow] : []);
-        } else if (snapshotHasCounts && !completionJobId) {
-          nextList = [snapshotRow];
-        }
-        setCompletionHistoryList(nextList);
+      const targetHistId = completionHistId || completionSeed?.hist_id || '';
+      const targetUploadId = completionUploadId || completionSeed?.upload_id || '';
+      const snapshotRow = snapshotToHistoryRow(completionSeed);
+      const fromProgress = (res) => progressToHistoryRow({
+        ...res,
+        hist_id: targetHistId || res.hist_id || '',
+        job_id: completionJobId || res.job_id || '',
+        upload_id: targetUploadId || res.upload_id || '',
+      }, snapshotRow || {});
+
+      const finishWithRows = (rows) => {
+        const list = Array.isArray(rows) ? rows : [];
+        setCompletionHistoryList(list);
         setCompletionLoading(false);
-        if (nextList.length === 0) {
-          if (completionJobId) {
-            post(API_URL, getParams({ mode: 'progress', job_id: completionJobId })).then((res) => {
-              if (res.status === 'ok') {
-                const seedRow = snapshotRow || {};
-                const finalRow = progressToHistoryRow({
-                  ...res,
-                  job_id: completionJobId,
-                  upload_id: targetUploadId || res.upload_id || '',
-                }, seedRow);
-                if (finalRow) {
-                  setCompletionHistoryList([finalRow]);
-                  setCompletionError('');
-                  setCompletionLoading(false);
-                  return;
-                }
-              }
-              setCompletionError('완료 이력을 찾을 수 없습니다.');
-            }).catch(() => {
-              setCompletionError('완료 이력을 찾을 수 없습니다.');
-            });
-            return;
-          }
+        if (list.length === 0) {
           setCompletionError('완료 이력을 찾을 수 없습니다.');
         }
-      }).catch(() => {
-        const snapshotRow = snapshotToHistoryRow(completionSeed);
-        const snapshotHasCounts = snapshotRow && ((Number(snapshotRow.success_cnt) || 0) + (Number(snapshotRow.fail_cnt) || 0) > 0 || !!snapshotRow.error_file);
-        if (snapshotHasCounts && !completionJobId) {
-          setCompletionHistoryList([snapshotRow]);
-          setCompletionLoading(false);
+      };
+
+      const fetchByProgress = () => {
+        if (!completionJobId) {
+          finishWithRows(snapshotRow ? [snapshotRow] : []);
           return;
         }
-        if (completionJobId) {
-          post(API_URL, getParams({ mode: 'progress', job_id: completionJobId })).then((res) => {
-            if (res.status === 'ok') {
-              const finalRow = progressToHistoryRow({
-                ...res,
-                job_id: completionJobId,
-                upload_id: completionUploadId || completionSeed?.upload_id || '',
-              }, snapshotRow || {});
-              if (finalRow) {
-                setCompletionHistoryList([finalRow]);
-                setCompletionLoading(false);
-                setCompletionError('');
-                return;
-              }
+        post(API_URL, getParams({ mode: 'progress', job_id: completionJobId })).then((res) => {
+          if (res.status === 'ok') {
+            const row = fromProgress(res);
+            finishWithRows(row ? [row] : []);
+            return;
+          }
+          finishWithRows(snapshotRow ? [snapshotRow] : []);
+        }).catch(() => {
+          finishWithRows(snapshotRow ? [snapshotRow] : []);
+        });
+      };
+
+      if (targetHistId) {
+        post(API_URL, getParams({ mode: 'get_history_detail', hist_id: targetHistId })).then((res) => {
+          if (res.status === 'ok' && res.row) {
+            finishWithRows([res.row]);
+            return;
+          }
+          loadHistory(targetUploadId).then((list) => {
+            const matched = targetUploadId ? list.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : list;
+            if (matched.length > 0) {
+              finishWithRows([matched[0]]);
+              return;
             }
-            setCompletionLoading(false);
-            setCompletionError('완료 화면을 불러오지 못했습니다.');
-          }).catch(() => {
-            setCompletionLoading(false);
-            setCompletionError('완료 화면을 불러오지 못했습니다.');
-          });
+            fetchByProgress();
+          }).catch(fetchByProgress);
+        }).catch(() => {
+          loadHistory(targetUploadId).then((list) => {
+            const matched = targetUploadId ? list.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : list;
+            if (matched.length > 0) {
+              finishWithRows([matched[0]]);
+              return;
+            }
+            fetchByProgress();
+          }).catch(fetchByProgress);
+        });
+        return;
+      }
+
+      loadHistory(targetUploadId).then((list) => {
+        const matched = targetUploadId ? list.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : list;
+        if (matched.length > 0) {
+          finishWithRows([matched[0]]);
           return;
         }
-        setCompletionLoading(false);
-        setCompletionError('완료 화면을 불러오지 못했습니다.');
-      });
+        fetchByProgress();
+      }).catch(fetchByProgress);
       return;
     }
     if (uId) loadConfiguration(uId);
@@ -1459,6 +1458,7 @@ function ExcelApp() {
           setUploadResult({ ...res, failed_row_msgs: failedMsgs, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: Object.keys(failedMsgs).filter(k => k !== '__unknown__').length } : null });
           publishCompletionSnapshot({
             status: 'partial',
+            hist_id: res.hist_id || '',
             job_id: uploadJobId || '',
             upload_id: uploadId || res.upload_id || '',
             job_name: jobName || '',
@@ -1473,6 +1473,7 @@ function ExcelApp() {
             config_snapshot_hash: res.config_snapshot_hash || '',
           });
           publishSharedUploadState({
+            hist_id: res.hist_id || '',
             job_id: uploadJobId || '',
             upload_id: uploadId || res.upload_id || '',
             job_name: jobName || '',
@@ -1504,6 +1505,7 @@ function ExcelApp() {
           setUploadResult({ ...res, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: 0 } : null });
           publishCompletionSnapshot({
             status: 'ok',
+            hist_id: res.hist_id || '',
             job_id: uploadJobId || '',
             upload_id: uploadId || res.upload_id || '',
             job_name: jobName || '',
@@ -1517,6 +1519,7 @@ function ExcelApp() {
             config_snapshot_hash: res.config_snapshot_hash || '',
           });
           publishSharedUploadState({
+            hist_id: res.hist_id || '',
             job_id: uploadJobId || '',
             upload_id: uploadId || res.upload_id || '',
             job_name: jobName || '',
@@ -1544,6 +1547,7 @@ function ExcelApp() {
         setUploadResult({ ...res, friendlyMsg, solution, retry_summary: retrySummaryBase });
         publishCompletionSnapshot({
           status: 'err',
+          hist_id: res.hist_id || '',
           job_id: uploadJobId || '',
           upload_id: uploadId || res.upload_id || '',
           job_name: jobName || '',
@@ -1557,6 +1561,7 @@ function ExcelApp() {
           config_snapshot_hash: res.config_snapshot_hash || '',
         });
         publishSharedUploadState({
+          hist_id: res.hist_id || '',
           job_id: uploadJobId || '',
           upload_id: uploadId || res.upload_id || '',
           job_name: jobName || '',
@@ -1616,6 +1621,7 @@ function ExcelApp() {
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
         const finalSnapshotBase = {
           status: 'ok',
+          hist_id: '',
           job_id: uploadJobId || '',
           upload_id: uploadId || '',
           job_name: jobName || '',
@@ -1630,6 +1636,7 @@ function ExcelApp() {
           const latest = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
           const nextSnapshot = latest ? {
             ...finalSnapshotBase,
+            hist_id: latest.hist_id || finalSnapshotBase.hist_id,
             upload_id: latest.upload_id || finalSnapshotBase.upload_id,
             job_name: latest.job_name || finalSnapshotBase.job_name,
             file_name: latest.file_name || finalSnapshotBase.file_name,
@@ -1644,6 +1651,7 @@ function ExcelApp() {
           publishCompletionSnapshot(nextSnapshot);
           setUploadResult({ ...nextSnapshot });
           publishSharedUploadState({
+            hist_id: nextSnapshot.hist_id || '',
             job_id: uploadJobId || '',
             upload_id: nextSnapshot.upload_id || '',
             job_name: nextSnapshot.job_name || '',
@@ -1668,6 +1676,7 @@ function ExcelApp() {
         }).catch(() => {
           publishCompletionSnapshot(finalSnapshotBase);
           publishSharedUploadState({
+            hist_id: finalSnapshotBase.hist_id || '',
             job_id: uploadJobId || '',
             upload_id: uploadId || '',
             job_name: jobName || '',
@@ -1694,10 +1703,11 @@ function ExcelApp() {
       setCancellingUpload(false);
       setUploadJobId('');
       try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
-      publishCompletionSnapshot({
-        status: 'err',
-        job_id: uploadJobId || '',
-        upload_id: uploadId || '',
+        publishCompletionSnapshot({
+          status: 'err',
+          hist_id: '',
+          job_id: uploadJobId || '',
+          upload_id: uploadId || '',
         job_name: jobName || '',
         file_name: file?.name || '',
         success_cnt: 0,
@@ -1706,6 +1716,7 @@ function ExcelApp() {
         msg: '통신 오류 (서버 응답 지연 또는 연결 문제)',
       });
       publishSharedUploadState({
+        hist_id: '',
         job_id: uploadJobId || '',
         upload_id: uploadId || '',
         job_name: jobName || '',
@@ -2011,18 +2022,19 @@ function ExcelApp() {
             </div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <button onClick={() => window.location.href = '?view=dashboard'} style={{ background: 'transparent', border: '1px solid #e2e8f0', color: '#64748b', borderRadius: '8px', padding: '0 14px', height: '34px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>📊 대시보드</button>
-              <button onClick={() => window.location.href = '?upload_id=' + encodeURIComponent(completionUploadId || (latestHistory?.upload_id || ''))} style={{ background: 'transparent', border: '1px solid #e2e8f0', color: '#64748b', borderRadius: '8px', padding: '0 14px', height: '34px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>🧰 작업 화면</button>
+              <button onClick={() => window.location.href = '?upload_id=' + encodeURIComponent(completionUploadId || (latestHistory?.upload_id || '')) + (completionHistId ? '&hist_id=' + encodeURIComponent(completionHistId) : '')} style={{ background: 'transparent', border: '1px solid #e2e8f0', color: '#64748b', borderRadius: '8px', padding: '0 14px', height: '34px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>🧰 작업 화면</button>
             </div>
           </div>
         </div>
         <div style={{ maxWidth: '100%', margin: '0 auto', padding: '36px 24px 80px' }}>
           <CompletionSummaryView
             uploadId={completionUploadId}
+            histId={completionHistId}
             seed={completionSeed}
             historyList={completionHistoryList}
             loading={completionLoading}
             error={completionError}
-            onOpenWorkbench={() => { window.location.href = '?upload_id=' + encodeURIComponent(completionUploadId || (latestHistory?.upload_id || '')); }}
+            onOpenWorkbench={() => { window.location.href = '?upload_id=' + encodeURIComponent(completionUploadId || (latestHistory?.upload_id || '')) + (completionHistId ? '&hist_id=' + encodeURIComponent(completionHistId) : ''); }}
             onOpenDashboard={() => { window.location.href = '?view=dashboard'; }}
             onNewUpload={() => { window.location.href = '?'; }}
           />

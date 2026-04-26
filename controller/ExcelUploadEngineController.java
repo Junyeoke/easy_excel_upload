@@ -353,6 +353,8 @@ public class ExcelUploadEngineController {
             } // ← return 추가
             else if ("get_history".equals(mode)) {
                 handleGetHistory(ds, params, result); 
+            }else if ("get_history_detail".equals(mode)) {
+                handleGetHistoryDetail(ds, params, result);
             }else if ("get_history_compare".equals(mode)) {
                 handleGetHistoryCompare(ds, params, result);
             }else if ("get_alert_config".equals(mode)) {
@@ -746,6 +748,25 @@ public class ExcelUploadEngineController {
                     (String) params.get("keyword"));
             result.put("status", "ok");
             result.put("list", list);
+        }
+    }
+
+    private void handleGetHistoryDetail(DataSource ds, Map<String, Object> params,
+            Map<String, Object> result) throws Exception {
+        String histId = (String) params.get("hist_id");
+        if (histId == null || histId.trim().isEmpty()) {
+            result.put("status", "err");
+            result.put("msg", "hist_id가 필요합니다.");
+            return;
+        }
+        try (Connection conn = ds.getConnection()) {
+            Map<String, Object> row = repository.getHistoryDetail(conn, histId.trim());
+            if (row == null) {
+                result.put("status", "none");
+                return;
+            }
+            result.put("status", "ok");
+            result.put("row", row);
         }
     }
 
@@ -1831,7 +1852,8 @@ private void handleClone(DataSource ds, Map<String, Object> params,
 
             // 이력 저장 실패는 업로드 성공/실패를 뒤집지 않고 경고로 노출한다.
             String failTypeJson = buildFailTypeJson(failedRowMsgMap);
-            String historySaveError = repository.insertHistory(conn, UUID.randomUUID().toString(),
+            String histId = UUID.randomUUID().toString();
+            String historySaveError = repository.insertHistory(conn, histId,
                     (String) params.get("job_name"), (String) params.get("file_name"),
                     successCnt, failCnt, errFileName, nowFuncU, uploadId, configSnapshotHash, failTypeJson,
                     structJson, mapJson, preSqlJson, postSqlJson, rowSqlJson, retryMode, retryReasonTypes);
@@ -1862,6 +1884,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
                     result.put("success_cnt", successCnt);
                     result.put("fail_cnt", failCnt);
                     result.put("error_file", errFileName);
+                    result.put("hist_id", histId);
                     if (!failedRowMsgMap.isEmpty()) {
                         result.put("failed_row_msgs", failedRowMsgMap);
                     }
@@ -1883,6 +1906,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             result.put("success_cnt", successCnt);
             result.put("fail_cnt", failCnt);
             result.put("error_file", errFileName);
+            result.put("hist_id", histId);
             result.put("upload_id", uploadId);
             result.put("config_snapshot_hash", configSnapshotHash);
             if (jobId != null) {

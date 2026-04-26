@@ -335,6 +335,34 @@ input[type="number"]:focus {
 .btn-del { background: var(--danger-light); color: var(--danger); }
 .btn-del:hover { background: #FFD6D9; }
 
+.completion-copy-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.completion-copy-btn:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+  transform: translateY(-1px);
+}
+
+.completion-copy-btn:active {
+  transform: translateY(0);
+}
+
 /* ======================================= */
 /* FILE DROP ZONE                          */
 /* ======================================= */

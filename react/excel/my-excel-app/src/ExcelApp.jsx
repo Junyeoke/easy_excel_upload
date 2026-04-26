@@ -230,26 +230,34 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
 
           <div className="result-list-card">
             <div className="result-list-title">진단 정보</div>
-            <div className="upload-stats-grid" style={{ marginTop: '10px' }}>
+              <div className="upload-stats-grid" style={{ marginTop: '10px' }}>
               <div className="upload-stat-card">
-                <div className="upload-stat-label">파일명</div>
-                <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{latest?.file_name || targetFileName || '-'}</div>
-                <button className="itsm-mini-btn" style={{ marginTop: '8px' }} onClick={() => copyValue('파일명', latest?.file_name || targetFileName || '')}>복사</button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                  <div className="upload-stat-label">파일명</div>
+                  <button type="button" className="completion-copy-btn" title="파일명 복사" aria-label="파일명 복사" onClick={() => copyValue('파일명', latest?.file_name || targetFileName || '')}><span aria-hidden="true">⧉</span></button>
+                </div>
+                <div className="upload-stat-note" style={{ wordBreak: 'break-all', marginTop: '6px' }}>{latest?.file_name || targetFileName || '-'}</div>
               </div>
               <div className="upload-stat-card">
-                <div className="upload-stat-label">작업 ID</div>
-                <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetJobId || latest?.job_id || '-'}</div>
-                <button className="itsm-mini-btn" style={{ marginTop: '8px' }} onClick={() => copyValue('작업 ID', targetJobId || latest?.job_id || '')}>복사</button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                  <div className="upload-stat-label">작업 ID</div>
+                  <button type="button" className="completion-copy-btn" title="작업 ID 복사" aria-label="작업 ID 복사" onClick={() => copyValue('작업 ID', targetJobId || latest?.job_id || '')}><span aria-hidden="true">⧉</span></button>
+                </div>
+                <div className="upload-stat-note" style={{ wordBreak: 'break-all', marginTop: '6px' }}>{targetJobId || latest?.job_id || '-'}</div>
               </div>
               <div className="upload-stat-card">
-                <div className="upload-stat-label">히스토리 ID</div>
-                <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetHistId || latest?.hist_id || snapshot?.hist_id || '-'}</div>
-                <button className="itsm-mini-btn" style={{ marginTop: '8px' }} onClick={() => copyValue('히스토리 ID', targetHistId || latest?.hist_id || snapshot?.hist_id || '')}>복사</button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                  <div className="upload-stat-label">히스토리 ID</div>
+                  <button type="button" className="completion-copy-btn" title="히스토리 ID 복사" aria-label="히스토리 ID 복사" onClick={() => copyValue('히스토리 ID', targetHistId || latest?.hist_id || snapshot?.hist_id || '')}><span aria-hidden="true">⧉</span></button>
+                </div>
+                <div className="upload-stat-note" style={{ wordBreak: 'break-all', marginTop: '6px' }}>{targetHistId || latest?.hist_id || snapshot?.hist_id || '-'}</div>
               </div>
               <div className="upload-stat-card">
-                <div className="upload-stat-label">업로드 ID</div>
-                <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{targetUploadId || latest?.upload_id || snapshot?.upload_id || '-'}</div>
-                <button className="itsm-mini-btn" style={{ marginTop: '8px' }} onClick={() => copyValue('업로드 ID', targetUploadId || latest?.upload_id || snapshot?.upload_id || '')}>복사</button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                  <div className="upload-stat-label">업로드 ID</div>
+                  <button type="button" className="completion-copy-btn" title="업로드 ID 복사" aria-label="업로드 ID 복사" onClick={() => copyValue('업로드 ID', targetUploadId || latest?.upload_id || snapshot?.upload_id || '')}><span aria-hidden="true">⧉</span></button>
+                </div>
+                <div className="upload-stat-note" style={{ wordBreak: 'break-all', marginTop: '6px' }}>{targetUploadId || latest?.upload_id || snapshot?.upload_id || '-'}</div>
               </div>
             </div>
           </div>

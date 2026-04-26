@@ -116,12 +116,18 @@ const MyMultiSelect = ({ options = [], value = [], onChange, placeholder, isDisa
 const readCompletionSnapshot = () => {
   try {
     const empId = getCurrentEmpId();
-    const raw = empId
-      ? localStorage.getItem(getScopedStorageKey(COMPLETION_SNAPSHOT_KEY, empId))
-      : localStorage.getItem(COMPLETION_SNAPSHOT_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : null;
+    const scopedRaw = empId ? localStorage.getItem(getScopedStorageKey(COMPLETION_SNAPSHOT_KEY, empId)) : null;
+    const fallbackRaw = localStorage.getItem(COMPLETION_SNAPSHOT_KEY);
+    const candidates = [scopedRaw, fallbackRaw].filter(Boolean);
+    for (const raw of candidates) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        if (!empId || !parsed.uploader_emp_id || String(parsed.uploader_emp_id) === String(empId)) {
+          return parsed;
+        }
+      }
+    }
+    return null;
   } catch {
     return null;
   }
@@ -463,12 +469,18 @@ function ExcelApp() {
   const readSharedUploadState = () => {
     try {
       const empId = getCurrentEmpId();
-      const raw = empId
-        ? localStorage.getItem(getScopedStorageKey(ACTIVE_UPLOAD_STATE_KEY, empId))
-        : localStorage.getItem(ACTIVE_UPLOAD_STATE_KEY);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === 'object' ? parsed : {};
+      const scopedRaw = empId ? localStorage.getItem(getScopedStorageKey(ACTIVE_UPLOAD_STATE_KEY, empId)) : null;
+      const fallbackRaw = localStorage.getItem(ACTIVE_UPLOAD_STATE_KEY);
+      const candidates = [scopedRaw, fallbackRaw].filter(Boolean);
+      for (const raw of candidates) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          if (!empId || !parsed.uploader_emp_id || String(parsed.uploader_emp_id) === String(empId)) {
+            return parsed;
+          }
+        }
+      }
+      return {};
     } catch {
       return {};
     }

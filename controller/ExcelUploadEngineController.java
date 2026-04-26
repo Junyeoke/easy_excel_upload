@@ -24,6 +24,17 @@ import java.util.*;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.concurrent.ConcurrentHashMap;
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.SecureRandom;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 /**
  * =====================================================================
@@ -45,6 +56,9 @@ import java.security.MessageDigest;
 public class ExcelUploadEngineController {
 
     private static final Logger log = LoggerFactory.getLogger(ExcelUploadEngineController.class);
+    private static final SecureRandom ALERT_RANDOM = new SecureRandom();
+    private static final long ALERT_DEDUP_WINDOW_MS = 5 * 60 * 1000L;
+    private static final Map<String, Long> ALERT_DEDUP_MAP = new ConcurrentHashMap<>();
 
     private final ExcelUploadEngineService service;
     private final ExcelUploadEngineRepository repository;
@@ -344,6 +358,12 @@ public class ExcelUploadEngineController {
                 handleGetHistory(ds, params, result); 
             }else if ("get_history_compare".equals(mode)) {
                 handleGetHistoryCompare(ds, params, result);
+            }else if ("get_alert_config".equals(mode)) {
+                handleGetAlertConfig(params, result);
+            }else if ("save_alert_config".equals(mode)) {
+                handleSaveAlertConfig(params, result);
+            }else if ("send_alert".equals(mode)) {
+                handleSendAlert(params, result);
             }else if ("progress".equals(mode)) {
                 handleProgress(request, params, result); 
             }else if ("cancel".equals(mode)) {
@@ -882,6 +902,232 @@ public class ExcelUploadEngineController {
         out.put(path, String.valueOf(node));
     }
 
+    private void handleGetAlertConfig(Map<String, Object> params, Map<String, Object> result) {
+        String uploadId = (String) params.get("upload_id");
+        if (uploadId == null || uploadId.trim().isEmpty()) {
+            result.put("status", "err");
+            result.put("msg", "upload_id가 필요합니다.");
+            return;
+        }
+        try {
+            Map<String, Object> cfg = loadAlertConfig(uploadId.trim());
+            result.put("status", "ok");
+            result.put("enabled", isTruthy(cfg.get("enabled")));
+            result.put("fail_rate_threshold", String.valueOf(cfg.getOrDefault("fail_rate_threshold", "30")));
+            result.put("fail_count_threshold", String.valueOf(cfg.getOrDefault("fail_count_threshold", "50")));
+            result.put("webhook_url", decryptAlertValue((String) cfg.get("webhook_url_enc")));
+        } catch (Throwable e) {
+            result.put("status", "err");
+            result.put("msg", "알림 설정 조회 실패: " + e.getMessage());
+        }
+    }
+
+    private void handleSaveAlertConfig(Map<String, Object> params, Map<String, Object> result) {
+        String uploadId = (String) params.get("upload_id");
+        if (uploadId == null || uploadId.trim().isEmpty()) {
+            result.put("status", "err");
+            result.put("msg", "upload_id가 필요합니다.");
+            return;
+        }
+        try {
+            Map<String, Object> cfg = new LinkedHashMap<>();
+            cfg.put("enabled", isTruthy(params.get("enabled")) ? "Y" : "N");
+            cfg.put("fail_rate_threshold", String.valueOf(parseIntParam((String) params.get("fail_rate_threshold"), 30)));
+            cfg.put("fail_count_threshold", String.valueOf(parseIntParam((String) params.get("fail_count_threshold"), 50)));
+            String webhookUrl = (String) params.get("webhook_url");
+            cfg.put("webhook_url_enc", encryptAlertValue(webhookUrl == null ? "" : webhookUrl.trim()));
+            saveAlertConfig(uploadId.trim(), cfg);
+            result.put("status", "ok");
+        } catch (Throwable e) {
+            result.put("status", "err");
+            result.put("msg", "알림 설정 저장 실패: " + e.getMessage());
+        }
+    }
+
+    private void handleSendAlert(Map<String, Object> params, Map<String, Object> result) {
+        String uploadId = (String) params.get("upload_id");
+        String eventType = (String) params.get("event_type");
+        if (uploadId == null || uploadId.trim().isEmpty()) {
+            result.put("status", "err");
+            result.put("msg", "upload_id가 필요합니다.");
+            return;
+        }
+        if (eventType == null || eventType.trim().isEmpty()) {
+            result.put("status", "err");
+            result.put("msg", "event_type이 필요합니다.");
+            return;
+        }
+        try {
+            Map<String, Object> cfg = loadAlertConfig(uploadId.trim());
+            if (!isTruthy(cfg.get("enabled"))) {
+                result.put("status", "skip");
+                result.put("msg", "알림 비활성화");
+                return;
+            }
+            String webhookUrl = decryptAlertValue((String) cfg.get("webhook_url_enc"));
+            if (webhookUrl == null || webhookUrl.trim().isEmpty()) {
+                result.put("status", "skip");
+                result.put("msg", "Webhook URL 없음");
+                return;
+            }
+
+            String payloadJson = (String) params.get("payload_json");
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("event_type", eventType);
+            payload.put("upload_id", uploadId);
+            payload.put("event_time", String.valueOf(System.currentTimeMillis()));
+            if (payloadJson != null && !payloadJson.trim().isEmpty()) {
+                try {
+                    Object parsed = service.parseJson(payloadJson);
+                    if (parsed instanceof Map) {
+                        payload.putAll((Map<String, Object>) parsed);
+                    }
+                } catch (Throwable ignore) {
+                }
+            }
+
+            String dedupKey = (String) params.get("dedup_key");
+            if (dedupKey == null || dedupKey.trim().isEmpty()) {
+                dedupKey = sha256Hex(uploadId + "|" + eventType + "|" + jsonToString(payload));
+            }
+            long now = System.currentTimeMillis();
+            cleanupDedup(now);
+            Long last = ALERT_DEDUP_MAP.get(dedupKey);
+            if (last != null && now - last < ALERT_DEDUP_WINDOW_MS) {
+                result.put("status", "skip");
+                result.put("msg", "중복 알림 억제");
+                return;
+            }
+
+            boolean sent = sendWebhookWithRetry(webhookUrl, jsonToString(payload), 3);
+            if (!sent) {
+                result.put("status", "err");
+                result.put("msg", "알림 전송 실패");
+                return;
+            }
+            ALERT_DEDUP_MAP.put(dedupKey, now);
+            result.put("status", "ok");
+        } catch (Throwable e) {
+            result.put("status", "err");
+            result.put("msg", "알림 전송 오류: " + e.getMessage());
+        }
+    }
+
+    private Path getAlertConfigPath(String uploadId) {
+        String safeId = uploadId.replaceAll("[^a-zA-Z0-9_-]", "_");
+        String baseDir = System.getProperty("java.io.tmpdir");
+        return Paths.get(baseDir, "excel_upload_alert_cfg_" + safeId + ".json");
+    }
+
+    private Map<String, Object> loadAlertConfig(String uploadId) throws Exception {
+        Path p = getAlertConfigPath(uploadId);
+        if (!Files.exists(p)) {
+            return new LinkedHashMap<>();
+        }
+        String raw = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
+        Object parsed = service.parseJson(raw);
+        if (parsed instanceof Map) {
+            return new LinkedHashMap<>((Map<String, Object>) parsed);
+        }
+        return new LinkedHashMap<>();
+    }
+
+    private void saveAlertConfig(String uploadId, Map<String, Object> cfg) throws Exception {
+        Path p = getAlertConfigPath(uploadId);
+        Files.write(p, jsonToString(cfg).getBytes(StandardCharsets.UTF_8),
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+    }
+
+    private SecretKeySpec getAlertKey() throws Exception {
+        String secret = System.getenv("EXCEL_ALERT_SECRET");
+        if (secret == null || secret.trim().isEmpty()) {
+            secret = System.getProperty("excel.alert.secret");
+        }
+        if (secret == null || secret.trim().isEmpty()) {
+            secret = "excel-alert-default-key-change-me";
+        }
+        byte[] keySrc = MessageDigest.getInstance("SHA-256").digest(secret.getBytes(StandardCharsets.UTF_8));
+        byte[] key = Arrays.copyOf(keySrc, 16);
+        return new SecretKeySpec(key, "AES");
+    }
+
+    private String encryptAlertValue(String plain) throws Exception {
+        if (plain == null || plain.isEmpty()) {
+            return "";
+        }
+        byte[] iv = new byte[12];
+        ALERT_RANDOM.nextBytes(iv);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, getAlertKey(), new GCMParameterSpec(128, iv));
+        byte[] enc = cipher.doFinal(plain.getBytes(StandardCharsets.UTF_8));
+        byte[] all = new byte[iv.length + enc.length];
+        System.arraycopy(iv, 0, all, 0, iv.length);
+        System.arraycopy(enc, 0, all, iv.length, enc.length);
+        return Base64.getEncoder().encodeToString(all);
+    }
+
+    private String decryptAlertValue(String encoded) throws Exception {
+        if (encoded == null || encoded.trim().isEmpty()) {
+            return "";
+        }
+        byte[] all = Base64.getDecoder().decode(encoded);
+        if (all.length < 13) {
+            return "";
+        }
+        byte[] iv = Arrays.copyOfRange(all, 0, 12);
+        byte[] enc = Arrays.copyOfRange(all, 12, all.length);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, getAlertKey(), new GCMParameterSpec(128, iv));
+        byte[] dec = cipher.doFinal(enc);
+        return new String(dec, StandardCharsets.UTF_8);
+    }
+
+    private void cleanupDedup(long now) {
+        for (Iterator<Map.Entry<String, Long>> it = ALERT_DEDUP_MAP.entrySet().iterator(); it.hasNext();) {
+            Map.Entry<String, Long> e = it.next();
+            if (now - e.getValue() > ALERT_DEDUP_WINDOW_MS) {
+                it.remove();
+            }
+        }
+    }
+
+    private boolean sendWebhookWithRetry(String webhookUrl, String bodyJson, int maxTry) {
+        int[] delays = new int[]{200, 700, 1600};
+        for (int i = 0; i < maxTry; i++) {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(webhookUrl);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(4000);
+                conn.setReadTimeout(6000);
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(bodyJson.getBytes(StandardCharsets.UTF_8));
+                }
+                int code = conn.getResponseCode();
+                if (code >= 200 && code < 300) {
+                    return true;
+                }
+            } catch (Throwable ignore) {
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+            if (i < maxTry - 1) {
+                try {
+                    Thread.sleep(delays[Math.min(i, delays.length - 1)]);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
     /**
  * 설정 삭제
  */
@@ -1167,6 +1413,8 @@ private void handleClone(DataSource ds, Map<String, Object> params,
         String postSqlJson = decodeParam(params, "post_sql_json_b64", "post_sql_json");
         String rowSqlJson = decodeParam(params, "row_sql_json_b64", "row_sql_json");
         String uploadId = (String) params.get("upload_id");
+        String retryMode = (String) params.get("retry_mode");
+        String retryReasonTypes = (String) params.get("retry_reason_types");
         String configSnapshotHash = sha256Hex(
                 String.valueOf(structJson == null ? "" : structJson) + "||"
                         + String.valueOf(mapJson == null ? "" : mapJson) + "||"
@@ -1546,7 +1794,7 @@ private void handleClone(DataSource ds, Map<String, Object> params,
             String historySaveError = repository.insertHistory(conn, UUID.randomUUID().toString(),
                     (String) params.get("job_name"), (String) params.get("file_name"),
                     successCnt, failCnt, errFileName, nowFuncU, uploadId, configSnapshotHash, failTypeJson,
-                    structJson, mapJson, preSqlJson, postSqlJson, rowSqlJson);
+                    structJson, mapJson, preSqlJson, postSqlJson, rowSqlJson, retryMode, retryReasonTypes);
             if (historySaveError != null) {
                 String historyWarning = "업로드 이력 저장 실패: " + historySaveError;
                 addLog.accept("⚠ " + historyWarning);

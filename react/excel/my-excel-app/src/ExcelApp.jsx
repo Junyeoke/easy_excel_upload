@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import Select from 'react-select';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -7,8 +7,8 @@ import './App.css';
 
 import CodeMirror from '@uiw/react-codemirror';
 import { sql } from '@codemirror/lang-sql';
-import AdminWizardScreen from './components/AdminWizardScreen';
-import UserUploadScreen from './components/UserUploadScreen';
+const AdminWizardScreen = lazy(() => import('./components/AdminWizardScreen'));
+const UserUploadScreen = lazy(() => import('./components/UserUploadScreen'));
 
 const API_URL = "/api/excel/engine";
 
@@ -125,6 +125,8 @@ function ExcelApp() {
   const uploadLogsRef = useRef([]); // 로그 실시간 참조용
   const sseCompletedRef = useRef(false); // SSE done 수신 여부 추적 (JEUS 타임아웃 대응)
   const uploadWatchdogRef = useRef({ timerId: null, lastEventAt: 0, warned: false });
+  const alertCfgLoadedRef = useRef(false);
+  const alertCfgSaveTimerRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
   const [sampleFile, setSampleFile] = useState(null);
   const [sampleFileName, setSampleFileName] = useState('');
@@ -148,21 +150,22 @@ function ExcelApp() {
     if (m.includes('timeout') || m.includes('timed out')) return '타임아웃';
     return '기타';
   };
-  const sendOpsAlert = async (eventType, payload = {}) => {
-    if (!alertEnabled || !alertWebhookUrl?.trim()) return;
+  const sendOpsAlert = async (eventType, payload = {}, dedupKey = '') => {
+    if (!alertEnabled || !uploadId) return;
     try {
-      await fetch(alertWebhookUrl.trim(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event_type: eventType,
-          event_time: new Date().toISOString(),
-          upload_id: uploadId || null,
-          job_name: jobName || null,
-          ...payload,
-        }),
-      });
-      setUploadLogs(prev => [...prev, `📣 운영 알림 전송 완료 (${eventType})`].slice(-120));
+      const body = {
+        mode: 'send_alert',
+        upload_id: uploadId,
+        event_type: eventType,
+        payload_json: JSON.stringify({ event_time: new Date().toISOString(), job_name: jobName || null, ...payload }),
+      };
+      if (dedupKey) body.dedup_key = dedupKey;
+      const res = await post(API_URL, getParams(body));
+      if (res.status === 'ok' || res.status === 'skip') {
+        setUploadLogs(prev => [...prev, `📣 운영 알림 처리 (${eventType}): ${res.msg || res.status}`].slice(-120));
+        return;
+      }
+      setUploadLogs(prev => [...prev, `⚠ 운영 알림 처리 실패: ${res.msg || 'server error'}`].slice(-120));
     } catch (e) {
       setUploadLogs(prev => [...prev, `⚠ 운영 알림 전송 실패: ${e.message || 'network error'}`].slice(-120));
     }
@@ -210,31 +213,40 @@ function ExcelApp() {
   useEffect(() => { if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: 'smooth' }); }, [uploadLogs]);
   useEffect(() => { setMappingPage(1); }, [searchTerm, activeAlias]);
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('excel_upload_alert_config');
-      if (!raw) return;
-      const cfg = JSON.parse(raw);
-      if (typeof cfg.enabled === 'boolean') setAlertEnabled(cfg.enabled);
-      if (typeof cfg.webhook_url === 'string') setAlertWebhookUrl(cfg.webhook_url);
-      if (Number.isFinite(Number(cfg.fail_rate_threshold))) setAlertFailRateThreshold(Number(cfg.fail_rate_threshold));
-      if (Number.isFinite(Number(cfg.fail_count_threshold))) setAlertFailCountThreshold(Number(cfg.fail_count_threshold));
-    } catch {}
-  }, []);
+    if (!uploadId) return;
+    alertCfgLoadedRef.current = false;
+    post(API_URL, getParams({ mode: 'get_alert_config', upload_id: uploadId })).then((res) => {
+      if (res.status !== 'ok') {
+        alertCfgLoadedRef.current = true;
+        return;
+      }
+      setAlertEnabled(!!res.enabled);
+      setAlertWebhookUrl(res.webhook_url || '');
+      setAlertFailRateThreshold(Number(res.fail_rate_threshold) || 30);
+      setAlertFailCountThreshold(Number(res.fail_count_threshold) || 50);
+      alertCfgLoadedRef.current = true;
+    });
+  }, [uploadId]);
   useEffect(() => {
-    try {
-      localStorage.setItem('excel_upload_alert_config', JSON.stringify({
-        enabled: alertEnabled,
-        webhook_url: alertWebhookUrl,
-        fail_rate_threshold: alertFailRateThreshold,
-        fail_count_threshold: alertFailCountThreshold,
+    if (!uploadId || !alertCfgLoadedRef.current) return;
+    if (alertCfgSaveTimerRef.current) clearTimeout(alertCfgSaveTimerRef.current);
+    alertCfgSaveTimerRef.current = setTimeout(() => {
+      post(API_URL, getParams({
+        mode: 'save_alert_config',
+        upload_id: uploadId,
+        enabled: alertEnabled ? 'Y' : 'N',
+        webhook_url: alertWebhookUrl || '',
+        fail_rate_threshold: String(Number(alertFailRateThreshold) || 30),
+        fail_count_threshold: String(Number(alertFailCountThreshold) || 50),
       }));
-    } catch {}
-  }, [alertEnabled, alertWebhookUrl, alertFailRateThreshold, alertFailCountThreshold]);
+    }, 500);
+  }, [uploadId, alertEnabled, alertWebhookUrl, alertFailRateThreshold, alertFailCountThreshold]);
   useEffect(() => () => {
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
     }
+    if (alertCfgSaveTimerRef.current) clearTimeout(alertCfgSaveTimerRef.current);
     stopUploadWatchdog();
   }, []);
 
@@ -921,6 +933,10 @@ function ExcelApp() {
     }
     if (Object.keys(editedCells).length > 0) fd.append('edited_rows_b64', encodeSafeBase64(JSON.stringify(editedCells)));
     if (useTargetRows) fd.append('target_rows_b64', encodeSafeBase64(JSON.stringify(retryTargetRows)));
+    fd.append('retry_mode', retryMode);
+    if (retryMode === 'fail_type' && retryFailTypes.length > 0) {
+      fd.append('retry_reason_types', retryFailTypes.join(','));
+    }
 
     const tid = toast.loading(useTargetRows ? '🎯 실패행만 재처리 중...' : '🚀 서버 전송 중...', { position: 'top-left' });
     try {
@@ -950,7 +966,7 @@ function ExcelApp() {
             fail_cnt: failCnt,
             fail_rate: Number(failRate.toFixed(2)),
             retry_mode: retryMode,
-          });
+          }, `${uploadId}|${retryMode}|upload_warning|${file?.name || ''}|${successCnt}|${failCnt}`);
         }
 
         if (res.status === 'partial') {
@@ -1015,7 +1031,7 @@ function ExcelApp() {
           file_name: file?.name || '',
           msg: res.msg || '',
           retry_mode: retryMode,
-        });
+        }, `${uploadId}|${retryMode}|upload_error|${file?.name || ''}|${res.msg || ''}`);
         const rowMatch = res.msg?.match(/엑셀 \[ (\d+) 번째 행 \]/);
         if (rowMatch && file) {
           const errRowNum = parseInt(rowMatch[1]);
@@ -1061,7 +1077,7 @@ function ExcelApp() {
       void sendOpsAlert('upload_network_error', {
         file_name: file?.name || '',
         retry_mode: retryMode,
-      });
+      }, `${uploadId}|${retryMode}|upload_network_error|${file?.name || ''}`);
     }
   };
 
@@ -1074,7 +1090,7 @@ function ExcelApp() {
       if (res.status === 'ok') {
         setUploadLogs(prev => [...prev, '🛑 취소 요청이 접수되었습니다. 서버가 현재 작업을 정리합니다.']);
         toast.info('취소 요청을 보냈습니다.', { position: 'top-left' });
-        void sendOpsAlert('cancel_requested', { job_id: uploadJobId });
+        void sendOpsAlert('cancel_requested', { job_id: uploadJobId }, `${uploadId}|cancel_requested|${uploadJobId}`);
       } else {
         setUploadLogs(prev => [...prev, `⚠ 취소 요청 실패: ${res.msg || '작업 없음'}`]);
         setCancellingUpload(false);
@@ -1340,7 +1356,24 @@ function ExcelApp() {
   const renderStep = () => {
     if (isAdmin) {
       return (
-        <AdminWizardScreen
+        <Suspense fallback={<div style={{ padding: '20px', color: '#64748b' }}>관리자 화면 로딩 중...</div>}>
+          <AdminWizardScreen
+            steps={steps}
+            currentStep={currentStep}
+            isLastStep={isLastStep}
+            goPrev={goPrev}
+            goNext={goNext}
+            canGoNext={canGoNext()}
+            nextLabel={nextLabel}
+            adminStepProps={adminStepProps}
+          />
+        </Suspense>
+      );
+    }
+
+    return (
+      <Suspense fallback={<div style={{ padding: '20px', color: '#64748b' }}>업로드 화면 로딩 중...</div>}>
+        <UserUploadScreen
           steps={steps}
           currentStep={currentStep}
           isLastStep={isLastStep}
@@ -1348,23 +1381,10 @@ function ExcelApp() {
           goNext={goNext}
           canGoNext={canGoNext()}
           nextLabel={nextLabel}
-          adminStepProps={adminStepProps}
+          hideNextBtn={hideNextBtn}
+          userStepProps={userStepProps}
         />
-      );
-    }
-
-    return (
-      <UserUploadScreen
-        steps={steps}
-        currentStep={currentStep}
-        isLastStep={isLastStep}
-        goPrev={goPrev}
-        goNext={goNext}
-        canGoNext={canGoNext()}
-        nextLabel={nextLabel}
-        hideNextBtn={hideNextBtn}
-        userStepProps={userStepProps}
-      />
+      </Suspense>
     );
   };
 

@@ -83,6 +83,8 @@ export default function ExcelDashboard() {
   const [compareResult, setCompareResult] = useState(null);
   const [compareModalOpen, setCompareModalOpen] = useState(false);
   const [compareLoading, setCompareLoading] = useState(false);
+  const [compareDiffTypeFilter, setCompareDiffTypeFilter] = useState('all');
+  const [compareSearch, setCompareSearch] = useState('');
 
   const isTestUser = (() => {
     try {
@@ -239,11 +241,35 @@ export default function ExcelDashboard() {
   const toggleCompareId = (histId) => {
     setCompareResult(null);
     setCompareModalOpen(false);
+    setCompareDiffTypeFilter('all');
+    setCompareSearch('');
     setCompareHistIds((prev) => {
       if (prev.includes(histId)) return prev.filter((id) => id !== histId);
       if (prev.length >= 2) return [prev[1], histId];
       return [...prev, histId];
     });
+  };
+
+  const exportCompareCsv = () => {
+    if (!compareResult?.section_diffs) return;
+    const rows = [['섹션', '유형', '경로', '이전값', '이후값']];
+    Object.entries(compareResult.section_diffs).forEach(([section, diff]) => {
+      const sectionName = sectionLabelMap[section] || section;
+      const items = Array.isArray(diff?.items) ? diff.items : [];
+      items.forEach((it) => {
+        const typeName = diffTypeLabelMap[it.type] || it.type;
+        rows.push([sectionName, typeName, prettyPath(it.path), it.left || '', it.right || '']);
+      });
+    });
+    const csv = rows
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `snapshot_diff_${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   };
 
   const notify = (type, text) => {
@@ -641,11 +667,32 @@ export default function ExcelDashboard() {
                   {compareResult.same_hash ? '두 실행의 스냅샷이 동일합니다.' : '두 실행의 스냅샷에 변경이 있습니다.'}
                 </div>
               </div>
-              <button className="itsm-modal-close" onClick={() => setCompareModalOpen(false)}>닫기</button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button className="itsm-modal-close" onClick={exportCompareCsv}>CSV 내보내기</button>
+                <button className="itsm-modal-close" onClick={() => setCompareModalOpen(false)}>닫기</button>
+              </div>
             </div>
             <div className="itsm-modal-body">
               <div style={{ fontSize: 12, color: '#374151', marginBottom: 10 }}>
                 기준 A: {dt(compareResult.left?.reg_dttm)} / 기준 B: {dt(compareResult.right?.reg_dttm)}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                <select
+                  value={compareDiffTypeFilter}
+                  onChange={(e) => setCompareDiffTypeFilter(e.target.value)}
+                  className="itsm-filter-select"
+                >
+                  <option value="all">전체 유형</option>
+                  <option value="added">추가</option>
+                  <option value="removed">삭제</option>
+                  <option value="changed">변경</option>
+                </select>
+                <input
+                  className="itsm-filter-input"
+                  value={compareSearch}
+                  onChange={(e) => setCompareSearch(e.target.value)}
+                  placeholder="경로/값 검색"
+                />
               </div>
 
               {(compareResult.changed_sections || []).length > 0 && (
@@ -657,7 +704,12 @@ export default function ExcelDashboard() {
               )}
 
               {Object.entries(compareResult.section_diffs || {}).map(([section, diff]) => {
-                const items = Array.isArray(diff?.items) ? diff.items : [];
+                const items = (Array.isArray(diff?.items) ? diff.items : []).filter((it) => {
+                  if (compareDiffTypeFilter !== 'all' && it.type !== compareDiffTypeFilter) return false;
+                  if (!compareSearch.trim()) return true;
+                  const q = compareSearch.trim().toLowerCase();
+                  return `${it.path || ''} ${it.left || ''} ${it.right || ''}`.toLowerCase().includes(q);
+                });
                 return (
                   <div key={section} style={{ marginBottom: 14 }}>
                     <div style={{ fontWeight: 700, color: '#1e3a8a', marginBottom: 6 }}>

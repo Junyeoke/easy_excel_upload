@@ -366,7 +366,8 @@ public class ExcelUploadEngineRepository {
                                 int successCnt, int failCnt, String errorFile, String nowFunc,
                                 String uploadId, String configSnapshotHash, String failTypeJson,
                                 String structSnapshotJson, String mappingSnapshotJson,
-                                String preSqlSnapshotJson, String postSqlSnapshotJson, String rowSqlSnapshotJson) {
+                                String preSqlSnapshotJson, String postSqlSnapshotJson, String rowSqlSnapshotJson,
+                                String retryMode, String retryReasonTypes) {
         String normalizedJobName = jobName == null || jobName.trim().isEmpty() ? "일반 데이터 업로드" : jobName;
         try {
             DatabaseMetaData meta = conn.getMetaData();
@@ -378,6 +379,8 @@ public class ExcelUploadEngineRepository {
             boolean hasPreSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_PRE_SQL_JSON");
             boolean hasPostSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_POST_SQL_JSON");
             boolean hasRowSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_ROW_SQL_JSON");
+            boolean hasRetryModeCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "RETRY_MODE");
+            boolean hasRetryReasonTypesCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "RETRY_REASON_TYPES");
 
             StringBuilder colSb = new StringBuilder("HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE");
             StringBuilder valSb = new StringBuilder("?, ?, ?, ?, ?, ?");
@@ -429,6 +432,16 @@ public class ExcelUploadEngineRepository {
                 valSb.append(", ?");
                 sqlParams.add(rowSqlSnapshotJson);
             }
+            if (hasRetryModeCol) {
+                colSb.append(", RETRY_MODE");
+                valSb.append(", ?");
+                sqlParams.add(retryMode);
+            }
+            if (hasRetryReasonTypesCol) {
+                colSb.append(", RETRY_REASON_TYPES");
+                valSb.append(", ?");
+                sqlParams.add(retryReasonTypes);
+            }
 
             colSb.append(", REG_DTTM");
             valSb.append(", ").append(nowFunc);
@@ -466,6 +479,12 @@ public class ExcelUploadEngineRepository {
                 if (hasRowSqlSnapshotCol) {
                     histPs.setString(idx++, rowSqlSnapshotJson);
                 }
+                if (hasRetryModeCol) {
+                    histPs.setString(idx++, retryMode);
+                }
+                if (hasRetryReasonTypesCol) {
+                    histPs.setString(idx++, retryReasonTypes);
+                }
                 sqlLog.info(renderSql(sql, sqlParams));
                 histPs.executeUpdate();
             }
@@ -488,11 +507,15 @@ public class ExcelUploadEngineRepository {
         boolean hasUploadIdCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "UPLOAD_ID");
         boolean hasSnapshotHashCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_SNAPSHOT_HASH");
         boolean hasFailTypeJsonCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "FAIL_TYPE_JSON");
+        boolean hasRetryModeCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "RETRY_MODE");
+        boolean hasRetryReasonTypesCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "RETRY_REASON_TYPES");
 
         StringBuilder sql = new StringBuilder("SELECT HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM");
         if (hasUploadIdCol) sql.append(", UPLOAD_ID");
         if (hasSnapshotHashCol) sql.append(", CONFIG_SNAPSHOT_HASH");
         if (hasFailTypeJsonCol) sql.append(", FAIL_TYPE_JSON");
+        if (hasRetryModeCol) sql.append(", RETRY_MODE");
+        if (hasRetryReasonTypesCol) sql.append(", RETRY_REASON_TYPES");
         sql.append(" FROM ESO_EXCEL_UPLOAD_HISTORY WHERE 1=1");
 
         List<Object> bindParams = new ArrayList<>();
@@ -541,6 +564,8 @@ public class ExcelUploadEngineRepository {
                     if (hasUploadIdCol) row.put("upload_id", rs.getString("UPLOAD_ID"));
                     if (hasSnapshotHashCol) row.put("config_snapshot_hash", rs.getString("CONFIG_SNAPSHOT_HASH"));
                     if (hasFailTypeJsonCol) row.put("fail_type_json", rs.getString("FAIL_TYPE_JSON"));
+                    if (hasRetryModeCol) row.put("retry_mode", rs.getString("RETRY_MODE"));
+                    if (hasRetryReasonTypesCol) row.put("retry_reason_types", rs.getString("RETRY_REASON_TYPES"));
                     list.add(row);
                 }
             }

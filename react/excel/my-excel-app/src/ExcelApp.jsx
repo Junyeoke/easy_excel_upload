@@ -12,6 +12,17 @@ const API_URL = "/api/excel/engine";
 const ACTIVE_UPLOAD_STATE_KEY = 'excel_upload_active_state_v1';
 const ACTIVE_UPLOAD_HEARTBEAT_MS = 3000;
 const COMPLETION_SNAPSHOT_KEY = 'excel_upload_last_completion_v1';
+const getCurrentEmpId = () => {
+  try {
+    return window.$egene?._user?.emp_id || window.$egene?.emp_id || '';
+  } catch {
+    return '';
+  }
+};
+const getScopedStorageKey = (baseKey, empId = getCurrentEmpId()) => {
+  const id = String(empId || '').trim();
+  return id ? `${baseKey}::${encodeURIComponent(id)}` : baseKey;
+};
 
 // ─────────────────────────────────────────────
 // 공통 서브 컴포넌트
@@ -104,7 +115,10 @@ const MyMultiSelect = ({ options = [], value = [], onChange, placeholder, isDisa
 
 const readCompletionSnapshot = () => {
   try {
-    const raw = localStorage.getItem(COMPLETION_SNAPSHOT_KEY);
+    const empId = getCurrentEmpId();
+    const raw = empId
+      ? localStorage.getItem(getScopedStorageKey(COMPLETION_SNAPSHOT_KEY, empId))
+      : localStorage.getItem(COMPLETION_SNAPSHOT_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : null;
@@ -115,7 +129,9 @@ const readCompletionSnapshot = () => {
 
 const writeCompletionSnapshot = (snapshot) => {
   try {
-    localStorage.setItem(COMPLETION_SNAPSHOT_KEY, JSON.stringify(snapshot));
+    const empId = snapshot?.uploader_emp_id || getCurrentEmpId();
+    const scopedKey = getScopedStorageKey(COMPLETION_SNAPSHOT_KEY, empId);
+    localStorage.setItem(scopedKey, JSON.stringify(snapshot));
   } catch {}
 };
 
@@ -446,7 +462,10 @@ function ExcelApp() {
   };
   const readSharedUploadState = () => {
     try {
-      const raw = localStorage.getItem(ACTIVE_UPLOAD_STATE_KEY);
+      const empId = getCurrentEmpId();
+      const raw = empId
+        ? localStorage.getItem(getScopedStorageKey(ACTIVE_UPLOAD_STATE_KEY, empId))
+        : localStorage.getItem(ACTIVE_UPLOAD_STATE_KEY);
       if (!raw) return {};
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === 'object' ? parsed : {};
@@ -455,23 +474,17 @@ function ExcelApp() {
     }
   };
   const completionSeed = readCompletionSnapshot() || readSharedUploadState();
-  const getCurrentEmpId = () => {
-    try {
-      return window.$egene?._user?.emp_id || window.$egene?.emp_id || '';
-    } catch {
-      return '';
-    }
-  };
   const publishSharedUploadState = (patch = {}) => {
     try {
       const prev = readSharedUploadState();
+      const empId = patch.uploader_emp_id || prev?.uploader_emp_id || getCurrentEmpId();
       const next = {
         ...prev,
         ...patch,
-        uploader_emp_id: patch.uploader_emp_id || prev?.uploader_emp_id || getCurrentEmpId(),
+        uploader_emp_id: empId,
         updated_at: new Date().toISOString(),
       };
-      localStorage.setItem(ACTIVE_UPLOAD_STATE_KEY, JSON.stringify(next));
+      localStorage.setItem(getScopedStorageKey(ACTIVE_UPLOAD_STATE_KEY, empId), JSON.stringify(next));
     } catch {}
   };
   const publishCompletionSnapshot = (payload = {}) => {

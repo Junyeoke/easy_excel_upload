@@ -662,6 +662,28 @@ function ExcelApp() {
         });
       };
 
+      const resolveHistoryRow = (list) => {
+        const rows = Array.isArray(list) ? list : [];
+        if (rows.length === 0) return null;
+        const matchedByUpload = targetUploadId
+          ? rows.find((row) => String(row.upload_id || '') === String(targetUploadId))
+          : null;
+        return matchedByUpload || rows[0] || null;
+      };
+
+      const loadHistoryDetail = (row) => {
+        const histId = row?.hist_id || '';
+        if (!histId) {
+          return Promise.resolve(row ? [row] : []);
+        }
+        return post(API_URL, getParams({ mode: 'get_history_detail', hist_id: histId })).then((res) => {
+          if (res.status === 'ok' && res.row) {
+            return [res.row];
+          }
+          return row ? [row] : [];
+        }).catch(() => (row ? [row] : []));
+      };
+
       if (targetHistId) {
         post(API_URL, getParams({ mode: 'get_history_detail', hist_id: targetHistId })).then((res) => {
           if (res.status === 'ok' && res.row) {
@@ -669,18 +691,18 @@ function ExcelApp() {
             return;
           }
           loadHistory(targetUploadId).then((list) => {
-            const matched = targetUploadId ? list.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : list;
-            if (matched.length > 0) {
-              finishWithRows([matched[0]]);
+            const row = resolveHistoryRow(list);
+            if (row) {
+              loadHistoryDetail(row).then(finishWithRows).catch(() => finishWithRows([row]));
               return;
             }
             fetchByProgress();
           }).catch(fetchByProgress);
         }).catch(() => {
           loadHistory(targetUploadId).then((list) => {
-            const matched = targetUploadId ? list.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : list;
-            if (matched.length > 0) {
-              finishWithRows([matched[0]]);
+            const row = resolveHistoryRow(list);
+            if (row) {
+              loadHistoryDetail(row).then(finishWithRows).catch(() => finishWithRows([row]));
               return;
             }
             fetchByProgress();
@@ -690,9 +712,9 @@ function ExcelApp() {
       }
 
       loadHistory(targetUploadId).then((list) => {
-        const matched = targetUploadId ? list.filter((row) => String(row.upload_id || '') === String(targetUploadId)) : list;
-        if (matched.length > 0) {
-          finishWithRows([matched[0]]);
+        const row = resolveHistoryRow(list);
+        if (row) {
+          loadHistoryDetail(row).then(finishWithRows).catch(() => finishWithRows([row]));
           return;
         }
         fetchByProgress();

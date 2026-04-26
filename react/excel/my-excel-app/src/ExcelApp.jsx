@@ -101,12 +101,129 @@ const MyMultiSelect = ({ options = [], value = [], onChange, placeholder, isDisa
   );
 };
 
+const CompletionSummaryView = ({ uploadId, historyList, loading, error, onOpenWorkbench, onOpenDashboard, onNewUpload }) => {
+  const latest = historyList[0] || null;
+  const totalSuccess = historyList.reduce((sum, row) => sum + (Number(row.success_cnt) || 0), 0);
+  const totalFail = historyList.reduce((sum, row) => sum + (Number(row.fail_cnt) || 0), 0);
+  const latestStatus = latest
+    ? (Number(latest.fail_cnt) > 0 ? 'partial' : 'ok')
+    : 'none';
+  const statusLabel = latestStatus === 'ok' ? '완료' : latestStatus === 'partial' ? '부분 완료' : '대기';
+  const statusDesc = latestStatus === 'ok'
+    ? '업로드가 정상적으로 끝났습니다.'
+    : latestStatus === 'partial'
+      ? '일부 행이 실패했습니다. 결과 내역에서 오류 파일을 확인하세요.'
+      : '완료 이력을 아직 불러오지 못했습니다.';
+
+  return (
+    <div className="upload-flow-stack" style={{ maxWidth: '1100px', margin: '0 auto' }}>
+      <div className="result-hero result-ok" style={{ minHeight: 'auto' }}>
+        <div className="result-hero-icon">✅</div>
+        <div className="result-hero-content">
+          <div className="result-hero-title">엑셀 업로드 완료 내역</div>
+          <div className="result-hero-desc">{statusDesc}</div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="result-list-card">
+          <div className="result-list-title">불러오는 중</div>
+          <div className="result-list-tip">완료된 업로드 내역을 확인하고 있습니다.</div>
+        </div>
+      ) : error ? (
+        <div className="result-list-card result-list-card-error">
+          <div className="result-list-title">완료 화면 오류</div>
+          <div className="result-error-raw">{error}</div>
+        </div>
+      ) : (
+        <>
+          <div className="upload-stats-grid">
+            <div className="upload-stat-card">
+              <div className="upload-stat-label">최신 상태</div>
+              <div className="upload-stat-value success">{statusLabel}</div>
+            </div>
+            <div className="upload-stat-card">
+              <div className="upload-stat-label">성공 건수</div>
+              <div className="upload-stat-value success">{totalSuccess.toLocaleString()}</div>
+            </div>
+            <div className="upload-stat-card">
+              <div className="upload-stat-label">실패 건수</div>
+              <div className="upload-stat-value danger">{totalFail.toLocaleString()}</div>
+            </div>
+            <div className="upload-stat-card">
+              <div className="upload-stat-label">업로드 ID</div>
+              <div className="upload-stat-note" style={{ wordBreak: 'break-all' }}>{uploadId || latest?.upload_id || '-'}</div>
+            </div>
+          </div>
+
+          {latest && (
+            <div className="result-list-card">
+              <div className="result-list-title">최신 완료 내역</div>
+              <div className="history-item" style={{ marginTop: '10px' }}>
+                <div className="history-item-header">
+                  <span className="history-item-job">{latest.job_name || '(이름 없음)'}</span>
+                  <span className="history-item-time">{latest.reg_dttm?.substring(0, 16)}</span>
+                </div>
+                <div className="history-item-file">📁 {latest.file_name || '-'}</div>
+                <div className="history-item-stats">
+                  <span className="stat-chip success">✅ {Number(latest.success_cnt || 0).toLocaleString()}건 성공</span>
+                  <span className="stat-chip fail">❌ {Number(latest.fail_cnt || 0).toLocaleString()}건 실패</span>
+                  {latest.error_file && <span className="stat-chip">🚨 오류 파일 생성</span>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="result-action-grid">
+            <button className="result-action-card action-primary" onClick={onOpenWorkbench}>
+              <span className="result-action-title">작업 화면 열기</span>
+              <span className="result-action-desc">오류가 있으면 수정 작업대로 바로 돌아갈 수 있습니다.</span>
+            </button>
+            <button className="result-action-card action-neutral" onClick={onOpenDashboard}>
+              <span className="result-action-title">대시보드 보기</span>
+              <span className="result-action-desc">전체 로더와 이력을 한 번에 확인합니다.</span>
+            </button>
+            <button className="result-action-card action-neutral" onClick={onNewUpload}>
+              <span className="result-action-title">새 업로드 시작</span>
+              <span className="result-action-desc">현재 완료 내역은 유지한 채 새 파일을 올립니다.</span>
+            </button>
+          </div>
+
+          {historyList.length > 0 && (
+            <div className="result-list-card">
+              <div className="result-list-title">최근 완료 이력</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px', maxHeight: '260px', overflowY: 'auto' }}>
+                {historyList.slice(0, 5).map((h, i) => (
+                  <div key={i} className="history-item">
+                    <div className="history-item-header">
+                      <span className="history-item-job">{h.job_name || '(이름 없음)'}</span>
+                      <span className="history-item-time">{h.reg_dttm?.substring(0, 16)}</span>
+                    </div>
+                    <div className="history-item-file">📁 {h.file_name || '-'}</div>
+                    <div className="history-item-stats">
+                      <span className="stat-chip success">✅ {Number(h.success_cnt || 0).toLocaleString()}건</span>
+                      <span className="stat-chip fail">❌ {Number(h.fail_cnt || 0).toLocaleString()}건</span>
+                      {h.error_file && <span className="stat-chip">🚨 오류 파일</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
 // ─────────────────────────────────────────────
 // 메인 컴포넌트
 // ─────────────────────────────────────────────
 function ExcelApp() {
   const queryParams = new URLSearchParams(window.location.search);
   const isAdmin = queryParams.get('admin') === 'true';
+  const isCompletionView = queryParams.get('view') === 'completion' || queryParams.get('result') === '1';
+  const completionUploadId = queryParams.get('upload_id') || '';
 
   const adminSteps = ['기본 설정', '테이블 구조', '컬럼 매핑', '저장 완료'];
   const userSteps  = ['안내 확인', '파일 선택 및 업로드'];
@@ -154,6 +271,9 @@ function ExcelApp() {
   const [mappingPage, setMappingPage] = useState(1);
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0 });
   const [historyList, setHistoryList] = useState([]);
+  const [completionHistoryList, setCompletionHistoryList] = useState([]);
+  const [completionLoading, setCompletionLoading] = useState(false);
+  const [completionError, setCompletionError] = useState('');
   const [uploadLogs, setUploadLogsRaw] = useState([]);
   const setUploadLogs = (updater) => {
     setUploadLogsRaw(prev => {
@@ -423,8 +543,23 @@ function ExcelApp() {
   useEffect(() => {
     if (isAdmin) post(API_URL, getParams({ mode: 'get_tables' })).then(d => setTableList(Array.isArray(d) ? d : []));
     const uId = new URLSearchParams(window.location.search).get('upload_id');
+    if (isCompletionView) {
+      setCompletionLoading(true);
+      setCompletionError('');
+      loadHistory(completionUploadId).then((list) => {
+        setCompletionHistoryList(list);
+        setCompletionLoading(false);
+        if (list.length === 0) {
+          setCompletionError('완료 이력을 찾을 수 없습니다.');
+        }
+      }).catch(() => {
+        setCompletionLoading(false);
+        setCompletionError('완료 화면을 불러오지 못했습니다.');
+      });
+      return;
+    }
     if (uId) loadConfiguration(uId);
-    loadHistory();
+    loadHistory().then(setHistoryList);
     try {
       const activeJobId = sessionStorage.getItem('excel_active_job_id');
       if (activeJobId) {
@@ -459,7 +594,13 @@ function ExcelApp() {
     } catch {}
   }, []);
 
-  const loadHistory = async () => { const res = await post(API_URL, getParams({ mode: 'get_history' })); if (res.status === 'ok') setHistoryList(res.list || []); };
+  const loadHistory = async (targetUploadId = '') => {
+    const fd = { mode: 'get_history' };
+    if (targetUploadId) fd.upload_id = targetUploadId;
+    const res = await post(API_URL, getParams(fd));
+    if (res.status === 'ok') return res.list || [];
+    return [];
+  };
 
   const loadLoaderList = async () => {
     setLoaderPanelLoading(true);
@@ -1122,7 +1263,7 @@ function ExcelApp() {
       if (res.status === 'ok' || res.status === 'partial') {
         setProgress(p => ({ ...p, current: p.total, percent: 100 }));
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);
-        loadHistory();
+        loadHistory().then(setHistoryList);
 
         const successCnt = Number(res.success_cnt) || 0;
         const failCnt = Number(res.fail_cnt) || 0;
@@ -1270,7 +1411,7 @@ function ExcelApp() {
         setFile(null); setPreviewData([]); setEditedCells({});
         const el = document.getElementById('fileInput'); if (el) el.value = '';
         const el2 = document.getElementById('adminUploadFileInput'); if (el2) el2.value = '';
-        loadHistory();
+        loadHistory().then(setHistoryList);
         return;
       }
 
@@ -1564,6 +1705,41 @@ function ExcelApp() {
     setRetryFailTypes,
     runPolicyRetry,
   };
+
+  if (isCompletionView) {
+    const latestHistory = completionHistoryList[0] || null;
+    return (
+      <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
+        <ToastContainer position="top-left" autoClose={3000} style={{ position: 'fixed', zIndex: 99999 }} />
+        <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '0 32px' }}>
+          <div style={{ maxWidth: '100%', margin: '0 auto', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '34px', height: '34px', borderRadius: '9px', background: 'linear-gradient(135deg,#16a34a,#22c55e)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '17px' }}>✅</div>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#0f172a' }}>엑셀업로드 완료 내역</div>
+                <div style={{ fontSize: '0.68rem', color: '#94a3b8' }}>{latestHistory?.job_name || completionUploadId || '완료 결과 보기'}</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button onClick={() => window.location.href = '?view=dashboard'} style={{ background: 'transparent', border: '1px solid #e2e8f0', color: '#64748b', borderRadius: '8px', padding: '0 14px', height: '34px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>📊 대시보드</button>
+              <button onClick={() => window.location.href = '?upload_id=' + encodeURIComponent(completionUploadId || (latestHistory?.upload_id || ''))} style={{ background: 'transparent', border: '1px solid #e2e8f0', color: '#64748b', borderRadius: '8px', padding: '0 14px', height: '34px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>🧰 작업 화면</button>
+            </div>
+          </div>
+        </div>
+        <div style={{ maxWidth: '100%', margin: '0 auto', padding: '36px 24px 80px' }}>
+          <CompletionSummaryView
+            uploadId={completionUploadId}
+            historyList={completionHistoryList}
+            loading={completionLoading}
+            error={completionError}
+            onOpenWorkbench={() => { window.location.href = '?upload_id=' + encodeURIComponent(completionUploadId || (latestHistory?.upload_id || '')); }}
+            onOpenDashboard={() => { window.location.href = '?view=dashboard'; }}
+            onNewUpload={() => { window.location.href = '?'; }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   const renderStep = () => {
     if (isAdmin) {

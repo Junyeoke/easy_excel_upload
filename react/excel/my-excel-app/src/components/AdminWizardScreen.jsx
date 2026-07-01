@@ -89,7 +89,7 @@ const AdminStep0 = ({
   const [openModal, setOpenModal] = React.useState(null);
 
   return (
-    <div className="wizard-panel admin-basic-panel">
+    <div className="wizard-panel admin-basic-panel admin-step-panel admin-step-basic">
       <div className="admin-basic-head">
         <div>
           <div className="admin-stage-eyebrow">Admin Setup</div>
@@ -210,7 +210,7 @@ const AdminStep1 = ({
   const upsertCount = structs.filter(s => (s.upsert_keys || []).length > 0).length;
 
   return (
-    <div className="wizard-panel">
+    <div className="wizard-panel admin-step-panel admin-step-structure">
       <AdminStageHero
       eyebrow="Structure Design"
       title="테이블 구조와 SQL 설계"
@@ -420,7 +420,7 @@ const AdminStep2 = ({
   };
 
   return (
-    <div className="wizard-panel">
+    <div className="wizard-panel admin-step-panel admin-step-mapping">
       <AdminStageHero
       eyebrow="Mapping Workbench"
       title="컬럼 매핑"
@@ -761,7 +761,7 @@ const AdminStep3 = (props) => {
   ];
 
   return (
-    <div className="wizard-panel">
+    <div className="wizard-panel admin-step-panel admin-step-launch">
       <AdminStageHero
         eyebrow="Launch & Verify"
         title="설정 저장 완료"

@@ -5127,3 +5127,497 @@ select {
     justify-content: flex-start;
   }
 }
+
+/* Admin step inner facelift */
+.excel-facelift-content .admin-step-panel {
+  padding-bottom: 112px;
+}
+
+.excel-facelift-content .admin-step-panel .admin-stage-hero {
+  margin-bottom: 18px;
+}
+
+.excel-facelift-content .admin-step-panel .admin-stage-hero-main {
+  min-height: 154px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.excel-facelift-content .admin-step-panel .admin-stage-title-row {
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.excel-facelift-content .admin-step-panel .admin-stage-status {
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--primary-light);
+  color: var(--primary-text);
+  border: 1px solid rgba(49, 130, 246, 0.14);
+}
+
+.excel-facelift-content .admin-step-basic {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.excel-facelift-content .admin-basic-head {
+  min-height: 154px;
+  padding: 28px 30px;
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(49,130,246,0.09), rgba(255,255,255,0) 52%),
+    #fff;
+  border: 1px solid rgba(229, 232, 235, 0.92);
+  box-shadow: 0 18px 44px rgba(25, 31, 40, 0.065);
+}
+
+.excel-facelift-content .admin-basic-title {
+  margin-top: 8px;
+  font-size: 1.74rem;
+  line-height: 1.24;
+  letter-spacing: 0;
+}
+
+.excel-facelift-content .admin-basic-desc {
+  margin-top: 12px;
+  max-width: 720px;
+}
+
+.excel-facelift-content .admin-basic-summary {
+  align-self: flex-start;
+  gap: 8px;
+  justify-content: flex-end;
+  max-width: 45%;
+}
+
+.excel-facelift-content .admin-basic-summary span {
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  font-weight: 800;
+}
+
+.excel-facelift-content .admin-essential-card {
+  padding: 24px 28px 28px;
+  border-radius: 24px;
+}
+
+.excel-facelift-content .admin-essential-grid {
+  grid-template-columns: minmax(280px, 1fr) minmax(140px, 200px) minmax(170px, 240px);
+  gap: 16px;
+  align-items: end;
+}
+
+.excel-facelift-content .wiz-label {
+  margin-bottom: 7px;
+  color: var(--text-secondary);
+}
+
+.excel-facelift-content .wiz-input,
+.excel-facelift-content .wiz-input-sm,
+.excel-facelift-content .wiz-textarea {
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: #fbfcfd;
+}
+
+.excel-facelift-content .admin-modal-setting-row {
+  margin-top: 2px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.excel-facelift-content .admin-modal-setting-btn {
+  min-height: 86px;
+  padding: 18px 20px 18px 58px;
+  position: relative;
+  border-radius: 20px;
+  background: #fff;
+  border: 1px solid rgba(229, 232, 235, 0.92);
+  box-shadow: var(--shadow-sm);
+  align-items: flex-start;
+}
+
+.excel-facelift-content .admin-modal-setting-btn::before {
+  content: "";
+  position: absolute;
+  left: 20px;
+  top: 21px;
+  width: 24px;
+  height: 24px;
+  border-radius: 10px;
+  background: var(--primary-light);
+  box-shadow: inset 0 0 0 1px rgba(49, 130, 246, 0.12);
+}
+
+.excel-facelift-content .admin-modal-setting-btn:nth-child(2)::before {
+  background: var(--success-light);
+}
+
+.excel-facelift-content .admin-modal-setting-btn:nth-child(3)::before {
+  background: var(--warning-light);
+}
+
+.excel-facelift-content .admin-modal-setting-btn strong {
+  font-size: 0.96rem;
+  color: var(--text);
+}
+
+.excel-facelift-content .admin-modal-setting-btn span {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.excel-facelift-content .admin-step-structure .admin-ops-strip,
+.excel-facelift-content .admin-step-mapping .admin-ops-strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin: 16px 0 20px;
+}
+
+.excel-facelift-content .admin-ops-card {
+  min-height: 116px;
+  padding: 20px 22px;
+  border-radius: 22px;
+  background: #fff;
+  border: 1px solid rgba(229, 232, 235, 0.92);
+  box-shadow: var(--shadow-sm);
+}
+
+.excel-facelift-content .admin-ops-card.success {
+  background: linear-gradient(135deg, #effdf7 0%, #fff 78%);
+  border-color: rgba(0, 196, 113, 0.2);
+}
+
+.excel-facelift-content .admin-ops-card.warn {
+  background: linear-gradient(135deg, #fff9ec 0%, #fff 78%);
+  border-color: rgba(255, 149, 0, 0.2);
+}
+
+.excel-facelift-content .admin-ops-label {
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+
+.excel-facelift-content .admin-ops-value {
+  margin-top: 10px;
+  font-size: 1.34rem;
+  color: var(--text);
+}
+
+.excel-facelift-content .admin-ops-desc {
+  margin-top: 8px;
+  line-height: 1.55;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section,
+.excel-facelift-content .admin-step-mapping .wiz-section,
+.excel-facelift-content .admin-step-launch .wiz-section {
+  margin-top: 18px;
+  padding: 22px;
+  border: 1px solid rgba(229, 232, 235, 0.92);
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.excel-facelift-content .wiz-section-title {
+  margin-bottom: 16px;
+  color: var(--text);
+  font-size: 1rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section > div[style*="overflowX"],
+.excel-facelift-content .admin-step-mapping .wiz-section > div[style*="overflowX"] {
+  margin: 0 -22px;
+  padding: 0 22px;
+  overflow-x: auto !important;
+}
+
+.excel-facelift-content .admin-step-structure .data-table,
+.excel-facelift-content .admin-step-mapping .data-table {
+  min-width: 1180px;
+  border-collapse: separate;
+  border-spacing: 0 10px;
+  background: transparent;
+}
+
+.excel-facelift-content .admin-step-structure .data-table thead th,
+.excel-facelift-content .admin-step-mapping .data-table thead th {
+  height: 38px;
+  padding: 0 12px 8px;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.excel-facelift-content .admin-step-structure .data-table tbody tr,
+.excel-facelift-content .admin-step-mapping .data-table tbody tr {
+  background: #fbfcfd !important;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.excel-facelift-content .admin-step-structure .data-table tbody td,
+.excel-facelift-content .admin-step-mapping .data-table tbody td {
+  height: 66px;
+  padding: 10px 12px;
+  border: 0;
+  vertical-align: middle;
+}
+
+.excel-facelift-content .admin-step-structure .data-table tbody td:first-child,
+.excel-facelift-content .admin-step-mapping .data-table tbody td:first-child {
+  border-radius: 16px 0 0 16px;
+}
+
+.excel-facelift-content .admin-step-structure .data-table tbody td:last-child,
+.excel-facelift-content .admin-step-mapping .data-table tbody td:last-child {
+  border-radius: 0 16px 16px 0;
+}
+
+.excel-facelift-content .admin-step-structure .data-table b {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: var(--primary-light);
+  color: var(--primary-text) !important;
+}
+
+.excel-facelift-content .admin-step-structure .btn-add,
+.excel-facelift-content .admin-step-mapping .btn-add {
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--primary-light);
+  color: var(--primary-text);
+}
+
+.excel-facelift-content .admin-step-structure .btn-del {
+  height: 36px;
+  border-radius: 999px;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-grid-2 {
+  gap: 18px;
+  align-items: start;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-grid-2 > div,
+.excel-facelift-content .admin-step-structure .wiz-section > div[style*="margin-bottom: 20px"] {
+  min-width: 0;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section .cm-editor,
+.excel-facelift-content .admin-step-structure .wiz-section textarea {
+  min-height: 132px;
+  border-radius: 16px;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section .cm-editor {
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section .cm-gutters {
+  background: #f4f8fb;
+  border-right-color: var(--border);
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section .cm-activeLine,
+.excel-facelift-content .admin-step-structure .wiz-section .cm-activeLineGutter {
+  background: #f4f9ff;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section .btn-mini {
+  height: 38px;
+  border-radius: 999px;
+  padding: 0 14px;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section > div[style*="linear-gradient(135deg, #f8f9ff"] {
+  border-radius: 22px !important;
+  border-color: rgba(49, 130, 246, 0.16) !important;
+  background: #fff !important;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section > div[style*="linear-gradient(135deg, #f8f9ff"] > div:first-child {
+  background: #191f28 !important;
+}
+
+.excel-facelift-content .admin-step-mapping .admin-mapping-file-drop {
+  width: 100%;
+  min-height: 96px;
+  border-radius: 22px;
+  border: 1.5px dashed var(--border-strong);
+  background: #fbfcfd;
+}
+
+.excel-facelift-content .admin-step-mapping .admin-mapping-file-drop.has-file {
+  border-style: solid;
+  background: linear-gradient(135deg, #effdf7 0%, #fff 74%);
+  border-color: rgba(0, 196, 113, 0.22);
+}
+
+.excel-facelift-content .admin-step-mapping .admin-mapping-file-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 18px;
+}
+
+.excel-facelift-content .admin-mapping-locked-card {
+  margin-top: 18px;
+  padding: 24px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, #f4f9ff 0%, #fff 74%);
+}
+
+.excel-facelift-content .admin-alias-tabs {
+  gap: 8px;
+  padding: 6px;
+  border-radius: 18px;
+  background: var(--gray-100);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.excel-facelift-content .admin-alias-tab {
+  height: 38px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+}
+
+.excel-facelift-content .admin-alias-tab.active {
+  background: #fff;
+  color: var(--primary-text);
+  box-shadow: var(--shadow-sm);
+}
+
+.excel-facelift-content .admin-mapping-toolbar {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--gray-50);
+  border: 1px solid var(--border);
+}
+
+.excel-facelift-content .admin-mapping-option-row {
+  min-height: 54px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid var(--border);
+}
+
+.excel-facelift-content .admin-mapping-option-summary strong {
+  color: var(--text);
+}
+
+.excel-facelift-content .admin-mapping-option-summary span {
+  color: var(--text-muted);
+}
+
+.excel-facelift-content .mapping-db-column-name {
+  font-weight: 900;
+  color: var(--text);
+}
+
+.excel-facelift-content .mapping-db-column-comment {
+  margin-top: 5px;
+}
+
+.excel-facelift-content .admin-step-launch .admin-ops-strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin: 16px 0 20px;
+}
+
+.excel-facelift-content .admin-step-launch .admin-launch-layout {
+  gap: 18px;
+}
+
+.excel-facelift-content .admin-step-launch .admin-file-card,
+.excel-facelift-content .admin-step-launch .admin-file-dropzone,
+.excel-facelift-content .admin-step-launch .admin-execution-panel,
+.excel-facelift-content .admin-step-launch .admin-preview-card {
+  border-radius: 22px !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.excel-facelift-content .admin-step-launch .admin-file-dropzone {
+  min-height: 126px;
+  border-color: var(--border-strong) !important;
+  background: #fbfcfd !important;
+}
+
+.excel-facelift-content .admin-step-launch .admin-execution-panel {
+  min-height: 126px;
+  padding: 20px 22px !important;
+  background: linear-gradient(135deg, #f4f9ff 0%, #fff 80%) !important;
+  border: 1px solid rgba(49, 130, 246, 0.16) !important;
+}
+
+.excel-facelift-content .admin-step-launch .admin-preview-card {
+  margin-top: 0 !important;
+  overflow: hidden;
+}
+
+.excel-facelift-content .admin-step-launch .admin-preview-card > div:first-child {
+  border-radius: 22px 22px 0 0;
+}
+
+.excel-facelift-content .wizard-footer {
+  left: auto;
+  right: auto;
+}
+
+@media (max-width: 1280px) {
+  .excel-facelift-content .admin-step-structure .admin-ops-strip,
+  .excel-facelift-content .admin-step-mapping .admin-ops-strip,
+  .excel-facelift-content .admin-step-launch .admin-ops-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .excel-facelift-content .admin-basic-summary {
+    max-width: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .excel-facelift-content .admin-essential-grid,
+  .excel-facelift-content .admin-modal-setting-row {
+    grid-template-columns: 1fr;
+  }
+
+  .excel-facelift-content .admin-basic-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .excel-facelift-content .admin-basic-summary {
+    justify-content: flex-start;
+  }
+
+  .excel-facelift-content .admin-step-structure .wiz-grid-2,
+  .excel-facelift-content .admin-step-structure .admin-ops-strip,
+  .excel-facelift-content .admin-step-mapping .admin-ops-strip,
+  .excel-facelift-content .admin-step-launch .admin-ops-strip {
+    grid-template-columns: 1fr;
+  }
+}

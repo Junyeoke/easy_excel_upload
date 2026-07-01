@@ -5621,3 +5621,617 @@ select {
     grid-template-columns: 1fr;
   }
 }
+
+/* =========================================================
+   Modern SaaS redesign pass
+   A calmer enterprise app style: compact, flat, predictable.
+   ========================================================= */
+:root {
+  --modern-bg: #f5f6f8;
+  --modern-surface: #ffffff;
+  --modern-surface-2: #fafbfc;
+  --modern-border: #e6e8ec;
+  --modern-border-strong: #d6dae1;
+  --modern-text: #171923;
+  --modern-subtext: #5f6b7a;
+  --modern-muted: #8a94a3;
+  --modern-blue: #2563eb;
+  --modern-blue-hover: #1d4ed8;
+  --modern-blue-soft: #eff6ff;
+  --modern-green: #059669;
+  --modern-green-soft: #ecfdf5;
+  --modern-red: #dc2626;
+  --modern-red-soft: #fef2f2;
+  --modern-amber: #d97706;
+  --modern-amber-soft: #fffbeb;
+  --modern-radius: 12px;
+  --modern-radius-sm: 8px;
+  --modern-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --modern-shadow-lg: 0 12px 28px rgba(16, 24, 40, 0.08);
+}
+
+body {
+  background: var(--modern-bg);
+  color: var(--modern-text);
+}
+
+.excel-product-shell {
+  background: var(--modern-bg);
+}
+
+.excel-product-shell > div[style*="borderBottom"],
+.excel-product-shell > div[style*="border-bottom"] {
+  height: 64px !important;
+  padding: 0 28px !important;
+  background: rgba(255,255,255,0.94) !important;
+  border-bottom: 1px solid var(--modern-border) !important;
+  box-shadow: none !important;
+}
+
+.excel-product-shell > div[style*="borderBottom"] > div,
+.excel-product-shell > div[style*="border-bottom"] > div {
+  height: 64px !important;
+  max-width: 1600px !important;
+}
+
+.excel-product-shell > div[style*="borderBottom"] > div > div:first-child > div:first-child,
+.excel-product-shell > div[style*="border-bottom"] > div > div:first-child > div:first-child {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 10px !important;
+  background: #111827 !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+
+.excel-product-shell > div[style*="borderBottom"] button,
+.excel-product-shell > div[style*="border-bottom"] button {
+  height: 36px !important;
+  border-radius: 10px !important;
+  background: #fff !important;
+  border: 1px solid var(--modern-border) !important;
+  color: var(--modern-subtext) !important;
+  box-shadow: none !important;
+}
+
+.excel-product-shell > div[style*="borderBottom"] button:hover,
+.excel-product-shell > div[style*="border-bottom"] button:hover {
+  border-color: var(--modern-border-strong) !important;
+  color: var(--modern-text) !important;
+  transform: none;
+  background: var(--modern-surface-2) !important;
+}
+
+.excel-product-shell > div[style*="padding: '36px"],
+.excel-product-shell > div[style*="padding: 36px"],
+.excel-product-shell > div:last-child {
+  max-width: 1600px !important;
+  padding: 22px 28px 96px !important;
+}
+
+.excel-facelift-shell {
+  grid-template-columns: 248px minmax(0, 1fr);
+  gap: 20px;
+}
+
+.excel-facelift-shell .wizard-step-shell {
+  top: 86px;
+  padding: 16px;
+  border-radius: var(--modern-radius);
+  background: var(--modern-surface);
+  border: 1px solid var(--modern-border);
+  box-shadow: var(--modern-shadow);
+}
+
+.excel-facelift-shell .wizard-step-head {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+}
+
+.excel-facelift-shell .wizard-step-kicker {
+  color: var(--modern-muted);
+  font-size: 0.72rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.excel-facelift-shell .wizard-step-current {
+  font-size: 1.02rem;
+  font-weight: 800;
+}
+
+.excel-facelift-shell .wizard-step-count {
+  height: 28px;
+  min-width: 46px;
+  background: var(--modern-surface-2);
+  color: var(--modern-subtext);
+  border: 1px solid var(--modern-border);
+}
+
+.excel-facelift-shell .wizard-step-track {
+  gap: 4px;
+}
+
+.excel-facelift-shell .wizard-step-button {
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: var(--modern-subtext);
+}
+
+.excel-facelift-shell .wizard-step-button:hover:not(:disabled) {
+  background: var(--modern-surface-2);
+  border-color: transparent;
+}
+
+.excel-facelift-shell .wizard-step-button.active {
+  background: var(--modern-blue-soft);
+  border-color: #bfdbfe;
+  color: var(--modern-blue);
+  box-shadow: none;
+}
+
+.excel-facelift-shell .wizard-step-button.done {
+  background: transparent;
+  border-color: transparent;
+  color: var(--modern-green);
+}
+
+.excel-facelift-shell .wizard-step-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  font-size: 0.74rem;
+  background: #fff;
+}
+
+.excel-facelift-shell .wizard-step-button.active .wizard-step-num {
+  background: var(--modern-blue);
+  color: #fff;
+  border-color: var(--modern-blue);
+}
+
+.excel-facelift-shell .wizard-step-progress {
+  height: 4px;
+  margin-top: 12px;
+}
+
+.excel-facelift-shell .wizard-step-progress span {
+  background: var(--modern-blue);
+}
+
+.excel-facelift-content > .wizard-panel {
+  min-height: calc(100vh - 180px);
+  padding-bottom: 88px;
+}
+
+.excel-facelift-content > .wizard-panel > .wizard-panel-title {
+  font-size: 1.34rem;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.excel-facelift-content > .wizard-panel > .wizard-panel-desc {
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+  color: var(--modern-subtext);
+}
+
+.excel-facelift-content .admin-basic-head,
+.excel-facelift-content .admin-stage-hero,
+.excel-facelift-content .focus-hero-main,
+.excel-facelift-content .workspace-card,
+.excel-facelift-content .result-hero,
+.excel-facelift-content .result-list-card,
+.excel-facelift-content .progress-hero-card,
+.excel-facelift-content .admin-basic-card,
+.excel-facelift-content .admin-ops-card,
+.excel-facelift-content .admin-checklist-card,
+.excel-facelift-content .admin-step-structure .wiz-section,
+.excel-facelift-content .admin-step-mapping .wiz-section,
+.excel-facelift-content .admin-step-launch .wiz-section {
+  border-radius: var(--modern-radius);
+  background: var(--modern-surface);
+  border: 1px solid var(--modern-border);
+  box-shadow: var(--modern-shadow);
+}
+
+.excel-facelift-content .admin-basic-head,
+.excel-facelift-content .admin-stage-hero-main,
+.excel-facelift-content .focus-hero-main {
+  min-height: auto;
+  padding: 22px 24px;
+  background: var(--modern-surface);
+}
+
+.excel-facelift-content .admin-stage-hero {
+  overflow: hidden;
+}
+
+.excel-facelift-content .admin-stage-eyebrow,
+.excel-facelift-content .focus-hero-kicker {
+  color: var(--modern-blue);
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 0.78rem;
+}
+
+.excel-facelift-content .admin-basic-title,
+.excel-facelift-content .admin-stage-title,
+.excel-facelift-content .focus-hero-title {
+  font-size: 1.46rem;
+  line-height: 1.28;
+  color: var(--modern-text);
+}
+
+.excel-facelift-content .admin-basic-desc,
+.excel-facelift-content .admin-stage-desc,
+.excel-facelift-content .focus-hero-desc,
+.excel-facelift-content .workspace-card-desc {
+  color: var(--modern-subtext);
+}
+
+.excel-facelift-content .admin-stage-status,
+.excel-facelift-content .focus-hero-badge {
+  height: 30px;
+  border-radius: 999px;
+  background: var(--modern-surface-2);
+  color: var(--modern-subtext);
+  border: 1px solid var(--modern-border);
+  box-shadow: none;
+}
+
+.excel-facelift-content .admin-basic-summary,
+.excel-facelift-content .summary-chip-list,
+.excel-facelift-content .admin-stage-meta-list {
+  gap: 6px;
+}
+
+.excel-facelift-content .admin-basic-summary span,
+.excel-facelift-content .summary-chip,
+.excel-facelift-content .admin-stage-meta-item {
+  height: auto;
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--modern-surface-2);
+  border: 1px solid var(--modern-border);
+  color: var(--modern-subtext);
+  box-shadow: none;
+  font-size: 0.76rem;
+}
+
+.excel-facelift-content .admin-essential-card,
+.excel-facelift-content .admin-step-structure .wiz-section,
+.excel-facelift-content .admin-step-mapping .wiz-section,
+.excel-facelift-content .admin-step-launch .wiz-section {
+  padding: 18px;
+}
+
+.excel-facelift-content .admin-essential-grid {
+  gap: 12px;
+}
+
+.excel-facelift-content .admin-basic-card-title,
+.excel-facelift-content .workspace-card-title,
+.excel-facelift-content .wiz-section-title {
+  font-size: 0.98rem;
+  font-weight: 800;
+}
+
+.excel-facelift-content .admin-basic-card-desc {
+  font-size: 0.82rem;
+}
+
+.excel-facelift-content .wiz-label {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--modern-subtext);
+}
+
+.excel-facelift-content .wiz-input,
+.excel-facelift-content .wiz-input-sm,
+.excel-facelift-content .wiz-textarea {
+  height: 40px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid var(--modern-border);
+  color: var(--modern-text);
+  box-shadow: none;
+}
+
+.excel-facelift-content .wiz-textarea {
+  height: auto;
+}
+
+.excel-facelift-content .wiz-input:focus,
+.excel-facelift-content .wiz-input-sm:focus,
+.excel-facelift-content .wiz-textarea:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.excel-facelift-content .admin-modal-setting-row {
+  gap: 10px;
+}
+
+.excel-facelift-content .admin-modal-setting-btn {
+  min-height: 72px;
+  padding: 14px 16px;
+  border-radius: var(--modern-radius);
+  background: var(--modern-surface);
+  border: 1px solid var(--modern-border);
+  box-shadow: none;
+}
+
+.excel-facelift-content .admin-modal-setting-btn::before {
+  display: none;
+}
+
+.excel-facelift-content .admin-modal-setting-btn:hover {
+  border-color: #bfdbfe;
+  background: #fbfdff;
+}
+
+.excel-facelift-content .admin-modal-setting-btn strong {
+  font-size: 0.9rem;
+}
+
+.excel-facelift-content .admin-modal-setting-btn span {
+  font-size: 0.8rem;
+}
+
+.excel-facelift-content .admin-step-structure .admin-ops-strip,
+.excel-facelift-content .admin-step-mapping .admin-ops-strip,
+.excel-facelift-content .admin-step-launch .admin-ops-strip,
+.excel-facelift-content .focus-hero-metrics,
+.excel-facelift-content .upload-stats-grid {
+  gap: 10px;
+}
+
+.excel-facelift-content .admin-ops-card,
+.excel-facelift-content .focus-hero-metric,
+.excel-facelift-content .upload-stat-card {
+  min-height: 92px;
+  padding: 14px 16px;
+  border-radius: var(--modern-radius);
+  background: var(--modern-surface);
+  border: 1px solid var(--modern-border);
+  box-shadow: none;
+}
+
+.excel-facelift-content .admin-ops-card.success,
+.excel-facelift-content .workspace-card-positive,
+.excel-facelift-content .result-ok {
+  background: var(--modern-green-soft);
+  border-color: #bbf7d0;
+}
+
+.excel-facelift-content .admin-ops-card.warn,
+.excel-facelift-content .workspace-card-warning,
+.excel-facelift-content .result-partial {
+  background: var(--modern-amber-soft);
+  border-color: #fed7aa;
+}
+
+.excel-facelift-content .admin-ops-value,
+.excel-facelift-content .upload-stat-value {
+  font-size: 1.2rem;
+}
+
+.excel-facelift-content .admin-ops-desc {
+  font-size: 0.78rem;
+}
+
+.excel-facelift-content .wiz-section {
+  margin-top: 14px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.excel-facelift-content .admin-step-structure .data-table,
+.excel-facelift-content .admin-step-mapping .data-table,
+.excel-facelift-content .data-table,
+.excel-facelift-content .preview-table,
+.excel-facelift-content .result-list-table {
+  border-collapse: collapse;
+  border-spacing: 0;
+  background: #fff;
+}
+
+.excel-facelift-content .admin-step-structure .data-table thead th,
+.excel-facelift-content .admin-step-mapping .data-table thead th,
+.excel-facelift-content .data-table thead th,
+.excel-facelift-content .preview-table thead th,
+.excel-facelift-content .result-list-table thead th {
+  height: 40px;
+  padding: 0 12px;
+  background: var(--modern-surface-2);
+  border-top: 1px solid var(--modern-border);
+  border-bottom: 1px solid var(--modern-border);
+  color: var(--modern-subtext);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.excel-facelift-content .admin-step-structure .data-table tbody tr,
+.excel-facelift-content .admin-step-mapping .data-table tbody tr {
+  background: #fff !important;
+  box-shadow: none;
+}
+
+.excel-facelift-content .admin-step-structure .data-table tbody td,
+.excel-facelift-content .admin-step-mapping .data-table tbody td,
+.excel-facelift-content .data-table tbody td,
+.excel-facelift-content .preview-table tbody td,
+.excel-facelift-content .result-list-table tbody td {
+  height: 52px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--modern-border);
+}
+
+.excel-facelift-content .admin-step-structure .data-table tbody td:first-child,
+.excel-facelift-content .admin-step-mapping .data-table tbody td:first-child,
+.excel-facelift-content .admin-step-structure .data-table tbody td:last-child,
+.excel-facelift-content .admin-step-mapping .data-table tbody td:last-child {
+  border-radius: 0;
+}
+
+.excel-facelift-content .admin-step-structure .data-table b {
+  height: 28px;
+  border-radius: 8px;
+  background: var(--modern-blue-soft);
+}
+
+.excel-facelift-content .workbench-table-shell,
+.excel-facelift-content .table-container,
+.excel-facelift-content .preview-table-wrap,
+.excel-facelift-content .result-list-wrap {
+  border-radius: var(--modern-radius);
+  border: 1px solid var(--modern-border);
+}
+
+.excel-facelift-content .admin-mapping-toolbar,
+.excel-facelift-content .workbench-toolbar,
+.excel-facelift-content .log-toolbar {
+  border-radius: var(--modern-radius);
+  background: var(--modern-surface-2);
+  border: 1px solid var(--modern-border);
+}
+
+.excel-facelift-content .workbench-search {
+  height: 36px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid var(--modern-border);
+}
+
+.excel-facelift-content .admin-alias-tabs {
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--modern-surface-2);
+}
+
+.excel-facelift-content .admin-alias-tab {
+  height: 34px;
+  border-radius: 9px;
+  font-size: 0.8rem;
+}
+
+.excel-facelift-content .admin-alias-tab.active {
+  box-shadow: none;
+  border: 1px solid var(--modern-border);
+}
+
+.excel-facelift-content .admin-mapping-option-row {
+  min-height: 46px;
+  border-radius: 10px;
+  border: 1px solid var(--modern-border);
+}
+
+.excel-facelift-content .admin-mapping-file-drop,
+.excel-facelift-content .redesign-dropzone,
+.excel-facelift-content .admin-file-dropzone {
+  border-radius: var(--modern-radius);
+  background: #fff;
+  border: 1.5px dashed var(--modern-border-strong);
+}
+
+.excel-facelift-content .admin-mapping-file-icon,
+.excel-facelift-content .redesign-dropzone-icon {
+  border-radius: 12px;
+  background: var(--modern-surface-2);
+  color: var(--modern-blue);
+}
+
+.excel-facelift-content .redesign-dropzone {
+  min-height: 230px;
+}
+
+.excel-facelift-content .side-action-btn,
+.excel-facelift-content .btn,
+.excel-facelift-content .wizard-nav-btn,
+.excel-facelift-content .inline-control-btn,
+.excel-facelift-content .table-page-btn,
+.excel-facelift-content .focus-action-btn {
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.excel-facelift-content .side-action-btn-primary,
+.excel-facelift-content .wizard-nav-btn.primary,
+.excel-facelift-content .btn-primary,
+.excel-facelift-content .focus-action-btn.primary {
+  background: var(--modern-blue);
+  border-color: var(--modern-blue);
+  color: #fff;
+  box-shadow: none;
+}
+
+.excel-facelift-content .side-action-btn-primary:hover,
+.excel-facelift-content .wizard-nav-btn.primary:hover:not(:disabled),
+.excel-facelift-content .btn-primary:hover,
+.excel-facelift-content .focus-action-btn.primary:hover:not(:disabled) {
+  background: var(--modern-blue-hover);
+  border-color: var(--modern-blue-hover);
+  transform: none;
+}
+
+.excel-facelift-content .btn-add,
+.excel-facelift-content .admin-step-structure .btn-add,
+.excel-facelift-content .admin-step-mapping .btn-add {
+  background: var(--modern-blue-soft);
+  color: var(--modern-blue);
+  border: 1px solid #bfdbfe;
+}
+
+.excel-facelift-content .btn-del,
+.excel-facelift-content .side-action-btn-danger {
+  background: var(--modern-red-soft);
+  color: var(--modern-red);
+  border: 1px solid #fecaca;
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section .cm-editor,
+.excel-facelift-content .admin-step-structure .wiz-section textarea {
+  min-height: 118px;
+  border-radius: var(--modern-radius);
+  border-color: var(--modern-border);
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section .cm-gutters {
+  background: var(--modern-surface-2);
+}
+
+.excel-facelift-content .admin-step-structure .wiz-section > div[style*="linear-gradient(135deg, #f8f9ff"] {
+  display: none;
+}
+
+.excel-facelift-content .admin-step-launch .admin-execution-panel {
+  background: #fff !important;
+  border: 1px solid var(--modern-border) !important;
+}
+
+.excel-facelift-content .wizard-footer {
+  bottom: 16px;
+  padding: 12px 18px;
+  border-radius: var(--modern-radius);
+  background: rgba(255,255,255,0.96);
+  border: 1px solid var(--modern-border);
+  box-shadow: var(--modern-shadow-lg);
+}
+
+.excel-facelift-content .wizard-footer-count {
+  color: var(--modern-muted);
+  font-weight: 800;
+}
+
+@media (max-width: 1180px) {
+  .excel-facelift-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .excel-facelift-shell .wizard-step-shell {
+    top: 64px;
+  }
+}

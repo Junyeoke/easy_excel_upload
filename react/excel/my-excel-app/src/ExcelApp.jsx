@@ -2378,7 +2378,7 @@ function ExcelApp() {
   const isLastStep = isAdmin ? currentStep === 3 : currentStep === 1;
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
+    <div className={`excel-product-shell ${isAdmin ? 'excel-product-shell-admin' : 'excel-product-shell-user'}`}>
       {advancedSettingsOpen && (
         <UploadAdvancedSettingsModal
           debugDetailEnabled={debugDetailEnabled}

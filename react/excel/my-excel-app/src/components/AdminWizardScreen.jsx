@@ -1189,9 +1189,9 @@ const AdminWizardScreen = ({
   ][currentStep];
 
   return (
-    <div className="wizard-shell">
+    <div className="wizard-shell excel-facelift-shell excel-facelift-admin-shell">
       <StepIndicator steps={steps} current={currentStep} onStepClick={onStepClick} canNavigateStep={canNavigateStep} />
-      <div className="wizard-content-card">
+      <div className="wizard-content-card excel-facelift-content">
         {content}
         {!isLastStep && (
           <div className="wizard-footer">

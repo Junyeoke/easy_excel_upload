@@ -1411,10 +1411,10 @@ function ExcelApp() {
 
   const getUploadStageInfo = () => {
     if (!uploading) return { key: 'ready', label: '업로드 준비', desc: '파일과 데이터를 점검하고 있습니다.' };
-    if (progress.percent >= 100) return { key: 'done', label: '결과 정리', desc: '업로드 결과를 마무리하고 있습니다.' };
-    if (progress.percent >= 75) return { key: 'saving', label: 'DB 저장', desc: '검증된 데이터를 저장하고 있습니다.' };
-    if (progress.percent >= 35) return { key: 'validate', label: '데이터 검증', desc: '행별 데이터와 매핑 규칙을 확인하고 있습니다.' };
-    return { key: 'analyze', label: '파일 분석', desc: '헤더와 업로드 구조를 분석하고 있습니다.' };
+    if (progress.percent >= 100) return { key: 'done', label: '완료 확인 중', desc: '서버의 최종 결과를 기다리고 있습니다.' };
+    if (progress.percent >= 90) return { key: 'finalize', label: '마무리 중', desc: '처리된 결과를 정리하고 있습니다.' };
+    if (progress.current > 0 || progress.percent > 0) return { key: 'processing', label: '서버 처리 중', desc: '서버에서 행 데이터를 순차적으로 처리하고 있습니다.' };
+    return { key: 'start', label: '업로드 시작', desc: '서버 작업을 준비하고 있습니다.' };
   };
 
   const retryTypeRowMap = useMemo(() => {

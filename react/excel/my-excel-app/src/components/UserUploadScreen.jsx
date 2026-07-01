@@ -162,10 +162,10 @@ const UserWorkbenchStep = ({
             ? '업로드 가능한 상태입니다. 필요한 값만 검토하고 바로 전송할 수 있습니다.'
             : '파일 정보를 기다리고 있습니다.';
   const stageSteps = [
-    { key: 'analyze', label: '파일 분석' },
-    { key: 'validate', label: '데이터 검증' },
-    { key: 'saving', label: 'DB 저장' },
-    { key: 'done', label: '결과 정리' },
+    { key: 'start', label: '업로드 시작' },
+    { key: 'processing', label: '서버 처리' },
+    { key: 'finalize', label: '마무리' },
+    { key: 'done', label: '완료 확인' },
   ];
   const uploadReadyLabel = hasKnownFailedRows || hasUnknownFailedRows ? '수정 후 재업로드 준비' : '업로드 준비 완료';
   const uploadReadyDesc = previewLoading
@@ -344,41 +344,6 @@ const UserWorkbenchStep = ({
         </div>
       ) : uploading ? (
         <div className="upload-flow-stack">
-          <div className="progress-hero-card">
-            <div className="progress-hero-top">
-              <div>
-                <div className="progress-hero-title">{stageInfo.label}</div>
-                <div className="progress-hero-desc">{stageInfo.desc}</div>
-              </div>
-              <div className="progress-hero-percent">{progress.percent}%</div>
-            </div>
-            <div className="progress-stage-strip">
-              {stageSteps.map((step, idx) => {
-                const activeIndex = stageSteps.findIndex(s => s.key === stageInfo.key);
-                const isDone = idx < activeIndex || progress.percent >= 100;
-                const isActive = idx === activeIndex && progress.percent < 100;
-                return (
-                  <div key={step.key} className={`progress-stage-item ${isDone ? 'done' : ''} ${isActive ? 'active' : ''}`}>
-                    <div className="progress-stage-dot">{isDone ? '✓' : idx + 1}</div>
-                    <div className="progress-stage-label">{step.label}</div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="progress-bar-shell">
-              <div className="progress-bar-shell-fill" style={{ width: `${progress.percent}%` }} />
-            </div>
-            <div className="progress-meta-row">
-              <span>{progress.current.toLocaleString()} / {progress.total.toLocaleString()} 건</span>
-              <span>창을 닫지 말고 완료 메시지를 기다려주세요.</span>
-            </div>
-            <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="inline-control-btn" onClick={handleCancelUpload} disabled={cancellingUpload}>
-                {cancellingUpload ? '취소 요청 중...' : '업로드 취소'}
-              </button>
-            </div>
-          </div>
-
           <div className="upload-workspace-grid">
             <div className="workspace-card workspace-card-terminal">
               <div className="workspace-card-title">실시간 업로드 로그</div>
@@ -413,6 +378,41 @@ const UserWorkbenchStep = ({
                   <div>브라우저를 새로고침하면 진행 로그가 사라질 수 있으니 완료 후 이동해 주세요.</div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div className="progress-hero-card">
+            <div className="progress-hero-top">
+              <div>
+                <div className="progress-hero-title">{stageInfo.label}</div>
+                <div className="progress-hero-desc">{stageInfo.desc}</div>
+              </div>
+              <div className="progress-hero-percent">{progress.percent}%</div>
+            </div>
+            <div className="progress-stage-strip">
+              {stageSteps.map((step, idx) => {
+                const activeIndex = stageSteps.findIndex(s => s.key === stageInfo.key);
+                const isDone = idx < activeIndex || progress.percent >= 100;
+                const isActive = idx === activeIndex && progress.percent < 100;
+                return (
+                  <div key={step.key} className={`progress-stage-item ${isDone ? 'done' : ''} ${isActive ? 'active' : ''}`}>
+                    <div className="progress-stage-dot">{isDone ? '✓' : idx + 1}</div>
+                    <div className="progress-stage-label">{step.label}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="progress-bar-shell">
+              <div className="progress-bar-shell-fill" style={{ width: `${progress.percent}%` }} />
+            </div>
+            <div className="progress-meta-row">
+              <span>{progress.current.toLocaleString()} / {progress.total.toLocaleString()} 건</span>
+              <span>창을 닫지 말고 완료 메시지를 기다려주세요.</span>
+            </div>
+            <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="inline-control-btn" onClick={handleCancelUpload} disabled={cancellingUpload}>
+                {cancellingUpload ? '취소 요청 중...' : '업로드 취소'}
+              </button>
             </div>
           </div>
         </div>

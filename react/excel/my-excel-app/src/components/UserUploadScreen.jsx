@@ -293,12 +293,6 @@ const UserWorkbenchStep = ({
               <div className="upload-stat-label">실패 건수</div>
               <div className="upload-stat-value danger">{uploadResult.fail_cnt?.toLocaleString?.() || 0}</div>
             </div>
-            <div className="upload-stat-card">
-              <div className="upload-stat-label">다음 액션</div>
-              <div className="upload-stat-note">
-                {uploadResult.status === 'ok' ? '새 파일 업로드 또는 대시보드 확인' : '실패 행 수정 또는 오류 리포트 확인'}
-              </div>
-            </div>
           </div>
 
           {uploadResult.retry_summary?.mode === 'failed_rows_only' && (
@@ -310,27 +304,6 @@ const UserWorkbenchStep = ({
               </div>
             </div>
           )}
-
-          <div className="result-priority-strip">
-            {uploadResult.status === 'ok' && (
-              <div className="result-priority-card priority-success">
-                <div className="result-priority-title">권장 다음 작업</div>
-                <div className="result-priority-desc">같은 양식으로 이어서 업로드하거나 대시보드에서 전체 이력을 확인하세요.</div>
-              </div>
-            )}
-            {uploadResult.status === 'partial' && (
-              <div className="result-priority-card priority-warning">
-                <div className="result-priority-title">먼저 실패 행 수정이 가장 빠릅니다</div>
-                <div className="result-priority-desc">오류 리포트보다 먼저 미리보기로 돌아가 빨간 셀만 수정하면 재업로드가 더 빠릅니다.</div>
-              </div>
-            )}
-            {uploadResult.status === 'err' && (
-              <div className="result-priority-card priority-danger">
-                <div className="result-priority-title">오류 원인 확인 후 다시 시도</div>
-                <div className="result-priority-desc">원문 오류와 해결 가이드를 먼저 보고 파일 또는 설정을 조정한 뒤 다시 업로드하세요.</div>
-              </div>
-            )}
-          </div>
 
           {uploadResult.status === 'partial' && uploadResult.failed_row_msgs && Object.keys(uploadResult.failed_row_msgs).filter(k => k !== '__unknown__').length > 0 && (
             <div className="result-list-card">

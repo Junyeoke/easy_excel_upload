@@ -87,6 +87,23 @@ const alertIcon = (type) => {
   return 'success';
 };
 
+const showToastAlert = ({ type = 'success', message = '', autoClose = 2200 }) => {
+  Swal.close();
+  Swal.fire({
+    toast: true,
+    position: 'top-end',
+    icon: alertIcon(type),
+    title: message || '처리되었습니다.',
+    timer: autoClose,
+    timerProgressBar: true,
+    showConfirmButton: false,
+    showCloseButton: true,
+    customClass: {
+      popup: 'excel-swal-toast',
+    },
+  });
+};
+
 // 2026-06-20: react-toastify 알림을 SweetAlert2 기반 알림으로 대체한다.
 const toast = {
   loading(message) {
@@ -109,6 +126,12 @@ const toast = {
       });
       return;
     }
+    showToastAlert({
+      type: options.type,
+      message,
+      autoClose: options.autoClose || 2200,
+    });
+    return;
     Swal.fire({
       icon: alertIcon(options.type),
       title: message || '처리되었습니다.',
@@ -119,6 +142,8 @@ const toast = {
     });
   },
   success(message, options = {}) {
+    showToastAlert({ type: 'success', message: alertText(message), autoClose: options.autoClose || 1800 });
+    return;
     Swal.fire({ icon: 'success', title: alertText(message), timer: options.autoClose || 1800, timerProgressBar: true, showConfirmButton: false });
   },
   error(message) {

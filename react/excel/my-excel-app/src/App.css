@@ -6291,3 +6291,18 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.excel-swal-toast {
+  width: auto !important;
+  min-width: 260px !important;
+  max-width: min(420px, calc(100vw - 24px)) !important;
+  padding: 10px 14px !important;
+  border-radius: 12px !important;
+  box-shadow: 0 12px 28px rgba(16, 24, 40, 0.14) !important;
+}
+
+.excel-swal-toast .swal2-title {
+  margin: 0 22px 0 8px !important;
+  font-size: 0.9rem !important;
+  line-height: 1.45 !important;
+}

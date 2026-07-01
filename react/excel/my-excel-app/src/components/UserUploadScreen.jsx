@@ -51,7 +51,7 @@ const UserGuideModal = ({ instructions, sampleFileName, downloadSampleFile, onCl
 );
 
 const UserIntroStep = ({ jobName, instructions, sampleFileName, downloadSampleFile }) => {
-  const [guideOpen, setGuideOpen] = React.useState(false);
+  const [guideOpen, setGuideOpen] = React.useState(true);
   return (
     <div className="wizard-panel user-intro-minimal">
       <div className="user-intro-card">

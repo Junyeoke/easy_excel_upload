@@ -4695,17 +4695,21 @@ select {
 
 .excel-facelift-content .workspace-action-stack {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: stretch;
 }
 
 .excel-facelift-content .workspace-action-stack .side-action-btn,
 .excel-facelift-content .workspace-action-stack .side-action-btn-primary {
-  width: 100%;
+  width: auto;
+  flex: 1 1 180px;
   grid-column: auto;
   min-height: 44px;
 }
 
 .excel-facelift-content .workspace-action-stack .side-action-btn-primary {
+  flex-basis: 260px;
   min-height: 52px;
   border-radius: 16px;
   font-size: 0.96rem;
@@ -4914,7 +4918,7 @@ select {
 
 .excel-facelift-content .workbench-grid-focus {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(318px, 360px);
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
   align-items: start;
 }
@@ -4928,8 +4932,8 @@ select {
 
 .excel-facelift-content .workbench-grid-focus .workspace-side-stack {
   display: flex;
-  grid-column: 2;
-  grid-row: 1;
+  grid-column: 1;
+  grid-row: 2;
   min-width: 0;
 }
 
@@ -4942,12 +4946,23 @@ select {
 
 .excel-facelift-content .workspace-side-stack-sticky {
   width: 100%;
-  max-width: 360px;
+  max-width: none;
   justify-self: stretch;
 }
 
 .excel-facelift-content .workspace-card-command {
   width: 100%;
+}
+
+.excel-facelift-content .workspace-card-command .workspace-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.excel-facelift-content .workspace-card-command .summary-chip-list-session {
+  margin-top: 14px;
 }
 
 .excel-facelift-content .workspace-card-head {
@@ -5051,12 +5066,12 @@ select {
 
 @media (max-width: 1280px) {
   .excel-facelift-content .workbench-grid-focus {
-    grid-template-columns: minmax(0, 1fr) minmax(292px, 320px);
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
   }
 
   .excel-facelift-content .workspace-side-stack-sticky {
-    max-width: 320px;
+    max-width: none;
   }
 
   .excel-facelift-content .workspace-card {
@@ -5112,6 +5127,19 @@ select {
 
   .excel-facelift-content .workbench-toolbar {
     align-items: stretch;
+  }
+
+  .excel-facelift-content .workspace-card-command .workspace-card-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .excel-facelift-content .workspace-action-stack {
+    flex-direction: column;
+  }
+
+  .excel-facelift-content .workspace-action-stack .side-action-btn,
+  .excel-facelift-content .workspace-action-stack .side-action-btn-primary {
+    width: 100%;
   }
 
   .excel-facelift-content .workbench-toolbar-left,

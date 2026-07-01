@@ -6235,3 +6235,49 @@ body {
     top: 64px;
   }
 }
+
+/* Step 1 background consistency */
+.excel-facelift-content .admin-step-basic {
+  gap: 0;
+  padding: 0 0 88px;
+  border: 1px solid var(--modern-border);
+  border-radius: var(--modern-radius);
+  background: var(--modern-surface);
+  box-shadow: var(--modern-shadow);
+  overflow: hidden;
+}
+
+.excel-facelift-content .admin-step-basic .admin-basic-head {
+  border: 0;
+  border-bottom: 1px solid var(--modern-border);
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--modern-surface);
+}
+
+.excel-facelift-content .admin-step-basic .admin-essential-card {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--modern-border);
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--modern-surface);
+}
+
+.excel-facelift-content .admin-step-basic .admin-modal-setting-row {
+  margin: 0;
+  padding: 16px 18px;
+  background: var(--modern-surface);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.excel-facelift-content .admin-step-basic .admin-modal-setting-btn {
+  min-height: 78px;
+  background: var(--modern-surface-2);
+}
+
+@media (max-width: 900px) {
+  .excel-facelift-content .admin-step-basic .admin-modal-setting-row {
+    grid-template-columns: 1fr;
+  }
+}

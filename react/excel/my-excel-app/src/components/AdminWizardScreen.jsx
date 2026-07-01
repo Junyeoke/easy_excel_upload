@@ -190,7 +190,6 @@ const AdminStep1 = ({
   structs,
   setStructs,
   tableList,
-  loadCols,
   handleStructTableChange,
   handleStructAliasChange,
   handleRemoveStruct,
@@ -350,7 +349,6 @@ const AdminStep2 = ({
   setMappingPage,
   updateMappingVal,
   handleReplaceSetup,
-  previewLoading,
   isDragging,
   setIsDragging,
 }) => {

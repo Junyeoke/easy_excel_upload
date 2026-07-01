@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import Swal from 'sweetalert2';
 import StepIndicator from './StepIndicator';
 
@@ -98,7 +98,6 @@ const UserWorkbenchStep = ({
   previewTotalPages,
   logEndRef,
   sampleFileName,
-  jobName,
   instructions,
   getKnownFailedRowNumbers,
   getUploadStageInfo,
@@ -207,29 +206,6 @@ const UserWorkbenchStep = ({
       return String(cellValue).toLowerCase().includes(searchKeyword);
     });
   });
-  const checklistItems = [
-    {
-      label: '파일 형식 확인',
-      ok: !hasFile || /\.(xlsx|xls)$/i.test(file.name),
-      detail: hasFile ? '지원 형식으로 인식되었습니다.' : '.xls 또는 .xlsx 파일을 선택하세요.',
-    },
-    {
-      label: '헤더 인식',
-      ok: !hasFile || excelHeaders.length > 0,
-      detail: hasFile ? `헤더 ${excelHeaders.length}개를 읽었습니다.` : `헤더 기준은 ${headerRow}행입니다.`,
-    },
-    {
-      label: '데이터 건수',
-      ok: !hasFile || totalRows > 0,
-      detail: hasFile ? `업로드 대상 ${totalRows.toLocaleString()}건` : '파일 선택 후 건수를 계산합니다.',
-    },
-    {
-      label: '오류 여부',
-      ok: !hasFile || (!hasKnownFailedRows && !hasUnknownFailedRows),
-      detail: !hasFile ? '사전 점검 전입니다.' : hasUnknownFailedRows ? '실패 건은 있으나 행 특정이 필요합니다.' : hasKnownFailedRows ? `${failedRowCount}개 행 수정 필요` : '즉시 업로드 가능한 상태입니다.',
-    },
-  ];
-
   const openCorrectionWorkbench = () => {
     if (uploadResult?.failed_row_msgs && Object.keys(uploadResult.failed_row_msgs).length > 0) {
       setFailedRows(uploadResult.failed_row_msgs);

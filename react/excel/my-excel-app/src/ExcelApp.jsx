@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import Select from 'react-select';
 import Swal from 'sweetalert2';
 import './App.css';
@@ -71,7 +71,7 @@ const getScopedStorageKey = (baseKey, empId = getCurrentEmpId()) => {
 
 const alertText = (value) => {
   if (value == null) return '';
-  if (typeof value === 'string') return value.replace(/[✅❌⚠️🎉🚀💾🔎📥]/g, '').trim();
+  if (typeof value === 'string') return value.replace(/\uFFFD/g, '').trim();
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (value?.props?.children) {
     const children = Array.isArray(value.props.children) ? value.props.children : [value.props.children];
@@ -131,20 +131,11 @@ const toast = {
       message,
       autoClose: options.autoClose || 2200,
     });
-    return;
-    Swal.fire({
-      icon: alertIcon(options.type),
-      title: message || '처리되었습니다.',
-      timer: options.autoClose,
-      timerProgressBar: !!options.autoClose,
-      showConfirmButton: !options.autoClose,
-      confirmButtonColor: '#6366f1',
-    });
+
   },
   success(message, options = {}) {
     showToastAlert({ type: 'success', message: alertText(message), autoClose: options.autoClose || 1800 });
-    return;
-    Swal.fire({ icon: 'success', title: alertText(message), timer: options.autoClose || 1800, timerProgressBar: true, showConfirmButton: false });
+
   },
   error(message) {
     Swal.fire({ icon: 'error', title: alertText(message), confirmButtonColor: '#6366f1' });
@@ -1094,16 +1085,28 @@ function ExcelApp() {
   };
 
   const handleDeleteLoader = async (id, name) => {
-    if (!window.confirm(`"${name}" 로더를 삭제하시겠습니까?\n삭제 후 복구할 수 없습니다.`)) return;
-    const tid = toast.loading('삭제 중...');
-    const res = await post(API_URL, getParams({ mode: 'delete', upload_id: id }));
-    if (res.status === 'ok') {
-      toast.update(tid, { render: '✅ 삭제 완료', type: 'success', isLoading: false, autoClose: 2000 });
+    const confirmResult = await Swal.fire({
+      icon: 'warning',
+      title: '로더를 삭제할까요?',
+      text: `"${name}" 로더는 삭제 후 복구할 수 없습니다.`,
+      showCancelButton: true,
+      confirmButtonText: '삭제',
+      cancelButtonText: '취소',
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#6b7280',
+      reverseButtons: true,
+    });
+    if (!confirmResult.isConfirmed) return;
+    const deleteToastId = toast.loading('삭제 중...');
+    const deleteResult = await post(API_URL, getParams({ mode: 'delete', upload_id: id }));
+    if (deleteResult.status === 'ok') {
+      toast.update(deleteToastId, { render: '삭제 완료', type: 'success', isLoading: false, autoClose: 2000 });
       if (uploadId === id) { setTimeout(() => { window.location.href = window.location.pathname + '?admin=true'; }, 1500); }
       await loadLoaderList();
     } else {
-      toast.update(tid, { render: '❌ ' + (res.msg || '삭제 실패'), type: 'error', isLoading: false, autoClose: 3000 });
+      toast.update(deleteToastId, { render: deleteResult.msg || '삭제 실패', type: 'error', isLoading: false, autoClose: 3000 });
     }
+    return;
   };
 
   const handleCloneLoader = async (id, name) => {

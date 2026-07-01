@@ -188,11 +188,11 @@ public class ExcelUploadEngineRepository {
         String sql = isUpdate
             ? "UPDATE ESO_EXCEL_UPLOAD_CONFIG SET JOB_NAME=?, HEADER_ROW=?, STRUCT_JSON=?, MAPPING_JSON=?, " +
               "PRE_SQL_JSON=?, POST_SQL_JSON=?, ROW_SQL_JSON=?, SAMPLE_FILE_NAME=?, SAMPLE_FILE_ORG_NAME=?, " +
-              "INSTRUCTIONS=?, REG_DTTM=" + nowFunc + " WHERE UPLOAD_ID=?"
+              "INSTRUCTIONS=?, UPSERT_KEEP_EMPTY_YN=?, MAX_UPLOAD_ROWS=?, REG_DTTM=" + nowFunc + " WHERE UPLOAD_ID=?"
             : "INSERT INTO ESO_EXCEL_UPLOAD_CONFIG " +
               "(JOB_NAME, HEADER_ROW, STRUCT_JSON, MAPPING_JSON, PRE_SQL_JSON, POST_SQL_JSON, ROW_SQL_JSON, " +
-              "SAMPLE_FILE_NAME, SAMPLE_FILE_ORG_NAME, INSTRUCTIONS, UPLOAD_ID, REG_DTTM) " +
-              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + nowFunc + ")";
+              "SAMPLE_FILE_NAME, SAMPLE_FILE_ORG_NAME, INSTRUCTIONS, UPSERT_KEEP_EMPTY_YN, MAX_UPLOAD_ROWS, UPLOAD_ID, REG_DTTM) " +
+              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + nowFunc + ")";
 
         try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
             int idx = 1;
@@ -206,6 +206,8 @@ public class ExcelUploadEngineRepository {
             pstmt.setString(idx++, (String) configData.get("sample_file_name"));
             pstmt.setString(idx++, (String) configData.get("sample_file_org_name"));
             pstmt.setString(idx++, (String) configData.get("instructions"));
+            pstmt.setString(idx++, str(configData.get("upsert_keep_empty_yn")));
+            pstmt.setInt(idx++, intValue(configData.get("max_upload_rows"), 0));
             pstmt.setString(idx++, uploadId);
             int affected = pstmt.executeUpdate();
             if (isUpdate && affected == 0) {
@@ -238,6 +240,8 @@ public class ExcelUploadEngineRepository {
                     row.put("sample_file_name",      rs.getString("SAMPLE_FILE_NAME"));
                     row.put("sample_file_org_name",  rs.getString("SAMPLE_FILE_ORG_NAME"));
                     try { row.put("instructions", rs.getString("INSTRUCTIONS")); } catch (Throwable ignore) {}
+                    try { row.put("upsert_keep_empty_yn", nullToDefault(rs.getString("UPSERT_KEEP_EMPTY_YN"), "N")); } catch (Throwable ignore) {}
+                    try { row.put("max_upload_rows", rs.getInt("MAX_UPLOAD_ROWS")); } catch (Throwable ignore) {}
                     return row;
                 }
             }
@@ -350,7 +354,39 @@ public class ExcelUploadEngineRepository {
                         "PRE_SQL_JSON", "POST_SQL_JSON", "ROW_SQL_JSON", "SAMPLE_FILE_NAME",
                         "SAMPLE_FILE_ORG_NAME", "INSTRUCTIONS", "REG_DTTM"},
                 "ALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD INSTRUCTIONS CLOB;");
+        ensureConfigKeepEmptyColumn(conn);
+        ensureConfigMaxUploadRowsColumn(conn);
         CONFIG_SCHEMA_VERIFIED.set(true);
+    }
+
+    private void ensureConfigKeepEmptyColumn(Connection conn) throws Exception {
+        DatabaseMetaData meta = conn.getMetaData();
+        if (columnExists(meta, "ESO_EXCEL_UPLOAD_CONFIG", "UPSERT_KEEP_EMPTY_YN")) {
+            return;
+        }
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD (UPSERT_KEEP_EMPTY_YN CHAR(1) DEFAULT 'N')");
+        } catch (SQLException e) {
+            if (!columnExists(conn.getMetaData(), "ESO_EXCEL_UPLOAD_CONFIG", "UPSERT_KEEP_EMPTY_YN")) {
+                throw new Exception("업로드 설정 테이블에 UPSERT_KEEP_EMPTY_YN 컬럼을 추가할 수 없습니다.\n" +
+                        "필요 SQL 예시:\nALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD (UPSERT_KEEP_EMPTY_YN CHAR(1) DEFAULT 'N');", e);
+            }
+        }
+    }
+
+    private void ensureConfigMaxUploadRowsColumn(Connection conn) throws Exception {
+        DatabaseMetaData meta = conn.getMetaData();
+        if (columnExists(meta, "ESO_EXCEL_UPLOAD_CONFIG", "MAX_UPLOAD_ROWS")) {
+            return;
+        }
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD (MAX_UPLOAD_ROWS NUMBER(10) DEFAULT 0)");
+        } catch (SQLException e) {
+            if (!columnExists(conn.getMetaData(), "ESO_EXCEL_UPLOAD_CONFIG", "MAX_UPLOAD_ROWS")) {
+                throw new Exception("업로드 설정 테이블에 MAX_UPLOAD_ROWS 컬럼을 추가할 수 없습니다.\n" +
+                        "필요 SQL 예시:\nALTER TABLE ESO_EXCEL_UPLOAD_CONFIG ADD (MAX_UPLOAD_ROWS NUMBER(10) DEFAULT 0);", e);
+            }
+        }
     }
 
     private void validateTableAndColumns(Connection conn, String tableName, String[] requiredColumns,
@@ -788,6 +824,15 @@ public class ExcelUploadEngineRepository {
         return v == null ? "" : String.valueOf(v);
     }
 
+    private int intValue(Object v, int def) {
+        if (v == null) return def;
+        try {
+            return Integer.parseInt(String.valueOf(v).trim());
+        } catch (Throwable ignore) {
+            return def;
+        }
+    }
+
     // =====================================================================
     // 4. 임시 업로드 키 테이블
     // =====================================================================
@@ -988,12 +1033,21 @@ public void deleteConfig(Connection conn, String uploadId) throws Exception {
  * 설정 복제 (새 ID로 INSERT, job_name에 "(복제)" 접미사)
  */
 public String cloneConfig(Connection conn, String sourceId, String newId, String nowFunc) throws Exception {
-    String sql =
+    ensureConfigSchema(conn);
+    DatabaseMetaData meta = conn.getMetaData();
+    boolean hasKeepEmptyCol = columnExists(meta, "ESO_EXCEL_UPLOAD_CONFIG", "UPSERT_KEEP_EMPTY_YN");
+    boolean hasMaxRowsCol = columnExists(meta, "ESO_EXCEL_UPLOAD_CONFIG", "MAX_UPLOAD_ROWS");
+    String keepEmptyInsertCol = hasKeepEmptyCol ? ", UPSERT_KEEP_EMPTY_YN" : "";
+    String keepEmptySelectCol = hasKeepEmptyCol ? ", UPSERT_KEEP_EMPTY_YN" : "";
+    String maxRowsInsertCol = hasMaxRowsCol ? ", MAX_UPLOAD_ROWS" : "";
+    String maxRowsSelectCol = hasMaxRowsCol ? ", MAX_UPLOAD_ROWS" : "";
+    String sql;
+    sql =
         "INSERT INTO ESO_EXCEL_UPLOAD_CONFIG " +
         "(UPLOAD_ID, JOB_NAME, HEADER_ROW, STRUCT_JSON, MAPPING_JSON, " +
-        " PRE_SQL_JSON, POST_SQL_JSON, ROW_SQL_JSON, INSTRUCTIONS, REG_DTTM) " +
+        " PRE_SQL_JSON, POST_SQL_JSON, ROW_SQL_JSON, INSTRUCTIONS" + keepEmptyInsertCol + maxRowsInsertCol + ", REG_DTTM) " +
         "SELECT ?, CONCAT(JOB_NAME, ' (복제)'), HEADER_ROW, STRUCT_JSON, MAPPING_JSON, " +
-        "       PRE_SQL_JSON, POST_SQL_JSON, ROW_SQL_JSON, INSTRUCTIONS, " + nowFunc +
+        "       PRE_SQL_JSON, POST_SQL_JSON, ROW_SQL_JSON, INSTRUCTIONS" + keepEmptySelectCol + maxRowsSelectCol + ", " + nowFunc +
         " FROM ESO_EXCEL_UPLOAD_CONFIG WHERE UPLOAD_ID = ?";
 
     // Oracle/Tibero는 CONCAT 대신 || 연산자 사용
@@ -1006,9 +1060,9 @@ public String cloneConfig(Connection conn, String sourceId, String newId, String
             String oracleSql =
                 "INSERT INTO ESO_EXCEL_UPLOAD_CONFIG " +
                 "(UPLOAD_ID, JOB_NAME, HEADER_ROW, STRUCT_JSON, MAPPING_JSON, " +
-                " PRE_SQL_JSON, POST_SQL_JSON, ROW_SQL_JSON, INSTRUCTIONS, REG_DTTM) " +
+                " PRE_SQL_JSON, POST_SQL_JSON, ROW_SQL_JSON, INSTRUCTIONS" + keepEmptyInsertCol + maxRowsInsertCol + ", REG_DTTM) " +
                 "SELECT ?, JOB_NAME || ' (복제)', HEADER_ROW, STRUCT_JSON, MAPPING_JSON, " +
-                "       PRE_SQL_JSON, POST_SQL_JSON, ROW_SQL_JSON, INSTRUCTIONS, " + nowFunc +
+                "       PRE_SQL_JSON, POST_SQL_JSON, ROW_SQL_JSON, INSTRUCTIONS" + keepEmptySelectCol + maxRowsSelectCol + ", " + nowFunc +
                 " FROM ESO_EXCEL_UPLOAD_CONFIG WHERE UPLOAD_ID = ?";
             try (PreparedStatement ps2 = conn.prepareStatement(oracleSql)) {
                 ps2.setString(1, newId);

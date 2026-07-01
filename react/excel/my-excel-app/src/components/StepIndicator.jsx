@@ -1,61 +1,56 @@
 import React from 'react';
 
-const StepIndicator = ({ steps, current }) => (
-  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '40px', padding: '0 20px' }}>
-    {steps.map((step, index) => {
-      const isDone = index < current;
-      const isActive = index === current;
+const StepIndicator = ({ steps, current, onStepClick, canNavigateStep }) => {
+  const currentLabel = steps[current] || '';
+  const progressPercent = steps.length > 1 ? Math.round((current / (steps.length - 1)) * 100) : 100;
 
-      return (
-        <React.Fragment key={step}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', minWidth: '80px' }}>
-            <div
-              style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '1rem',
-                fontWeight: 700,
-                transition: 'all 0.3s',
-                background: isDone ? '#10b981' : isActive ? '#6366f1' : '#f1f5f9',
-                color: isDone || isActive ? 'white' : '#94a3b8',
-                boxShadow: isActive ? '0 0 0 4px rgba(99,102,241,0.15)' : 'none',
-                border: isDone ? '2px solid #10b981' : isActive ? '2px solid #6366f1' : '2px solid #e2e8f0',
-              }}
-            >
-              {isDone ? '✓' : index + 1}
-            </div>
-            <span
-              style={{
-                fontSize: '0.72rem',
-                fontWeight: isActive ? 700 : 500,
-                color: isActive ? '#6366f1' : isDone ? '#10b981' : '#94a3b8',
-                textAlign: 'center',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {step}
-            </span>
-          </div>
-          {index < steps.length - 1 && (
-            <div
-              style={{
-                flex: 1,
-                height: '2px',
-                margin: '0 4px',
-                marginBottom: '22px',
-                background: isDone ? '#10b981' : '#e2e8f0',
-                transition: 'background 0.3s',
-              }}
-            />
-          )}
-        </React.Fragment>
-      );
-    })}
-  </div>
-);
+  return (
+    <div className="wizard-step-shell">
+      <div className="wizard-step-head">
+        <div>
+          <div className="wizard-step-kicker">진행 단계</div>
+          <div className="wizard-step-current">{currentLabel}</div>
+        </div>
+        <div className="wizard-step-count">{current + 1} / {steps.length}</div>
+      </div>
+
+      <div className="wizard-step-track" role="tablist" aria-label="업로드 단계">
+        {steps.map((step, index) => {
+          const isDone = index < current;
+          const isActive = index === current;
+          const isDisabled = canNavigateStep ? !canNavigateStep(index) : false;
+          const className = [
+            'wizard-step-button',
+            isDone ? 'done' : '',
+            isActive ? 'active' : '',
+            isDisabled ? 'disabled' : '',
+          ].filter(Boolean).join(' ');
+
+          return (
+            <React.Fragment key={step}>
+              <button
+                type="button"
+                className={className}
+                onClick={() => !isDisabled && onStepClick?.(index)}
+                disabled={isDisabled}
+                role="tab"
+                aria-selected={isActive}
+                title={isDisabled ? '이전 필수 단계를 먼저 완료하세요.' : `${step} 단계로 이동`}
+              >
+                <span className="wizard-step-num">{isDone ? '✓' : index + 1}</span>
+                <span className="wizard-step-label">{step}</span>
+              </button>
+              {index < steps.length - 1 && <span className={`wizard-step-line ${isDone ? 'done' : ''}`} />}
+            </React.Fragment>
+          );
+        })}
+      </div>
+
+      <div className="wizard-step-progress" aria-hidden="true">
+        <span style={{ width: `${progressPercent}%` }} />
+      </div>
+    </div>
+  );
+};
 
 export default StepIndicator;

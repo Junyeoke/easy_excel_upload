@@ -1,39 +1,78 @@
 import React from 'react';
-import { toast } from 'react-toastify';
+import Swal from 'sweetalert2';
 import StepIndicator from './StepIndicator';
 
-const UserIntroStep = ({ jobName, instructions, sampleFileName, downloadSampleFile }) => (
-  <div className="wizard-panel">
-    <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-      <div style={{ fontSize: '2.8rem', marginBottom: '10px' }}>📋</div>
-      <div className="wizard-panel-title">{jobName || 'Excel 업로드'}</div>
-      <div className="wizard-panel-desc">시작 전 아래 안내 사항을 확인해주세요.</div>
-    </div>
-    {instructions && (
-      <div style={{ background: '#EBF3FF', border: '1px solid #BDDCFF', borderRadius: '12px', padding: '18px 22px', marginBottom: '18px' }}>
-        <div style={{ fontWeight: 700, color: '#1B6CF2', fontSize: '0.85rem', marginBottom: '6px' }}>📢 관리자 안내 및 주의사항</div>
-        <div style={{ color: '#1B4FBF', fontSize: '0.88rem', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{instructions}</div>
-      </div>
-    )}
-    {sampleFileName && (
-      <div style={{ background: '#f0fdf4', border: '1px solid #a7f3d0', borderRadius: '12px', padding: '18px 22px', marginBottom: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+const showFileTypeAlert = () => {
+  Swal.fire({
+    icon: 'warning',
+    title: '.xls/.xlsx 파일만 업로드할 수 있습니다.',
+    confirmButtonColor: '#6366f1',
+  });
+};
+
+const UserGuideModal = ({ instructions, sampleFileName, downloadSampleFile, onClose }) => (
+  <div className="excel-modal-overlay" onClick={onClose}>
+    <div className="excel-modal user-guide-modal" onClick={e => e.stopPropagation()}>
+      <div className="excel-modal-head">
         <div>
-          <div style={{ fontWeight: 700, color: '#065f46', fontSize: '0.95rem' }}>📥 샘플 양식 파일</div>
-          <div style={{ color: '#059669', fontSize: '0.82rem', marginTop: '3px' }}>양식에 맞게 작성한 후 업로드해주세요.</div>
+          <div className="excel-modal-kicker">Upload Guide</div>
+          <div className="excel-modal-title">업로드 안내</div>
         </div>
-        <button onClick={downloadSampleFile} style={{ padding: '10px 18px', borderRadius: '10px', border: 'none', background: '#10b981', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>⬇️ 양식 다운로드</button>
+        <button className="excel-modal-close" onClick={onClose}>닫기</button>
       </div>
-    )}
-    <div style={{ background: '#fff8ed', border: '1px solid #fed7aa', borderRadius: '12px', padding: '14px 18px' }}>
-      <div style={{ fontWeight: 700, color: '#c2410c', marginBottom: '6px', fontSize: '0.85rem' }}>⚠️ 공통 주의사항</div>
-      <ul style={{ margin: 0, paddingLeft: '18px', color: '#9a3412', fontSize: '0.83rem', lineHeight: 1.8 }}>
-        <li>.xls 또는 .xlsx 형식만 지원합니다.</li>
-        <li>DRM(보안) 해제된 파일만 업로드 가능합니다.</li>
-        <li>업로드 완료 전 브라우저를 닫지 마세요.</li>
-      </ul>
+      <div className="excel-modal-body">
+        {instructions && (
+          <div className="user-guide-section">
+            <div className="user-guide-title">관리자 안내 및 주의사항</div>
+            <div className="user-guide-text">{instructions}</div>
+          </div>
+        )}
+        {sampleFileName && (
+          <div className="user-guide-section">
+            <div className="user-guide-title">샘플 양식 파일</div>
+            <div className="user-guide-text">관리자가 제공한 양식에 맞게 작성한 후 업로드해 주세요.</div>
+            <button className="side-action-btn side-action-btn-green" onClick={downloadSampleFile}>샘플 양식 다운로드</button>
+          </div>
+        )}
+        <div className="user-guide-section">
+          <div className="user-guide-title">공통 주의사항</div>
+          <ul className="user-guide-list">
+            <li>.xls 또는 .xlsx 형식만 지원합니다.</li>
+            <li>DRM(보안) 해제된 파일만 업로드 가능합니다.</li>
+            <li>업로드 완료 전 브라우저를 닫지 마세요.</li>
+          </ul>
+        </div>
+      </div>
+      <div className="excel-modal-footer">
+        <button className="side-action-btn side-action-btn-primary" onClick={onClose}>확인</button>
+      </div>
     </div>
   </div>
 );
+
+const UserIntroStep = ({ jobName, instructions, sampleFileName, downloadSampleFile }) => {
+  const [guideOpen, setGuideOpen] = React.useState(false);
+  return (
+    <div className="wizard-panel user-intro-minimal">
+      <div className="user-intro-card">
+        <div>
+          <div className="admin-stage-eyebrow">Excel Upload</div>
+          <div className="wizard-panel-title">{jobName || 'Excel 업로드'}</div>
+          <div className="wizard-panel-desc">필요한 안내는 모달에서 확인하고 바로 파일 업로드 단계로 이동합니다.</div>
+        </div>
+        <button className="side-action-btn side-action-btn-primary" onClick={() => setGuideOpen(true)}>안내 보기</button>
+      </div>
+      {guideOpen && (
+        <UserGuideModal
+          instructions={instructions}
+          sampleFileName={sampleFileName}
+          downloadSampleFile={downloadSampleFile}
+          onClose={() => setGuideOpen(false)}
+        />
+      )}
+    </div>
+  );
+};
 
 const UserWorkbenchStep = ({
   file,
@@ -48,7 +87,6 @@ const UserWorkbenchStep = ({
   progress,
   totalRows,
   excelHeaders,
-  historyList,
   uploading,
   isDragging,
   setIsDragging,
@@ -101,6 +139,7 @@ const UserWorkbenchStep = ({
 }) => {
   const [previewSearchTerm, setPreviewSearchTerm] = React.useState('');
   const [showErrorColumnsOnly, setShowErrorColumnsOnly] = React.useState(false);
+  const [guideOpen, setGuideOpen] = React.useState(false);
   const hasFile = !!file;
   const hasPreview = previewData.length > 0;
   const knownFailedRows = getKnownFailedRowNumbers();
@@ -257,7 +296,7 @@ const UserWorkbenchStep = ({
             <div className="upload-stat-card">
               <div className="upload-stat-label">다음 액션</div>
               <div className="upload-stat-note">
-                {uploadResult.status === 'ok' ? '새 파일 업로드 또는 최근 이력 확인' : '실패 행 수정 또는 오류 리포트 확인'}
+                {uploadResult.status === 'ok' ? '새 파일 업로드 또는 대시보드 확인' : '실패 행 수정 또는 오류 리포트 확인'}
               </div>
             </div>
           </div>
@@ -276,13 +315,13 @@ const UserWorkbenchStep = ({
             {uploadResult.status === 'ok' && (
               <div className="result-priority-card priority-success">
                 <div className="result-priority-title">권장 다음 작업</div>
-                <div className="result-priority-desc">같은 양식으로 이어서 업로드하거나 최근 이력을 확인하세요.</div>
+                <div className="result-priority-desc">같은 양식으로 이어서 업로드하거나 대시보드에서 전체 이력을 확인하세요.</div>
               </div>
             )}
             {uploadResult.status === 'partial' && (
               <div className="result-priority-card priority-warning">
                 <div className="result-priority-title">먼저 실패 행 수정이 가장 빠릅니다</div>
-                <div className="result-priority-desc">오류 리포트보다 먼저 미리보기 작업대로 돌아가 빨간 셀만 수정하면 재업로드가 더 빠릅니다.</div>
+                <div className="result-priority-desc">오류 리포트보다 먼저 미리보기로 돌아가 빨간 셀만 수정하면 재업로드가 더 빠릅니다.</div>
               </div>
             )}
             {uploadResult.status === 'err' && (
@@ -329,7 +368,7 @@ const UserWorkbenchStep = ({
           {uploadResult.status === 'err' && (
             <div className="result-list-card result-list-card-error">
               <div className="result-list-title">상세 원인</div>
-              <div className="result-error-raw">{uploadResult.msg}</div>
+              <div className="result-error-raw">{translateError(uploadResult.msg).friendlyMsg}</div>
               {uploadResult.solution && <div className="result-list-tip">💡 {uploadResult.solution}</div>}
             </div>
           )}
@@ -353,23 +392,6 @@ const UserWorkbenchStep = ({
             </button>
           </div>
 
-          {historyList.length > 0 && (
-            <div style={{ marginTop: '8px' }}>
-              <div className="wiz-section-title" style={{ marginBottom: '10px' }}>📜 최근 업로드 이력</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
-                {historyList.slice(0, 5).map((h, i) => (
-                  <div key={i} className="history-item">
-                    <div className="history-item-header"><span className="history-item-job">{h.job_name}</span><span className="history-item-time">{h.reg_dttm?.substring(0, 16)}</span></div>
-                    <div className="history-item-file">📁 {h.file_name}</div>
-                    <div className="history-item-stats">
-                      <span className="stat-chip success">✅ {h.success_cnt?.toLocaleString()}건 성공</span>
-                      {(h.fail_cnt > 0 || h.error_file) && <span className="stat-chip fail" onClick={() => downloadErrorReport(h.error_file)}>🚨 {h.fail_cnt?.toLocaleString() || 0}건 실패</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       ) : uploading ? (
         <div className="upload-flow-stack">
@@ -449,6 +471,7 @@ const UserWorkbenchStep = ({
         <div className="upload-flow-stack">
           <div className="focus-workbench-hero">
             <div className={`focus-hero-main focus-hero-main-${validationTone}`}>
+              <button className="inline-control-btn user-workbench-help-btn" onClick={() => setGuideOpen(true)}>안내</button>
               <div className="focus-hero-kicker">작업 세션</div>
               <div className="focus-hero-title-row">
                 <div className="focus-hero-title">{sessionModeLabel}</div>
@@ -473,29 +496,14 @@ const UserWorkbenchStep = ({
               </div>
             </div>
           </div>
-
-          <div className="preflight-checklist-card">
-            <div className="preflight-checklist-head">
-              <div>
-                <div className="preflight-checklist-title">업로드 전 체크리스트</div>
-                <div className="preflight-checklist-desc">실행 전에 가장 자주 헷갈리는 지점을 빠르게 확인합니다.</div>
-              </div>
-              <div className={`preflight-checklist-summary ${checklistItems.every(item => item.ok) ? 'ok' : 'warn'}`}>
-                {checklistItems.filter(item => item.ok).length} / {checklistItems.length} 통과
-              </div>
-            </div>
-            <div className="preflight-checklist-grid">
-              {checklistItems.map(item => (
-                <div key={item.label} className={`preflight-check-item ${item.ok ? 'ok' : 'warn'}`}>
-                  <div className="preflight-check-icon">{item.ok ? '✓' : '!'}</div>
-                  <div>
-                    <div className="preflight-check-label">{item.label}</div>
-                    <div className="preflight-check-detail">{item.detail}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          {guideOpen && (
+            <UserGuideModal
+              instructions={instructions}
+              sampleFileName={sampleFileName}
+              downloadSampleFile={downloadSampleFile}
+              onClose={() => setGuideOpen(false)}
+            />
+          )}
 
           {!hasFile ? (
             <div className="upload-workspace-grid workbench-grid-empty">
@@ -512,7 +520,7 @@ const UserWorkbenchStep = ({
                     setIsDragging(false);
                     const dropped = e.dataTransfer.files[0];
                     if (dropped && (dropped.name.endsWith('.xlsx') || dropped.name.endsWith('.xls'))) processSelectedFile(dropped);
-                    else if (dropped) toast.error('❌ .xls/.xlsx만 가능합니다.');
+                    else if (dropped) showFileTypeAlert();
                   }}
                 >
                   <input type="file" id="fileInput" accept=".xls,.xlsx" style={{ display: 'none' }} onChange={e => { const selected = e.target.files[0]; if (selected) processSelectedFile(selected); }} />
@@ -528,50 +536,20 @@ const UserWorkbenchStep = ({
               </div>
 
               <div className="workspace-side-stack workspace-side-stack-focus">
-                {sampleFileName && (
-                  <div className="workspace-card workspace-card-guide">
-                    <div className="workspace-card-title">양식 먼저 확인</div>
-                    <div className="workspace-guide-list">
-                      <div>관리자가 제공한 샘플 양식으로 작성하면 오류를 크게 줄일 수 있습니다.</div>
-                      <div>대표 컬럼 형식과 입력 규칙을 먼저 확인해 두세요.</div>
-                    </div>
-                    <button className="side-action-btn side-action-btn-green" onClick={downloadSampleFile}>⬇️ 샘플 양식 다운로드</button>
-                  </div>
-                )}
-                <div className="workspace-card">
-                  <div className="workspace-card-title">업로드 전 체크</div>
-                  <div className="workspace-guide-list">
-                    <div>헤더 줄 위치가 실제 양식과 맞는지 확인합니다.</div>
-                    <div>빈 칸, 중복값, 길이 초과 가능성이 큰 컬럼을 먼저 살펴보세요.</div>
-                    <div>대량 업로드 중에는 브라우저를 닫지 않는 것이 안전합니다.</div>
-                  </div>
+                <div className="workspace-card workspace-card-guide compact-settings-card">
+                  <div className="workspace-card-title">보조 메뉴</div>
+                  <button className="side-action-btn" onClick={() => setGuideOpen(true)}>안내 및 샘플 확인</button>
+                  {sampleFileName && <button className="side-action-btn side-action-btn-green" onClick={downloadSampleFile}>샘플 다운로드</button>}
                 </div>
               </div>
             </div>
           ) : (
             <div className="upload-workspace-grid workbench-grid-focus">
               <div className="workspace-main-stack">
-                <div className="workspace-card workspace-card-session">
-                  <div className="workspace-card-head">
-                    <div>
-                      <div className="workspace-card-title">현재 작업 세션</div>
-                      <div className="workspace-card-desc">파일 맥락과 현재 수정 상태를 유지한 채 바로 작업대에서 이어서 처리합니다.</div>
-                    </div>
-                    <button className="side-action-btn side-action-btn-danger" onClick={clearSelectedFile}>파일 제거</button>
-                  </div>
-                  <div className="summary-chip-list summary-chip-list-session">
-                    <span className="summary-chip strong">{file.name}</span>
-                    <span className="summary-chip">{formatFileSize(file.size)}</span>
-                    <span className="summary-chip">헤더 {excelHeaders.length}개</span>
-                    <span className="summary-chip">데이터 {totalRows.toLocaleString()}건</span>
-                    <span className="summary-chip">헤더 기준 {headerRow}행</span>
-                  </div>
-                </div>
-
                 <div className="workspace-card workspace-card-workbench">
                   <div className="workspace-card-head">
                     <div>
-                      <div className="workspace-card-title">오류 수정 작업대</div>
+                      <div className="workspace-card-title">미리보기</div>
                       <div className="workspace-card-desc">오류가 있는 행은 빨간색, 수정한 행은 노란색으로 표시됩니다.</div>
                     </div>
                     <div className="summary-chip-list">
@@ -742,9 +720,9 @@ const UserWorkbenchStep = ({
                                               📌 {c.colLabel} 컬럼
                                             </span>
                                           ))}
-                                          <span style={{ color: '#9f1239', fontSize: '0.68rem', lineHeight: 1.5, wordBreak: 'break-all' }}>
-                                            {failMsg}
-                                          </span>
+                                    <span style={{ color: '#9f1239', fontSize: '0.68rem', lineHeight: 1.5, wordBreak: 'break-word' }}>
+                                      {friendlyMsg || translateError(failMsg).friendlyMsg}
+                                    </span>
                                         </div>
                                       </td>
                                     </tr>
@@ -787,8 +765,19 @@ const UserWorkbenchStep = ({
 
               <div className="workspace-side-stack workspace-side-stack-sticky">
                 <div className={`workspace-card workspace-card-${hasKnownFailedRows || hasUnknownFailedRows ? 'warning' : 'positive'} workspace-card-command`}>
-                  <div className="workspace-card-title">{uploadReadyLabel}</div>
-                  <div className="workspace-card-desc">{uploadReadyDesc}</div>
+                  <div className="workspace-card-head">
+                    <div>
+                      <div className="workspace-card-title">{uploadReadyLabel}</div>
+                      <div className="workspace-card-desc">{uploadReadyDesc}</div>
+                    </div>
+                    <button className="side-action-btn side-action-btn-danger" onClick={clearSelectedFile}>파일 제거</button>
+                  </div>
+                  <div className="summary-chip-list summary-chip-list-session">
+                    <span className="summary-chip strong">{file.name}</span>
+                    <span className="summary-chip">{formatFileSize(file.size)}</span>
+                    <span className="summary-chip">헤더 {excelHeaders.length}개</span>
+                    <span className="summary-chip">데이터 {totalRows.toLocaleString()}건</span>
+                  </div>
                   <div className="workspace-guide-list compact workspace-guide-list-command">
                     <div>헤더 기준: {headerRow}행</div>
                     <div>수정된 행: {editedRowCount}건</div>
@@ -846,32 +835,6 @@ const UserWorkbenchStep = ({
                   </div>
                 </div>
 
-                <div className="workspace-card workspace-card-guide-compact">
-                  <div className="workspace-card-title">작업 가이드</div>
-                  <div className="workspace-guide-list">
-                    <div>오류 행은 빨간색 띠와 함께 표시됩니다.</div>
-                    <div>강조된 셀만 수정하면 나머지 값은 그대로 유지됩니다.</div>
-                    <div>문제가 없는 경우 바로 업로드 실행으로 넘어가면 됩니다.</div>
-                  </div>
-                </div>
-
-                {historyList.length > 0 && (
-                  <div className="workspace-card">
-                    <div className="workspace-card-title">최근 업로드 이력</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto', marginTop: '12px' }}>
-                      {historyList.slice(0, 5).map((h, i) => (
-                        <div key={i} className="history-item">
-                          <div className="history-item-header"><span className="history-item-job">{h.job_name}</span><span className="history-item-time">{h.reg_dttm?.substring(0, 16)}</span></div>
-                          <div className="history-item-file">📁 {h.file_name}</div>
-                          <div className="history-item-stats">
-                            <span className="stat-chip success">✅ {h.success_cnt?.toLocaleString()}건 성공</span>
-                            {(h.fail_cnt > 0 || h.error_file) && <span className="stat-chip fail" onClick={() => downloadErrorReport(h.error_file)}>🚨 {h.fail_cnt?.toLocaleString() || 0}건 실패</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -887,6 +850,8 @@ const UserUploadScreen = ({
   isLastStep,
   goPrev,
   goNext,
+  onStepClick,
+  canNavigateStep,
   canGoNext,
   nextLabel,
   hideNextBtn,
@@ -897,25 +862,25 @@ const UserUploadScreen = ({
     : <UserWorkbenchStep {...userStepProps} />;
 
   return (
-    <>
-      <StepIndicator steps={steps} current={currentStep} />
-      <div style={{ background: 'white', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.07), 0 4px 20px rgba(0,0,0,0.04)', border: '1px solid #f1f5f9', overflow: 'hidden' }}>
+    <div className="wizard-shell">
+      <StepIndicator steps={steps} current={currentStep} onStepClick={onStepClick} canNavigateStep={canNavigateStep} />
+      <div className="wizard-content-card">
         {content}
         {!isLastStep && (
-          <div style={{ padding: '18px 32px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fafafa' }}>
-            <button onClick={goPrev} disabled={currentStep === 0} style={{ padding: '10px 22px', borderRadius: '10px', border: '1px solid #e2e8f0', background: 'white', color: currentStep === 0 ? '#cbd5e1' : '#475569', fontWeight: 600, cursor: currentStep === 0 ? 'not-allowed' : 'pointer', fontSize: '0.88rem' }}>
-              ← 이전
+          <div className="wizard-footer">
+            <button type="button" onClick={goPrev} disabled={currentStep === 0} className="wizard-nav-btn secondary">
+              이전
             </button>
-            <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{currentStep + 1} / {steps.length}</span>
+            <span className="wizard-footer-count">{currentStep + 1} / {steps.length}</span>
             {!hideNextBtn ? (
-              <button onClick={goNext} disabled={!canGoNext} style={{ padding: '10px 26px', borderRadius: '10px', border: 'none', background: canGoNext ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : '#e2e8f0', color: canGoNext ? 'white' : '#94a3b8', fontWeight: 700, cursor: canGoNext ? 'pointer' : 'not-allowed', fontSize: '0.88rem', boxShadow: canGoNext ? '0 2px 8px rgba(99,102,241,0.28)' : 'none' }}>
+              <button type="button" onClick={goNext} disabled={!canGoNext} className="wizard-nav-btn primary">
                 {nextLabel}
               </button>
             ) : <div />}
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 };
 

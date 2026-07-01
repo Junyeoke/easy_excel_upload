@@ -1,7 +1,7 @@
 // ExcelUploadEngineService.java
 package com.steg.lit.service;
 
-import com.steg.lit.repository.ExcelUploadEngineRepository;  // 추가
+import com.steg.lit.repository.ExcelUploadEngineRepository;  // 추�?
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,13 +14,13 @@ import java.util.*;
 /**
  * =====================================================================
  * [ExcelUploadEngineService]
- * 역할: 엑셀 업로드 관련 모든 비즈니스 로직을 담당합니다.
- *   - 엑셀 파일 파싱 / 셀 값 추출
- *   - 계층형 Cascade INSERT / UPSERT 처리
- *   - Batch 실행 / 오류 추적 / 오류 리포트 생성
- *   - Pre/Post/Row SQL 실행
- *   - JSON 파싱 / 직렬화
- *   - Base64 디코딩 및 문자열 유틸
+ * ??��: ?��? ?�로??관??모든 비즈?�스 로직???�당?�니??
+ *   - ?��? ?�일 ?�싱 / ?� �?추출
+ *   - 계층??Cascade INSERT / UPSERT 처리
+ *   - Batch ?�행 / ?�류 추적 / ?�류 리포???�성
+ *   - Pre/Post/Row SQL ?�행
+ *   - JSON ?�싱 / 직렬??
+ *   - Base64 ?�코??�?문자???�틸
  * =====================================================================
  */
 @Service
@@ -102,18 +102,18 @@ public class ExcelUploadEngineService {
     }
 
     // =====================================================================
-    // 1. 엑셀 파일 파싱 유틸
+    // 1. ?��? ?�일 ?�싱 ?�틸
     // =====================================================================
 
     /**
-     * Cell 타입 문자열 반환 (POI 버전 호환)
+     * Cell ?�??문자??반환 (POI 버전 ?�환)
      *
-     * ✅ [Fix] 기존 단일 메서드 캐싱 버그 수정
-     * - 색상/서식이 있는 셀은 내부 구현 클래스가 다를 수 있음
-     *   (XSSFCell, XSSFFormulaEvaluatingCell 등)
-     * - 첫 번째 셀 클래스로 캐싱한 Method를 다른 클래스 인스턴스에 invoke하면
-     *   IllegalArgumentException 발생 → catch에서 "BLANK" 반환 → 값 무시
-     * - 클래스별로 Method를 캐싱하도록 수정
+     * ??[Fix] 기존 ?�일 메서??캐싱 버그 ?�정
+     * - ?�상/?�식???�는 ?�?� ?��? 구현 ?�래?��? ?��? ???�음
+     *   (XSSFCell, XSSFFormulaEvaluatingCell ??
+     * - �?번째 ?� ?�래?�로 캐싱??Method�??�른 ?�래???�스?�스??invoke?�면
+     *   IllegalArgumentException 발생 ??catch?�서 "BLANK" 반환 ??�?무시
+     * - ?�래?�별�?Method�?캐싱?�도�??�정
      */
     private final java.util.concurrent.ConcurrentHashMap<String, java.lang.reflect.Method>
         _cellTypeMethodCache = new java.util.concurrent.ConcurrentHashMap<>();
@@ -140,13 +140,13 @@ public class ExcelUploadEngineService {
     }
 
     /**
-     * 셀 값 문자열 반환
+     * ?� �?문자??반환
      *
-     * ✅ [Fix] 색상/배경색 셀 인식 강화
-     * - getCellTypeStr 캐싱 버그 수정으로 서식 셀 타입 정상 인식
-     * - DataFormatter 를 추가 폴백으로 사용해 커스텀 숫자 포맷
-     *   ([Red]0, [색1]#,##0 등)이 적용된 셀도 값 추출 가능
-     * - 리치텍스트(글자별 색상) 셀도 getStringCellValue()로 텍스트 정상 반환
+     * ??[Fix] ?�상/배경???� ?�식 강화
+     * - getCellTypeStr 캐싱 버그 ?�정?�로 ?�식 ?� ?�???�상 ?�식
+     * - DataFormatter �?추�? ?�백?�로 ?�용??커스?� ?�자 ?�맷
+     *   ([Red]0, [??]#,##0 ?????�용???�??�?추출 가??
+     * - 리치?�스??글?�별 ?�상) ?�??getStringCellValue()�??�스???�상 반환
      */
     public String getCellValue(org.apache.poi.ss.usermodel.Cell cell) {
         if (cell == null) return "";
@@ -154,7 +154,7 @@ public class ExcelUploadEngineService {
             String typeStr = getCellTypeStr(cell);
 
             if ("STRING".equals(typeStr)) {
-                // 리치텍스트(글자별 색상 적용)도 getStringCellValue()로 plain text 반환
+                // 리치?�스??글?�별 ?�상 ?�용)??getStringCellValue()�?plain text 반환
                 return cell.getStringCellValue();
             }
 
@@ -163,14 +163,14 @@ public class ExcelUploadEngineService {
                     return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(cell.getDateCellValue());
                 }
                 double dVal = cell.getNumericCellValue();
-                // ✅ 커스텀 숫자 포맷([Red]0 등)이 적용된 셀: DataFormatter로 표시값 읽기 후
-                //    숫자만 추출 시도, 실패하면 원시 숫자값 사용
+                // ??커스?� ?�자 ?�맷([Red]0 ?????�용???�: DataFormatter�??�시�??�기 ??
+                //    ?�자�?추출 ?�도, ?�패?�면 ?�시 ?�자�??�용
                 try {
                     org.apache.poi.ss.usermodel.DataFormatter df =
                         new org.apache.poi.ss.usermodel.DataFormatter();
                     String formatted = df.formatCellValue(cell).trim();
                     if (!formatted.isEmpty() && !"0".equals(formatted)) {
-                        // 포맷 문자열에서 색상 코드([Red],[Blue] 등) 제거 후 반환
+                        // ?�맷 문자?�에???�상 코드([Red],[Blue] ?? ?�거 ??반환
                         formatted = formatted.replaceAll("^\\[.*?\\]", "").trim();
                         if (!formatted.isEmpty()) return formatted;
                     }
@@ -182,7 +182,7 @@ public class ExcelUploadEngineService {
             if ("BOOLEAN".equals(typeStr)) return String.valueOf(cell.getBooleanCellValue());
 
             if ("FORMULA".equals(typeStr)) {
-                // ✅ FormulaEvaluator로 수식 결과값을 직접 평가
+                // ??FormulaEvaluator�??�식 결과값을 직접 ?��?
                 try {
                     org.apache.poi.ss.usermodel.FormulaEvaluator evaluator =
                         cell.getSheet().getWorkbook().getCreationHelper().createFormulaEvaluator();
@@ -199,7 +199,7 @@ public class ExcelUploadEngineService {
                     }
                     if ("STRING".equals(evalType)  || "1".equals(evalType)) return evaluated.getStringValue();
                     if ("BOOLEAN".equals(evalType) || "4".equals(evalType)) return String.valueOf(evaluated.getBooleanValue());
-                    // 평가 후에도 타입 불명확하면 DataFormatter로 마지막 시도
+                    // ?��? ?�에???�??불명?�하�?DataFormatter�?마�?�??�도
                     try {
                         org.apache.poi.ss.usermodel.DataFormatter df =
                             new org.apache.poi.ss.usermodel.DataFormatter();
@@ -208,7 +208,7 @@ public class ExcelUploadEngineService {
                     } catch (Throwable ignore) {}
                     return "";
                 } catch (Throwable evalEx) {
-                    // FormulaEvaluator 실패 시 원시값으로 폴백
+                    // FormulaEvaluator ?�패 ???�시값으�??�백
                     try { return cell.getStringCellValue(); } catch (Throwable ig) {}
                     try {
                         double v = cell.getNumericCellValue();
@@ -225,7 +225,7 @@ public class ExcelUploadEngineService {
         try {
             return org.apache.poi.ss.usermodel.WorkbookFactory.create(bis);
         } catch (Throwable e) {
-            throw new Exception("엑셀 파일을 열 수 없습니다: " + e.getMessage());
+            throw new Exception("?��? ?�일???????�습?�다: " + e.getMessage());
         }
     }
 
@@ -235,7 +235,7 @@ public class ExcelUploadEngineService {
             try {
                 Class<?> cls = Class.forName("org.apache.poi.xssf.usermodel.XSSFWorkbook");
                 return (org.apache.poi.ss.usermodel.Workbook) cls.getDeclaredConstructor().newInstance();
-            } catch (Throwable ex) { throw new Exception("XSSFWorkbook 생성 실패"); }
+            } catch (Throwable ex) { throw new Exception("XSSFWorkbook ?�성 ?�패"); }
         }
     }
 
@@ -245,7 +245,7 @@ public class ExcelUploadEngineService {
     }
 
     // =====================================================================
-    // 2. 계층형 Cascade INSERT / UPSERT (핵심 로직)
+    // 2. 계층??Cascade INSERT / UPSERT (?�심 로직)
     // =====================================================================
 
     @SuppressWarnings("unchecked")
@@ -254,10 +254,11 @@ public class ExcelUploadEngineService {
             String currentAlias, String parentId, Object iceObj, Object ukeyObj,
             Map<String, Set<String>> metaMap, List<?> rowSqls,
             Map<String, Object> psCache, Map<String, List<String>> sqlParamOrderCache,
-            ExcelUploadEngineRepository.FastSequenceManager seqMgr
+            ExcelUploadEngineRepository.FastSequenceManager seqMgr,
+            boolean keepEmptyValues
     ) throws Exception {
 
-        // 현재 alias에 해당하는 struct 탐색
+        // ?�재 alias???�당?�는 struct ?�색
         Map<String, Object> currentStruct = null;
         for (Object sObj : structs) {
             Map<String, Object> candidate = (Map<String, Object>) sObj;
@@ -271,8 +272,8 @@ public class ExcelUploadEngineService {
         Map<?, ?> aliasMap = (Map<?, ?>) allMaps.get(currentAlias);
         if (aliasMap == null) aliasMap = new java.util.LinkedHashMap<>();
 
-        // ── 업데이트 키 컬럼 파싱 ──
-        // struct에 "upsert_keys": ["col1","col2"] 형태로 지정
+        // ?�?� ?�데?�트 ??컬럼 ?�싱 ?�?�
+        // struct??"upsert_keys": ["col1","col2"] ?�태�?지??
         List<String> upsertKeys = new ArrayList<>();
         Object upsertKeysObj = currentStruct.get("upsert_keys");
         if (upsertKeysObj instanceof List) {
@@ -283,7 +284,7 @@ public class ExcelUploadEngineService {
         }
         boolean isUpsertMode = !upsertKeys.isEmpty();
 
-        // ── 신규 PK 채번 ──
+        // ?�?� ?�규 PK 채번 ?�?�
         Map<String, Object> data = new HashMap<>();
         String newId = "", entityId = (String) currentStruct.get("ent_id");
         if (entityId == null || entityId.trim().isEmpty()) {
@@ -308,7 +309,7 @@ public class ExcelUploadEngineService {
                         if (entObj != null) newId = (String) entObj.getClass().getMethod("fetchNewKey").invoke(entObj);
                     }
                 } catch (Throwable iceEx) {
-                    log.info("[ExcelUpload] ICE 채번 실패 (UniqueKey로 폴백): entityId={}, err={}", entityId, iceEx.getMessage());
+                    log.info("[ExcelUpload] ICE 채번 ?�패 (UniqueKey�??�백): entityId={}, err={}", entityId, iceEx.getMessage());
                 }
             }
         }
@@ -317,13 +318,13 @@ public class ExcelUploadEngineService {
                 java.lang.reflect.Method ukeyFetch = (java.lang.reflect.Method) psCache.get("_UKEY_METHOD_");
                 if (ukeyFetch != null) newId = (String) ukeyFetch.invoke(ukeyObj);
             } catch (Throwable ukEx) {
-                log.error("[ExcelUpload] ❌ UniqueKey 채번 실패 - PK 생성 불가: {}", ukEx.getMessage());
-                throw new Exception("PK 채번 오류: " + ukEx.getMessage());
-                // ✅ 여기서 throw는 유지 - 행별 catch(Exception rowEx)에서 잡혀 행별 오류로 표시됨
+                log.error("[ExcelUpload] ??UniqueKey 채번 ?�패 - PK ?�성 불�?: {}", ukEx.getMessage());
+                throw new Exception("PK 채번 ?�류: " + ukEx.getMessage());
+                // ???�기??throw???��? - ?�별 catch(Exception rowEx)?�서 ?��? ?�별 ?�류�??�시??
             }
         }
 
-        // ── 컬럼 매핑 처리 ──
+        // ?�?� 컬럼 매핑 처리 ?�?�
         for (Map.Entry<?, ?> entry : aliasMap.entrySet()) {
             String dbCol    = (String) entry.getKey();
             String mappingVal = String.valueOf(entry.getValue());
@@ -332,6 +333,15 @@ public class ExcelUploadEngineService {
 
             if ("_AUTO_SEQ_".equals(mappingVal)) {
                 data.put(dbCol, newId);
+            } else if (isCurrentDateMapping(mappingVal)) {
+                // 2026-06-20: 관리자 컬럼 매핑의 현재 날짜 특수값을 선택한 포맷으로 치환한다.
+                data.put(dbCol, getCurrentDateValue(mappingVal));
+            } else if ("_LOGIN_USER_".equals(mappingVal)) {
+                // 2026-06-20: 관리자 컬럼 매핑의 현재 로그인 사용자 특수값을 업로드 요청값으로 치환한다.
+                data.put(dbCol, getRuntimeMappingValue(psCache, "_LOGIN_USER_"));
+            } else if ("_LOGIN_MTN_".equals(mappingVal)) {
+                // 2026-06-20: 관리자 컬럼 매핑의 현재 로그인 MTN 특수값을 업로드 요청값으로 치환한다.
+                data.put(dbCol, getRuntimeMappingValue(psCache, "_LOGIN_MTN_"));
             } else if (mappingVal.startsWith("_FIXED_:")) {
                 data.put(dbCol, mappingVal.substring(8));
             } else if (mappingVal.startsWith("_REPLACE_:")) {
@@ -361,11 +371,11 @@ public class ExcelUploadEngineService {
             }
         }
 
-        // ── PK / FK 세팅 ──
+        // ?�?� PK / FK ?�팅 ?�?�
         String pkCol = (String) currentStruct.get("pk_col");
         if (pkCol != null && !pkCol.trim().isEmpty()) {
             if (!isValidSqlIdentifier(pkCol)) throw new Exception("Invalid PK column: [" + pkCol + "]");
-            // upsert 모드일 때 PK는 UPDATE 분기에서 사용 안 함 (새 채번 불필요)
+            // upsert 모드????PK??UPDATE 분기?�서 ?�용 ????(??채번 불필??
             if (!isUpsertMode) {
                 data.put(pkCol, newId);
             }
@@ -377,14 +387,18 @@ public class ExcelUploadEngineService {
                 data.put(fkCol, parentId);
             }
         }
+        boolean recordExists = false;
+        if (isUpsertMode) {
+            recordExists = checkRecordExists(conn, tableName, upsertKeys, data, psCache);
+        }
 
-        // ── 컬럼 제약 사전 검증 (DB 전송 전 모든 오류 컬럼 탐지) ──────────────
+        // ?�?� 컬럼 ?�약 ?�전 검�?(DB ?�송 ??모든 ?�류 컬럼 ?��?) ?�?�?�?�?�?�?�?�?�?�?�?�?�?�
         if (!data.isEmpty()) {
             Map<String, Object> colConstraints = (Map<String, Object>) psCache.get("_COL_CONSTRAINTS_:" + tableName);
             if (colConstraints == null) {
                 colConstraints = repository.getColumnConstraints(conn, tableName);
                 psCache.put("_COL_CONSTRAINTS_:" + tableName, colConstraints);
-                log.info("[ExcelUpload][PreValid] 테이블 '{}' 컬럼 제약 로드 완료 - lengths={}, notnulls={}",
+                log.info("[ExcelUpload][PreValid] \uC774\uC804 '{}' \uCEF4\uB7FC \uC81C\uC57D \uB85C\uB4DC \uC644\uB8CC - lengths={}, notnulls={}",
                         tableName,
                         ((Map<?,?>)colConstraints.get("lengths")).size(),
                         ((Set<?>)colConstraints.get("notnulls")).size());
@@ -397,27 +411,28 @@ public class ExcelUploadEngineService {
             List<String> colErrors = new ArrayList<>();
             for (Map.Entry<String, Object> entry : data.entrySet()) {
                 String colLower = entry.getKey().toLowerCase();
-                // String.length() = Java 문자 수 (character count, not bytes)
-                // colLengths의 maxLen도 getPrecision() 기준 character count
+                // String.length() = Java 문자 ??(character count, not bytes)
+                // colLengths??maxLen??getPrecision() 기�? character count
                 String val = entry.getValue() == null ? "" : String.valueOf(entry.getValue()).trim();
 
-                // 길이 초과 검사 (문자 수 기준)
+                // 길이 초과 검??(문자 ??기�?)
                 if (colLengths != null) {
                     Integer maxLen = colLengths.get(colLower);
                     if (maxLen != null && maxLen > 0 && val.length() > maxLen) {
-                        log.info("[ExcelUpload][PreValid] 길이 초과 감지: col={}, maxLen={}, inputLen={}", colLower, maxLen, val.length());
+                        log.info("[ExcelUpload][PreValid] 길이 초과 감�?: col={}, maxLen={}, inputLen={}", colLower, maxLen, val.length());
                         colErrors.add(entry.getKey() + ":길이초과(최대" + maxLen + "자,입력" + val.length() + "자)");
                     }
                 }
-                // NOT NULL 검사 (PK/FK 컬럼은 시스템 생성이므로 제외)
+                // NOT NULL 검??(PK/FK 컬럼?� ?�스???�성?��?�??�외)
                 if (colNotNulls != null && colNotNulls.contains(colLower)) {
                     boolean isPkOrFk = colLower.equals(
                             currentStruct.get("pk_col") != null ? ((String)currentStruct.get("pk_col")).toLowerCase() : "__none__")
                             || (parentId != null && colLower.equals(
                             currentStruct.get("fk") != null ? ((String)currentStruct.get("fk")).toLowerCase() : "__none__"));
-                    if (!isPkOrFk && val.isEmpty()) {
-                        log.info("[ExcelUpload][PreValid] NOT NULL 위반 감지: col={}", colLower);
-                        colErrors.add(entry.getKey() + ":필수값누락");
+                    boolean preserveExistingValue = keepEmptyValues && isUpsertMode && recordExists && val.isEmpty();
+                    if (!isPkOrFk && val.isEmpty() && !preserveExistingValue) {
+                        log.info("[ExcelUpload][PreValid] NOT NULL ?�반 감�?: col={}", colLower);
+                        colErrors.add(entry.getKey() + ":NOT_NULL");
                     }
                 }
             }
@@ -426,22 +441,20 @@ public class ExcelUploadEngineService {
             }
         }
 
-        // ── UPSERT 분기 처리 ──
+
+        // ?�?� UPSERT 분기 처리 ?�?�
         if (!data.isEmpty()) {
 
             if (isUpsertMode) {
-                // ── upsert_keys로 DB 존재 여부 확인 ──
-                boolean recordExists = checkRecordExists(conn, tableName, upsertKeys, data, psCache);
-
                 if (recordExists) {
-                    // ─── UPDATE 경로 ─────────────────────────────────────
-                    String updCacheKey = "UPD::" + tableName + "::" + currentAlias;
+                    // ?�?�?� UPDATE 경로 ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+                    String updCacheKey = "UPD::" + tableName + "::" + currentAlias + "::" + (keepEmptyValues ? "KEEP_EMPTY" : "OVERWRITE");
                     PreparedStatement updPs = (PreparedStatement) psCache.get(updCacheKey);
                     List<String> updParamOrder = sqlParamOrderCache.get(updCacheKey);
 
                     if (updPs == null) {
                         Set<String> numericColumns = metaMap.get(tableName);
-                        Object[] sqlInfo = makeUpdateSql(tableName, data, upsertKeys, numericColumns);
+                        Object[] sqlInfo = makeUpdateSql(tableName, data, upsertKeys, numericColumns, keepEmptyValues);
                         String updateSql = (String) sqlInfo[0];
                         updPs = conn.prepareStatement(updateSql);
                         psCache.put(updCacheKey, updPs);
@@ -456,7 +469,7 @@ public class ExcelUploadEngineService {
                         String col = updParamOrder.get(pi);
                         String val = data.get(col) == null ? "" : String.valueOf(data.get(col));
                         val = val.trim();
-                        if (val.isEmpty() && numericColumns != null && numericColumns.contains(col.toLowerCase())) val = "0";
+                        if (!keepEmptyValues && val.isEmpty() && numericColumns != null && numericColumns.contains(col.toLowerCase())) val = "0";
                         updPs.setString(pi + 1, val);
                     }
                     List<String> updLogParams = new ArrayList<>();
@@ -466,7 +479,7 @@ public class ExcelUploadEngineService {
                     logPreparedSql(getCachedSqlText(psCache, updCacheKey), updLogParams);
                     updPs.addBatch();
 
-                    // 배치 트래커에 UPDATE 행 등록
+                    // 배치 ?�래커에 UPDATE ???�록
                     Map<String, List<org.apache.poi.ss.usermodel.Row>> batchTracker =
                         (Map<String, List<org.apache.poi.ss.usermodel.Row>>) psCache.get("_BATCH_TRACKER_");
                     if (batchTracker == null) {
@@ -477,29 +490,29 @@ public class ExcelUploadEngineService {
                     if (rowQueue == null) { rowQueue = new ArrayList<>(); batchTracker.put(updCacheKey, rowQueue); }
                     rowQueue.add(row);
 
-                    log.info("[ExcelUpload][UPDATE] 레코드 업데이트 배치 등록 완료 (키: {})", upsertKeys);
+                    log.info("[ExcelUpload][UPDATE] ?�코???�데?�트 배치 ?�록 ?�료 (?? {})", upsertKeys);
 
                 } else {
-                    // ─── INSERT 경로 (신규) ──────────────────────────────
-                    // 신규 INSERT 시에는 PK 채번값 세팅
+                    // ?�?�?� INSERT 경로 (?�규) ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+                    // ?�규 INSERT ?�에??PK 채번�??�팅
                     if (pkCol != null && !pkCol.trim().isEmpty()) {
                         data.put(pkCol, newId);
                     }
                     addInsertBatch(conn, tableName, currentAlias, pkCol, newId, data, metaMap, psCache, sqlParamOrderCache, row);
-                    log.info("[ExcelUpload][INSERT] 신규 레코드 삽입 배치 등록 (upsert 모드)");
+                    log.info("[ExcelUpload][INSERT] \uCD08\uae30 \uC778\uc2a4\ud134\uc2a4 \ubc30\uce58 \ub4f1\ub85d (upsert \ubaa8\ub4dc)");
                 }
 
             } else {
-                // ─── 순수 INSERT 경로 (기존 동작) ───────────────────────
+                // ?�?�?� ?�수 INSERT 경로 (기존 ?�작) ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
                 addInsertBatch(conn, tableName, currentAlias, pkCol, newId, data, metaMap, psCache, sqlParamOrderCache, row);
             }
 
-            // 임시 키 테이블 기록 (INSERT 시에만 의미 있음)
+            // ?�시 ???�이�?기록 (INSERT ?�에�??��? ?�음)
             if (!isUpsertMode && pkCol != null && !pkCol.trim().isEmpty() && newId != null && !newId.trim().isEmpty()) {
                 repository.insertTempUploadKey(conn, currentAlias, tableName, pkCol, newId, psCache);
             }
 
-            // Row-SQL 배치 추가
+            // Row-SQL 배치 추�?
             if (rowSqls != null && !rowSqls.isEmpty()) {
                 Map<String, String> tokens = new HashMap<>();
                 tokens.put("ALIAS",     currentAlias);
@@ -530,23 +543,23 @@ public class ExcelUploadEngineService {
                         }
                     }
                 } catch (Throwable rowSqlEx) {
-                    throw new Exception("Row-SQL 쿼리 배치 추가 오류 (NEW_ID=" + newId + "): " + rowSqlEx.getMessage());
+                    throw new Exception("Row-SQL 쿼리 배치 추�? ?�류 (NEW_ID=" + newId + "): " + rowSqlEx.getMessage());
                 }
             }
         }
 
-        // ── 자식 구조 재귀 처리 ──
+        // ?�?� ?�식 구조 ?��? 처리 ?�?�
         for (Object sObj : structs) {
             Map<String, Object> s = (Map<String, Object>) sObj;
             if (currentAlias.equals(s.get("parent"))) {
                 cascadeExcelInsert(conn, row, structs, allMaps, (String) s.get("alias"),
-                        newId, iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr);
+                        newId, iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr, keepEmptyValues);
             }
         }
     }
 
     /**
-     * [내부 헬퍼] INSERT 배치에 행 추가 (공통화)
+     * [?��? ?�퍼] INSERT 배치????추�? (공통??
      */
     @SuppressWarnings("unchecked")
     private void addInsertBatch(
@@ -588,7 +601,7 @@ public class ExcelUploadEngineService {
         logPreparedSql(getCachedSqlText(psCache, cacheKey), insertLogParams);
         ps.addBatch();
 
-        // Row 추적 (배치 오류 식별용)
+        // Row 추적 (배치 ?�류 ?�별??
         Map<String, List<org.apache.poi.ss.usermodel.Row>> batchTracker =
             (Map<String, List<org.apache.poi.ss.usermodel.Row>>) psCache.get("_BATCH_TRACKER_");
         if (batchTracker == null) {
@@ -601,9 +614,9 @@ public class ExcelUploadEngineService {
     }
 
     /**
-     * [신규] DB에 해당 키 값으로 레코드가 존재하는지 확인합니다.
-     * 존재 확인용 PreparedStatement는 "_CHK_" 접두사로 캐싱하여
-     * flushBatch 시 배치 실행 대상에서 제외됩니다.
+     * [?�규] DB???�당 ??값으�??�코?��? 존재?�는지 ?�인?�니??
+     * 존재 ?�인??PreparedStatement??"_CHK_" ?�두?�로 캐싱?�여
+     * flushBatch ??배치 ?�행 ?�?�에???�외?�니??
      */
     @SuppressWarnings("unchecked")
     private boolean checkRecordExists(
@@ -611,16 +624,16 @@ public class ExcelUploadEngineService {
             List<String> keyCols, Map<String, Object> data,
             Map<String, Object> psCache
     ) {
-        // 키 컬럼 중 하나라도 값이 없으면 존재 확인 불가 → INSERT로 처리
+        // ??컬럼 �??�나?�도 값이 ?�으�?존재 ?�인 불�? ??INSERT�?처리
         for (String keyCol : keyCols) {
             Object val = data.get(keyCol);
             if (val == null || String.valueOf(val).trim().isEmpty()) {
-                log.info("[ExcelUpload][UPSERT] 업데이트 키 컬럼 '{}' 값이 비어있어 INSERT로 처리합니다.", keyCol);
+                log.info("[ExcelUpload][UPSERT] \uB370\uC774\uD130\uC14B \uAD6C\uC131 \uCEF4\uB7FC '{}' \uAC12\uC774 \uBE44\uC5B4\uC11C INSERT\uB85C \uCC98\uB9AC\uD569\uB2C8\uB2E4.", keyCol);
                 return false;
             }
         }
 
-        // 캐시 키: "_CHK_" 접두사 → flushBatch에서 자동 제외됨
+        // 캐시 ?? "_CHK_" ?�두????flushBatch?�서 ?�동 ?�외??
         String chkKey = "_CHK_" + tableName + "_" + String.join("_", keyCols);
         try {
             PreparedStatement chkPs = (PreparedStatement) psCache.get(chkKey);
@@ -635,7 +648,7 @@ public class ExcelUploadEngineService {
                 chkPs = conn.prepareStatement(chkSql);
                 psCache.put(chkKey, chkPs);
                 cacheSqlText(psCache, chkKey, chkSql);
-                log.info("[ExcelUpload][UPSERT] 존재 확인 SQL 캐싱: {}", chkSql);
+                log.info("[ExcelUpload][UPSERT] \uC874\uC7AC \uD655\uC778 SQL \uCE90\uC2F1: {}", chkSql);
             }
 
             for (int i = 0; i < keyCols.size(); i++) {
@@ -652,13 +665,13 @@ public class ExcelUploadEngineService {
                 return rs.next() && rs.getInt(1) > 0;
             }
         } catch (Exception e) {
-            log.info("[ExcelUpload][UPSERT] 존재 확인 중 오류 (INSERT로 처리): {}", e.getMessage());
+            log.info("[ExcelUpload][UPSERT] \uC874\uC7AC \uD655\uC778 \uC2E4\uD328 (INSERT\uB85C \uCC98\uB9AC): {}", e.getMessage());
             return false;
         }
     }
 
     // =====================================================================
-    // 2-1. 업로드 전 검증 전용 (DB 저장 없음)
+    // 2-1. ?�로????검�??�용 (DB ?�???�음)
     // =====================================================================
     @SuppressWarnings("unchecked")
     public void validateCascadeRow(
@@ -728,7 +741,7 @@ public class ExcelUploadEngineService {
                         || (parentId != null && colLower.equals(
                                 currentStruct.get("fk") != null ? String.valueOf(currentStruct.get("fk")).toLowerCase() : "__none__"));
                 if (!isPkOrFk && val.isEmpty()) {
-                    colErrors.add(entry.getKey() + ":필수값누락");
+                    colErrors.add(entry.getKey() + ":NOT_NULL");
                 }
             }
         }
@@ -748,6 +761,9 @@ public class ExcelUploadEngineService {
 
     private String resolveMappingValueForValidation(org.apache.poi.ss.usermodel.Row row, String mappingVal) throws Exception {
         if ("_AUTO_SEQ_".equals(mappingVal)) return "__AUTO__";
+        // 2026-06-20: 시스템 매핑값은 엑셀 인덱스가 아니므로 검증 단계에서 대표값으로 치환한다.
+        if (isCurrentDateMapping(mappingVal)) return getCurrentDateValue(mappingVal);
+        if ("_LOGIN_USER_".equals(mappingVal) || "_LOGIN_MTN_".equals(mappingVal)) return "__SYSTEM__";
         if (mappingVal.startsWith("_FIXED_:")) return mappingVal.substring(8);
 
         if (mappingVal.startsWith("_REPLACE_:")) {
@@ -775,6 +791,39 @@ public class ExcelUploadEngineService {
         return getCellValue(row.getCell(excelIdx)).trim();
     }
 
+    // 2026-06-20: 관리자 컬럼 매핑의 현재 날짜 특수값 여부를 판별한다.
+    private boolean isCurrentDateMapping(String mappingVal) {
+        return "_CURRENT_DTM_COMPACT_".equals(mappingVal)
+                || "_CURRENT_DATE_COMPACT_".equals(mappingVal)
+                || "_CURRENT_DATE_".equals(mappingVal)
+                || "_CURRENT_DATETIME_MIN_".equals(mappingVal)
+                || "_CURRENT_DATETIME_SEC_".equals(mappingVal);
+    }
+
+    // 2026-06-20: 관리자 컬럼 매핑의 현재 날짜 특수값을 선택한 날짜 포맷으로 제공한다.
+    private String getCurrentDateValue(String mappingVal) {
+        String pattern = "yyyy-MM-dd";
+        if ("_CURRENT_DTM_COMPACT_".equals(mappingVal)) {
+            pattern = "yyyyMMddHHmmss";
+        } else if ("_CURRENT_DATE_COMPACT_".equals(mappingVal)) {
+            pattern = "yyyyMMdd";
+        } else if ("_CURRENT_DATETIME_MIN_".equals(mappingVal)) {
+            pattern = "yyyy-MM-dd HH:mm";
+        } else if ("_CURRENT_DATETIME_SEC_".equals(mappingVal)) {
+            pattern = "yyyy-MM-dd HH:mm:ss";
+        }
+        return new java.text.SimpleDateFormat(pattern).format(new java.util.Date());
+    }
+
+    // 2026-06-20: 업로드 요청 시 캐시에 담아둔 로그인 사용자/MTN 값을 컬럼 매핑에 사용한다.
+    private String getRuntimeMappingValue(Map<String, Object> psCache, String key) {
+        if (psCache == null || key == null) {
+            return "";
+        }
+        Object value = psCache.get(key);
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
     private int parseExcelIndex(String raw) throws Exception {
         try {
             return Integer.parseInt(raw.trim());
@@ -784,7 +833,7 @@ public class ExcelUploadEngineService {
     }
 
     // =====================================================================
-    // 3. Batch 실행 / 캐시 정리
+    // 3. Batch ?�행 / 캐시 ?�리
     // =====================================================================
 
     @SuppressWarnings("unchecked")
@@ -792,7 +841,7 @@ public class ExcelUploadEngineService {
             Map<String, Object> psCache,
             List<org.apache.poi.ss.usermodel.Row> errorRows,
             List<String> errorMsgs,
-            int[] counters  // [0]=성공 증분, [1]=실패 증분
+            int[] counters  // [0]=?�공 증분, [1]=?�패 증분
     ) {
         Map<String, List<org.apache.poi.ss.usermodel.Row>> batchTracker =
             (Map<String, List<org.apache.poi.ss.usermodel.Row>>) psCache.get("_BATCH_TRACKER_");
@@ -800,10 +849,10 @@ public class ExcelUploadEngineService {
         for (Map.Entry<String, Object> entry : psCache.entrySet()) {
             String key = entry.getKey();
 
-            // "_CHK_" 접두사 키는 존재 확인용 PS → 배치 실행 제외
+            // "_CHK_" ?�두???�는 존재 ?�인??PS ??배치 ?�행 ?�외
             if (key.startsWith("_CHK_")) continue;
 
-            // 기타 내부 캐시 키 제외 (기존 동작 유지)
+            // 기�? ?��? 캐시 ???�외 (기존 ?�작 ?��?)
             if (key.startsWith("_") && !key.equals("_TMP_KEY_PS_") && !key.equals("_ROW_SQL_STMT_")) continue;
 
             Object obj = entry.getValue();
@@ -816,69 +865,69 @@ public class ExcelUploadEngineService {
                     try {
                         ps.executeBatch();
                     } catch (Throwable ignore) {
-                        log.info("[ExcelUpload] _TMP_KEY_PS_ 배치 실행 중 무시된 오류: {}", ignore.getMessage());
+                        log.info("[ExcelUpload] _TMP_KEY_PS_ 배치 ?�행 �?무시???�류: {}", ignore.getMessage());
                     }
                     continue;
                 }
 
-                // UPD:: 접두사 여부로 INSERT/UPDATE 구분 로그 출력
+                // UPD:: ?�두???��?�?INSERT/UPDATE 구분 로그 출력
                 boolean isUpdateBatch = key.startsWith("UPD::");
 
                 try {
                     int[] updateCounts = ps.executeBatch();
                     counters[0] += (trackedRows != null) ? trackedRows.size() : updateCounts.length;
-                    if (isUpdateBatch) log.info("[ExcelUpload] UPDATE 배치 {}건 완료", updateCounts.length);
+                    if (isUpdateBatch) log.info("[ExcelUpload] UPDATE 배치 {}�??�료", updateCounts.length);
 
                 } catch (java.sql.BatchUpdateException bue) {
                     int[] updateCounts = bue.getUpdateCounts();
                     String batchType = isUpdateBatch ? "UPDATE" : "INSERT";
-                    log.error("[ExcelUpload] BatchUpdateException [{}][{}] - updateCounts 길이={}, 전체 행 수={}",
+                    log.error("[ExcelUpload] BatchUpdateException [{}][{}] - updateCounts 길이={}, ?�체 ????{}",
                             batchType, key, updateCounts.length, trackedRows != null ? trackedRows.size() : "unknown");
 
                     if (trackedRows != null) {
                         for (int idx = 0; idx < trackedRows.size(); idx++) {
                             if (idx < updateCounts.length) {
                                 if (updateCounts[idx] == Statement.EXECUTE_FAILED) {
-                                    // 명확한 실패
+                                    // 명확???�패
                                     counters[1]++;
                                     errorRows.add(trackedRows.get(idx));
-                                    errorMsgs.add(batchType + " 배치 실패: " + bue.getMessage());
-                                    log.error("[ExcelUpload] ❌ 배치 내 {}번째 행 실패 (EXECUTE_FAILED): {}", idx + 1, bue.getMessage());
+                                    errorMsgs.add(batchType + " 배치 ?�패: " + bue.getMessage());
+                                    log.error("[ExcelUpload] ??배치 ??{}번째 ???�패 (EXECUTE_FAILED): {}", idx + 1, bue.getMessage());
                                 } else {
-                                    // SUCCESS_NO_INFO(-2) 포함, 0 초과 → 성공으로 처리
+                                    // SUCCESS_NO_INFO(-2) ?�함, 0 초과 ???�공?�로 처리
                                     counters[0]++;
                                 }
                             } else {
-                                // updateCounts 배열 범위 밖 → 드라이버가 중단하여 미실행된 행
+                                // updateCounts 배열 범위 �????�라?�버가 중단?�여 미실?�된 ??
                                 counters[1]++;
                                 errorRows.add(trackedRows.get(idx));
-                                errorMsgs.add(batchType + " 배치 선행 오류로 취소 (미실행): " + bue.getMessage());
-                                log.info("[ExcelUpload] ⚠ 배치 내 {}번째 행은 선행 오류로 취소 처리", idx + 1);
+                                errorMsgs.add(batchType + " 배치 ?�행 ?�류�?취소 (미실??: " + bue.getMessage());
+                                log.info("[ExcelUpload] ??배치 ??{}번째 ?��? ?�행 ?�류�?취소 처리", idx + 1);
                             }
                         }
                     } else {
-                        // ✅ [Fix] trackedRows==null: 행 특정은 불가하지만 카운터/메시지는 기록
+                        // ??[Fix] trackedRows==null: ???�정?� 불�??��?�?카운??메시지??기록
                         counters[1]++;
-                        errorRows.add(null); // null placeholder - failedRowMsgMap 루프에서 null 체크됨
-                        errorMsgs.add("배치 실패 (행 특정 불가): " + bue.getMessage());
-                        log.error("[ExcelUpload] ❌ 배치 오류 (Row 추적 없음): {}", bue.getMessage());
+                        errorRows.add(null); // null placeholder - failedRowMsgMap 루프?�서 null 체크??
+                        errorMsgs.add("배치 ?�패 (???�정 불�?): " + bue.getMessage());
+                        log.error("[ExcelUpload] ??배치 ?�류 (Row 추적 ?�음): {}", bue.getMessage());
                     }
 
                 } catch (Throwable e) {
                     String errMsg = (e.getMessage() != null) ? e.getMessage() : e.toString();
-                    log.error("[ExcelUpload] ❌ executeBatch() 미분류 오류 [{}]: {}", key, errMsg);
+                    log.error("[ExcelUpload] ??executeBatch() 미분�??�류 [{}]: {}", key, errMsg);
                     if (trackedRows != null) {
                         for (org.apache.poi.ss.usermodel.Row r : trackedRows) {
                             counters[1]++;
                             errorRows.add(r);
-                            errorMsgs.add("배치 실행 오류: " + errMsg);
+                            errorMsgs.add("배치 ?�행 ?�류: " + errMsg);
                         }
                     } else {
-                        // ✅ [Fix] trackedRows==null: 행 특정 불가하지만 카운터/메시지 기록
+                        // ??[Fix] trackedRows==null: ???�정 불�??��?�?카운??메시지 기록
                         counters[1]++;
                         errorRows.add(null); // null placeholder
-                        errorMsgs.add("배치 실행 오류 (행 특정 불가): " + errMsg);
-                        log.error("[ExcelUpload] ❌ 배치 오류 (Row 추적 없음): {}", errMsg);
+                        errorMsgs.add("배치 ?�행 ?�류 (???�정 불�?): " + errMsg);
+                        log.error("[ExcelUpload] ??배치 ?�류 (Row 추적 ?�음): {}", errMsg);
                     }
                 }
 
@@ -887,10 +936,10 @@ public class ExcelUploadEngineService {
                     ((Statement) obj).executeBatch();
                 }
                 catch (Throwable e) {
-                    log.error("[ExcelUpload] ❌ Row-SQL Statement 배치 실행 오류 [{}]: {}", key, e.getMessage());
+                    log.error("[ExcelUpload] ??Row-SQL Statement 배치 ?�행 ?�류 [{}]: {}", key, e.getMessage());
                     counters[1]++;
                     errorRows.addAll(trackedRows != null ? trackedRows : java.util.Collections.emptyList());
-                    errorMsgs.add("Row-SQL 배치 실행 오류: " + e.getMessage());
+                    errorMsgs.add("Row-SQL 배치 ?�행 ?�류: " + e.getMessage());
                 }
             }
 
@@ -908,7 +957,7 @@ public class ExcelUploadEngineService {
     }
 
     // =====================================================================
-    // 4. SQL 유틸
+    // 4. SQL ?�틸
     // =====================================================================
 
     public Object[] makeInsertSql(String tableName, Map<String, Object> data, Set<String> numericColumns) throws Exception {
@@ -931,44 +980,49 @@ public class ExcelUploadEngineService {
     }
 
     /**
-     * [신규] UPDATE SQL 생성
-     * SET: upsertKeys를 제외한 나머지 컬럼
+     * [?�규] UPDATE SQL ?�성
+     * SET: upsertKeys�??�외???�머지 컬럼
      * WHERE: upsertKeys 컬럼
      *
-     * @return Object[]{sql문자열, paramOrder(List<String>)}
-     *         paramOrder = [SET 컬럼들...] + [WHERE 컬럼들...]
+     * @return Object[]{sql문자?? paramOrder(List<String>)}
+     *         paramOrder = [SET 컬럼??..] + [WHERE 컬럼??..]
      */
     public Object[] makeUpdateSql(String tableName, Map<String, Object> data,
-                                   List<String> upsertKeys, Set<String> numericColumns) throws Exception {
+                                   List<String> upsertKeys, Set<String> numericColumns,
+                                   boolean keepEmptyValues) throws Exception {
         if (!isValidSqlIdentifier(tableName)) throw new Exception("Invalid target table name: " + tableName);
 
         StringBuilder setSb = new StringBuilder();
         List<String> paramOrder = new ArrayList<>();
 
-        // SET 절: upsertKeys 및 pk_col을 제외한 컬럼
+        // SET ?? upsertKeys �?pk_col???�외??컬럼
         boolean firstSet = true;
         for (Map.Entry<String, Object> entry : data.entrySet()) {
             String col = entry.getKey();
-            if (upsertKeys.contains(col)) continue;     // WHERE 키는 SET에서 제외
+            if (upsertKeys.contains(col)) continue;     // WHERE ?�는 SET?�서 ?�외
             if (!isValidSqlIdentifier(col)) throw new Exception("Invalid column: " + col);
             if (!firstSet) setSb.append(", ");
-            setSb.append(col).append(" = ?");
+            if (keepEmptyValues) {
+                setSb.append(col).append(" = COALESCE(NULLIF(?, ''), ").append(col).append(")");
+            } else {
+                setSb.append(col).append(" = ?");
+            }
             paramOrder.add(col);
             firstSet = false;
         }
 
         if (setSb.length() == 0) {
-            throw new Exception("UPDATE 대상 SET 컬럼이 없습니다. upsert_keys 외에 매핑된 컬럼이 있어야 합니다.");
+            throw new Exception("UPDATE ?�??SET 컬럼???�습?�다. upsert_keys ?�에 매핑??컬럼???�어???�니??");
         }
 
-        // WHERE 절
+        // WHERE ??
         StringBuilder whereSb = new StringBuilder();
         for (int i = 0; i < upsertKeys.size(); i++) {
             String col = upsertKeys.get(i);
             if (!isValidSqlIdentifier(col)) throw new Exception("Invalid upsert key column: " + col);
             if (i > 0) whereSb.append(" AND ");
             whereSb.append(col).append(" = ?");
-            paramOrder.add(col);  // WHERE 파라미터는 SET 파라미터 뒤에 위치
+            paramOrder.add(col);  // WHERE ?�라미터??SET ?�라미터 ?�에 ?�치
         }
 
         String sql = "UPDATE " + tableName + " SET " + setSb + " WHERE " + whereSb;
@@ -984,7 +1038,7 @@ public class ExcelUploadEngineService {
                 if (sql != null && !sql.trim().isEmpty()) {
                     String trimmedSql = sql.trim();
                     if (!trimmedSql.startsWith("--")) {
-                        log.info("[ExcelUpload] {} 실행: {}", sqlType, trimmedSql);
+                        log.info("[ExcelUpload] {} ?�행: {}", sqlType, trimmedSql);
                         logPlainSql(trimmedSql);
                         stmt.execute(trimmedSql);
                     }
@@ -1005,12 +1059,12 @@ public class ExcelUploadEngineService {
     }
 
     // =====================================================================
-    // 5. 오류 리포트 생성
+    // 5. ?�류 리포???�성
     // =====================================================================
 
     /**
-     * DB 오류 메시지에서 문제가 된 컬럼명을 하나 추출합니다. (하위 호환용)
-     * 내부적으로 extractAllErrorColumnNames를 호출합니다.
+     * DB ?�류 메시지?�서 문제가 ??컬럼명을 ?�나 추출?�니?? (?�위 ?�환??
+     * ?��??�으�?extractAllErrorColumnNames�??�출?�니??
      */
     public String extractErrorColumnName(String msg) {
         List<String> cols = extractAllErrorColumnNames(msg);
@@ -1018,10 +1072,10 @@ public class ExcelUploadEngineService {
     }
 
     /**
-     * DB 오류 메시지에서 문제가 된 컬럼명 목록 전체를 추출합니다.
+     * DB ?�류 메시지?�서 문제가 ??컬럼�?목록 ?�체�?추출?�니??
      *
-     * 지원 패턴:
-     *   [MULTI_COL] col1:길이초과(...)|col2:필수값누락  ← 사전 검증 오류
+     * 지???�턴:
+     *   [MULTI_COL] col1:길이초과(...)|col2:?�수값누?? ???�전 검�??�류
      *   MySQL  - Column 'col' cannot be null
      *   MySQL  - Data too long for column 'col'
      *   MySQL  - Incorrect integer/datetime value: '...' for column 'col' at row N
@@ -1033,7 +1087,7 @@ public class ExcelUploadEngineService {
         if (msg == null) return Collections.emptyList();
         List<String> result = new ArrayList<>();
 
-        // ── [MULTI_COL] col1:길이초과(...)|col2:필수값누락 형식 ──
+        // ?�?� [MULTI_COL] col1:길이초과(...)|col2:?�수값누???�식 ?�?�
         if (msg.startsWith("[MULTI_COL]")) {
             String body = msg.substring("[MULTI_COL]".length()).trim();
             for (String part : body.split("\\|")) {
@@ -1079,16 +1133,16 @@ public class ExcelUploadEngineService {
     }
 
     /**
-     * 시스템 오류 메시지를 사용자 친화적인 안내문으로 변환합니다.
-     * @return String[2] — [0] 일반 안내 메시지, [1] 해결 방법
+     * ?�스???�류 메시지�??�용??친화?�인 ?�내문으�?변?�합?�다.
+     * @return String[2] ??[0] ?�반 ?�내 메시지, [1] ?�결 방법
      */
     public String[] translateErrorForReport(String msg) {
         if (msg == null || msg.trim().isEmpty()) {
-            return new String[]{ "알 수 없는 오류", "관리자에게 문의해주세요." };
+            return new String[]{ "?????�는 ?�류", "관리자?�게 문의?�주?�요." };
         }
         String friendly, solution;
 
-        // ── [MULTI_COL] 사전 검증 오류 (길이초과 / 필수값누락 등) ──────────────
+        // ?�?� [MULTI_COL] ?�전 검�??�류 (길이초과 / ?�수값누???? ?�?�?�?�?�?�?�?�?�?�?�?�?�?�
         if (msg.startsWith("[MULTI_COL]")) {
             String body = msg.substring("[MULTI_COL]".length()).trim();
             StringBuilder detail = new StringBuilder();
@@ -1102,60 +1156,60 @@ public class ExcelUploadEngineService {
                     detail.append("[").append(col).append("] ").append(err);
                 }
             }
-            friendly = "입력 데이터 오류: " + detail;
-            solution = "빨간 박스로 표시된 셀의 값을 확인하여 형식이나 길이를 맞춘 후 재업로드하세요.";
+            friendly = "?�력 ?�이???�류: " + detail;
+            solution = "빨간 박스�??�시???�??값을 ?�인?�여 ?�식?�나 길이�?맞춘 ???�업로드?�세??";
             return new String[]{ friendly, solution };
         }
 
         if (msg.contains("cannot be null") || msg.contains("NOT NULL constraint") || msg.contains("null value in column")) {
-            friendly = "필수 항목(비워두면 안 되는 칸)이 비어 있습니다.";
-            solution = "해당 행에 빈 칸이 있는지 확인하거나, 반드시 입력해야 하는 컬럼이 누락되지 않았는지 점검하세요.";
+            friendly = "?�수 ??��(비워?�면 ???�는 �???비어 ?�습?�다.";
+            solution = "?�당 ?�에 �?칸이 ?�는지 ?�인?�거?? 반드???�력?�야 ?�는 컬럼???�락?��? ?�았?��? ?��??�세??";
         } else if (msg.contains("Duplicate entry") || msg.contains("unique constraint") || msg.contains("ORA-00001") || msg.contains("duplicate key")) {
-            friendly = "이미 등록된 중복 데이터입니다.";
-            solution = "엑셀 파일 안에 같은 ID가 두 번 이상 있거나, 이미 시스템에 등록된 데이터와 겹칩니다.";
+            friendly = "?��? ?�록??중복 ?�이?�입?�다.";
+            solution = "?��? ?�일 ?�에 같�? ID가 ??�??�상 ?�거?? ?��? ?�스?�에 ?�록???�이?��? 겹칩?�다.";
         } else if (msg.contains("Data too long") || msg.contains("value too large") || msg.contains("ORA-12899") || msg.contains("data would be truncated")) {
-            friendly = "입력된 데이터가 허용 길이를 초과했습니다.";
-            solution = "해당 셀의 값이 DB 컬럼에서 허용하는 최대 글자 수보다 깁니다. 내용을 줄여주세요.";
+            friendly = "?�력???�이?��? ?�용 길이�?초과?�습?�다.";
+            solution = "?�당 ?�??값이 DB 컬럼?�서 ?�용?�는 최�? 글???�보??깁니?? ?�용??줄여주세??";
         } else if (msg.contains("Incorrect integer value") || msg.contains("invalid number") || msg.contains("ORA-01722") || msg.contains("invalid input syntax for type")) {
-            friendly = "숫자 형식이 잘못되었습니다.";
-            solution = "숫자만 입력해야 하는 칸에 문자나 특수기호가 포함되어 있는지 확인하세요.";
+            friendly = "?�자 ?�식???�못?�었?�니??";
+            solution = "?�자�??�력?�야 ?�는 칸에 문자???�수기호가 ?�함?�어 ?�는지 ?�인?�세??";
         } else if (msg.contains("Incorrect datetime value") || msg.contains("invalid date") || msg.contains("ORA-01858") || msg.contains("date/time field value out of range")) {
-            friendly = "날짜 형식이 올바르지 않습니다.";
-            solution = "날짜 칸의 형식이 시스템 요구 형식(예: yyyy-MM-dd)과 다릅니다. 엑셀에서 날짜 형식을 확인하세요.";
+            friendly = "?�짜 ?�식???�바르�? ?�습?�다.";
+            solution = "?�짜 칸의 ?�식???�스???�구 ?�식(?? yyyy-MM-dd)�??�릅?�다. ?��??�서 ?�짜 ?�식???�인?�세??";
         } else if (msg.contains("foreign key constraint") || msg.contains("ORA-02291") || msg.contains("violates foreign key")) {
-            friendly = "참조하는 상위 데이터가 존재하지 않습니다.";
-            solution = "입력한 코드나 ID가 연결된 다른 테이블에 먼저 등록되어 있어야 합니다. 데이터 순서를 확인하세요.";
+            friendly = "참조?�는 ?�위 ?�이?��? 존재?��? ?�습?�다.";
+            solution = "?�력??코드??ID가 ?�결???�른 ?�이블에 먼�? ?�록?�어 ?�어???�니?? ?�이???�서�??�인?�세??";
         } else if (msg.contains("SQL syntax") || msg.contains("bad SQL grammar") || msg.contains("ORA-00907")) {
-            friendly = "설정된 SQL 구문에 오류가 있습니다.";
-            solution = "관리자에게 Row-SQL 또는 Pre/Post-SQL 설정 점검을 요청하세요.";
-        } else if (msg.contains("배치 선행 오류로 인해 취소")) {
-            friendly = "동일 배치 내 다른 행의 오류로 인해 함께 취소되었습니다.";
-            solution = "같은 묶음(배치)에서 앞선 행에 오류가 발생해 이 행도 처리되지 않았습니다. 오류 행을 먼저 수정 후 재업로드하세요.";
+            friendly = "?�정??SQL 구문???�류가 ?�습?�다.";
+            solution = "관리자?�게 Row-SQL ?�는 Pre/Post-SQL ?�정 ?��????�청?�세??";
+        } else if (msg.contains("배치 ?�행 ?�류�??�해 취소")) {
+            friendly = "?�일 배치 ???�른 ?�의 ?�류�??�해 ?�께 취소?�었?�니??";
+            solution = "같�? 묶음(배치)?�서 ?�선 ?�에 ?�류가 발생?????�도 처리?��? ?�았?�니?? ?�류 ?�을 먼�? ?�정 ???�업로드?�세??";
         } else if (msg.contains("SEQ_NOT_FOUND")) {
-            friendly = "채번 시퀀스 설정을 찾을 수 없습니다.";
-            solution = "관리자에게 시퀀스(SEQ) 설정 등록을 요청하세요.";
+            friendly = "채번 ?�퀀???�정??찾을 ???�습?�다.";
+            solution = "관리자?�게 ?�퀀??SEQ) ?�정 ?�록???�청?�세??";
         } else if (msg.contains("Invalid table") || msg.contains("Invalid column") || msg.contains("ORA-00942")) {
-            friendly = "매핑 설정이 잘못되었습니다. (테이블 또는 컬럼 없음)";
-            solution = "관리자에게 컬럼 매핑 설정 확인을 요청하세요.";
+            friendly = "매핑 ?�정???�못?�었?�니?? (?�이�??�는 컬럼 ?�음)";
+            solution = "관리자?�게 컬럼 매핑 ?�정 ?�인???�청?�세??";
         } else if (msg.contains("Connection") || msg.contains("timeout") || msg.contains("SocketException")) {
-            friendly = "서버 연결이 끊어졌습니다.";
-            solution = "네트워크 상태를 확인하거나 잠시 후 다시 시도하세요.";
-        } else if (msg.contains("UPDATE 대상 SET 컬럼이 없습니다")) {
-            friendly = "업데이트할 컬럼이 없습니다.";
-            solution = "업데이트 키 컬럼 외에 최소 1개 이상의 매핑 컬럼이 필요합니다.";
+            friendly = "?�버 ?�결???�어졌습?�다.";
+            solution = "?�트?�크 ?�태�??�인?�거???�시 ???�시 ?�도?�세??";
+        } else if (msg.contains("UPDATE ?�??SET 컬럼???�습?�다")) {
+            friendly = "?�데?�트??컬럼???�습?�다.";
+            solution = "?�데?�트 ??컬럼 ?�에 최소 1�??�상??매핑 컬럼???�요?�니??";
         } else {
-            friendly = "데이터 저장 중 오류가 발생했습니다.";
-            solution = "하단 '시스템 오류 메시지'를 캡처하여 관리자에게 전달해주세요.";
+            friendly = "?�이???�??�??�류가 발생?�습?�다.";
+            solution = "?�단 '?�스???�류 메시지'�?캡처?�여 관리자?�게 ?�달?�주?�요.";
         }
         return new String[]{ friendly, solution };
     }
 
     /**
-     * 오류 행들을 담은 엑셀 리포트 파일 생성 후 파일명 반환
+     * ?�류 ?�들???��? ?��? 리포???�일 ?�성 ???�일�?반환
      *
-     * 변경 사항:
-     *   - "오류 발생 컬럼명" 컬럼 제거
-     *   - [MULTI_COL] 포함 모든 오류 컬럼에 빨간 박스 강조 (다중 셀 지원)
+     * 변�??�항:
+     *   - "?�류 발생 컬럼�? 컬럼 ?�거
+     *   - [MULTI_COL] ?�함 모든 ?�류 컬럼??빨간 박스 강조 (?�중 ?� 지??
      */
     public String buildErrorReport(
             String jobId,
@@ -1170,9 +1224,9 @@ public class ExcelUploadEngineService {
         org.apache.poi.ss.usermodel.Workbook errWb = null;
         try {
             errWb = createNewXlsxWorkbook();
-            org.apache.poi.ss.usermodel.Sheet errSheet = errWb.createSheet("오류_목록");
+            org.apache.poi.ss.usermodel.Sheet errSheet = errWb.createSheet("?�류_목록");
 
-            // 스타일 정의
+            // ?��????�의
             org.apache.poi.ss.usermodel.CellStyle headerStyle     = createHeaderStyle(errWb, false);
             org.apache.poi.ss.usermodel.CellStyle metaHeaderStyle = createHeaderStyle(errWb, true);
             org.apache.poi.ss.usermodel.CellStyle wrapStyle       = createWrapStyle(errWb);
@@ -1181,7 +1235,7 @@ public class ExcelUploadEngineService {
             org.apache.poi.ss.usermodel.Row origHeaderRow = sheet.getRow(headerIdx);
             int lastCol = (origHeaderRow != null) ? origHeaderRow.getLastCellNum() : 0;
 
-            // 헤더 컬럼명 → 인덱스 맵 (오류 컬럼 셀 강조에 사용)
+            // ?�더 컬럼�????�덱??�?(?�류 컬럼 ?� 강조???�용)
             Map<String, Integer> headerColMap = new java.util.HashMap<>();
             if (origHeaderRow != null) {
                 for (int c = 0; c < lastCol; c++) {
@@ -1193,9 +1247,9 @@ public class ExcelUploadEngineService {
                 }
             }
 
-            // ★ DB 컬럼명 → 오류 리포트 열 인덱스 역방향 맵 구성
-// allMaps 구조: { alias: { dbCol: "엑셀컬럼인덱스" } }
-// 오류 리포트에서 col 0 = 행번호, 데이터는 col 1부터이므로 excelColIdx + 1
+            // ??DB 컬럼�????�류 리포?????�덱????��??�?구성
+// allMaps 구조: { alias: { dbCol: "?��?컬럼?�덱?? } }
+// ?�류 리포?�에??col 0 = ?�번?? ?�이?�는 col 1부?�이므�?excelColIdx + 1
 Map<String, Integer> dbColToReportColIdx = new java.util.HashMap<>();
 if (allMaps != null) {
     for (Map.Entry<?, ?> aliasEntry : allMaps.entrySet()) {
@@ -1206,34 +1260,34 @@ if (allMaps != null) {
             String mappingVal = String.valueOf(colEntry.getValue()).trim();
             int excelColIdx  = -1;
             try {
-                // 단순 숫자 → 엑셀 컬럼 인덱스
+                // ?�순 ?�자 ???��? 컬럼 ?�덱??
                 excelColIdx = Integer.parseInt(mappingVal);
             } catch (NumberFormatException ignore) {
-                // _REPLACE_:idx:rules 또는 _UNIQUE_:idx 형식
+                // _REPLACE_:idx:rules ?�는 _UNIQUE_:idx ?�식
                 if (mappingVal.startsWith("_REPLACE_:") || mappingVal.startsWith("_UNIQUE_:")) {
                     try {
                         excelColIdx = Integer.parseInt(mappingVal.split(":", 3)[1]);
                     } catch (Throwable ig) {}
                 }
-                // _AUTO_SEQ_, _FIXED_: 는 엑셀 컬럼 없음 → skip
+                // _AUTO_SEQ_, _FIXED_: ???��? 컬럼 ?�음 ??skip
             }
             if (excelColIdx >= 0) {
-                dbColToReportColIdx.put(dbCol, excelColIdx + 1); // +1: col 0 = 행번호
+                dbColToReportColIdx.put(dbCol, excelColIdx + 1); // +1: col 0 = ?�번??
             }
         }
     }
 }
 
-            // 오류 셀 강조 스타일 (빨간 테두리 + 연한 빨간 배경)
+            // ?�류 ?� 강조 ?��???(빨간 ?�두�?+ ?�한 빨간 배경)
             org.apache.poi.ss.usermodel.CellStyle errorCellStyle = errWb.createCellStyle();
             try {
-                // 글꼴: 굵게 + 진한 빨간색
+                // 글�? 굵게 + 진한 빨간??
                 org.apache.poi.ss.usermodel.Font errFont = errWb.createFont();
                 errFont.setBold(true);
                 try { errFont.setColor(org.apache.poi.ss.usermodel.IndexedColors.DARK_RED.getIndex()); } catch (Throwable ignore) {}
                 errorCellStyle.setFont(errFont);
 
-                // 배경: 연한 빨간색 (FFC8C8)
+                // 배경: ?�한 빨간??(FFC8C8)
                 try {
                     org.apache.poi.xssf.usermodel.XSSFCellStyle xStyle = (org.apache.poi.xssf.usermodel.XSSFCellStyle) errorCellStyle;
                     xStyle.setFillForegroundColor(new org.apache.poi.xssf.usermodel.XSSFColor(new byte[]{(byte)0xFF,(byte)0xC8,(byte)0xC8}, null));
@@ -1243,7 +1297,7 @@ if (allMaps != null) {
                     errorCellStyle.setFillPattern(org.apache.poi.ss.usermodel.FillPatternType.SOLID_FOREGROUND);
                 }
 
-                // 테두리: 4방향 모두 두꺼운 빨간 테두리 (MEDIUM)
+                // ?�두�? 4방향 모두 ?�꺼??빨간 ?�두�?(MEDIUM)
                 try {
                     org.apache.poi.xssf.usermodel.XSSFCellStyle xStyle = (org.apache.poi.xssf.usermodel.XSSFCellStyle) errorCellStyle;
                     org.apache.poi.xssf.usermodel.XSSFColor red = new org.apache.poi.xssf.usermodel.XSSFColor(new byte[]{(byte)0xDC,(byte)0x14,(byte)0x3C}, null);
@@ -1270,12 +1324,12 @@ if (allMaps != null) {
                 errorCellStyle.setVerticalAlignment(org.apache.poi.ss.usermodel.VerticalAlignment.CENTER);
             } catch (Throwable ignore) {}
 
-            // ── 헤더 행 구성 ──────────────────────────────────────────────────
-            // col 0       : 엑셀 행 번호 (주황색)
-            // col 1~lastCol : 원본 데이터 컬럼 (회색)
-            // col lastCol+1 : 오류 원인 (일반 안내) (주황색) ← "오류 발생 컬럼명" 제거됨
-            // col lastCol+2 : 해결 방법 (주황색)
-            // col lastCol+3 : 시스템 오류 메시지 (주황색)
+            // ?�?� ?�더 ??구성 ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+            // col 0       : ?��? ??번호 (주황??
+            // col 1~lastCol : ?�본 ?�이??컬럼 (?�색)
+            // col lastCol+1 : ?�류 ?�인 (?�반 ?�내) (주황?? ??"?�류 발생 컬럼�? ?�거??
+            // col lastCol+2 : ?�결 방법 (주황??
+            // col lastCol+3 : ?�스???�류 메시지 (주황??
             int colFriendly = lastCol + 1;
             int colSolution = lastCol + 2;
             int colSystem   = lastCol + 3;
@@ -1284,7 +1338,7 @@ if (allMaps != null) {
             newHeader.setHeightInPoints(40);
 
             org.apache.poi.ss.usermodel.Cell hRowNum = newHeader.createCell(0);
-            hRowNum.setCellValue("엑셀\n행 번호");
+            hRowNum.setCellValue("?��?\n??번호");
             try { hRowNum.setCellStyle(metaHeaderStyle); } catch (Throwable ignore) {}
 
             for (int c = 0; c < lastCol; c++) {
@@ -1295,18 +1349,18 @@ if (allMaps != null) {
             }
 
             org.apache.poi.ss.usermodel.Cell hFriendly = newHeader.createCell(colFriendly);
-            hFriendly.setCellValue("오류 원인 (일반 안내)");
+            hFriendly.setCellValue("?�류 ?�인 (?�반 ?�내)");
             try { hFriendly.setCellStyle(metaHeaderStyle); } catch (Throwable ignore) {}
 
             org.apache.poi.ss.usermodel.Cell hSolution = newHeader.createCell(colSolution);
-            hSolution.setCellValue("해결 방법");
+            hSolution.setCellValue("?�결 방법");
             try { hSolution.setCellStyle(metaHeaderStyle); } catch (Throwable ignore) {}
 
             org.apache.poi.ss.usermodel.Cell hSystem = newHeader.createCell(colSystem);
-            hSystem.setCellValue("시스템 오류 메시지 (개발자용)");
+            hSystem.setCellValue("?�스???�류 메시지 (개발?�용)");
             try { hSystem.setCellStyle(metaHeaderStyle); } catch (Throwable ignore) {}
 
-            // ── 오류 데이터 행 기록 ───────────────────────────────────────────
+            // ?�?� ?�류 ?�이????기록 ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
             for (int r = 0; r < errorRows.size(); r++) {
                 org.apache.poi.ss.usermodel.Row oldRow = errorRows.get(r);
                 org.apache.poi.ss.usermodel.Row newRow = errSheet.createRow(r + 1);
@@ -1317,7 +1371,7 @@ if (allMaps != null) {
                 cellRowNum.setCellValue(lineNo > 0 ? String.valueOf(lineNo) : "?");
                 try { cellRowNum.setCellStyle(rowNumStyle); } catch (Throwable ignore) {}
 
-                // 원본 데이터 셀 복사
+                // ?�본 ?�이???� 복사
                 for (int c = 0; c < lastCol; c++) {
                     org.apache.poi.ss.usermodel.Cell oldCell = (oldRow != null) ? oldRow.getCell(c) : null;
                     org.apache.poi.ss.usermodel.Cell newCell = newRow.createCell(c + 1);
@@ -1326,18 +1380,18 @@ if (allMaps != null) {
 
                 String rawMsg = errorMsgs.get(r);
 
-                // ★ 오류 컬럼 전체 추출 → 해당 셀 모두 빨간 박스 강조
+                // ???�류 컬럼 ?�체 추출 ???�당 ?� 모두 빨간 박스 강조
    List<String> errColNames = extractAllErrorColumnNames(rawMsg);
 for (String errColName : errColNames) {
     String key = errColName.toLowerCase();
 
-    // 1순위: DB 컬럼명으로 직접 매핑 (cm_reg_dttm → 열 인덱스)
+    // 1?�위: DB 컬럼명으�?직접 매핑 (cm_reg_dttm ?????�덱??
     Integer reportColIdx = dbColToReportColIdx.get(key);
 
-    // 2순위 폴백: 헤더 표시명으로 매핑 (예: "등록일" → 열 인덱스)
+    // 2?�위 ?�백: ?�더 ?�시명으�?매핑 (?? "?�록?? ?????�덱??
     if (reportColIdx == null) {
         Integer hIdx = headerColMap.get(key);
-        if (hIdx != null) reportColIdx = hIdx + 1; // +1: col 0 = 행번호
+        if (hIdx != null) reportColIdx = hIdx + 1; // +1: col 0 = ?�번??
     }
 
     if (reportColIdx != null && reportColIdx >= 1 && reportColIdx <= lastCol) {
@@ -1347,7 +1401,7 @@ for (String errColName : errColNames) {
     }
 }
 
-                // 오류 원인 / 해결 방법 / 시스템 메시지 기록
+                // ?�류 ?�인 / ?�결 방법 / ?�스??메시지 기록
                 String[] translated = translateErrorForReport(rawMsg);
 
                 org.apache.poi.ss.usermodel.Cell cellFriendly = newRow.createCell(colFriendly);
@@ -1363,20 +1417,20 @@ for (String errColName : errColNames) {
                 try { cellSystem.setCellStyle(wrapStyle); } catch (Throwable ignore) {}
             }
 
-            // ── 열 너비 조정 ──────────────────────────────────────────────────
-            errSheet.setColumnWidth(0, 14 * 256);                       // 행번호
-            for (int c = 1; c <= lastCol; c++) errSheet.setColumnWidth(c, 20 * 256); // 데이터
-            errSheet.setColumnWidth(colFriendly, 45 * 256);             // 오류 원인
-            errSheet.setColumnWidth(colSolution, 55 * 256);             // 해결 방법
-            errSheet.setColumnWidth(colSystem,   65 * 256);             // 시스템 메시지
+            // ?�?� ???�비 조정 ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+            errSheet.setColumnWidth(0, 14 * 256);                       // ?�번??
+            for (int c = 1; c <= lastCol; c++) errSheet.setColumnWidth(c, 20 * 256); // ?�이??
+            errSheet.setColumnWidth(colFriendly, 45 * 256);             // ?�류 ?�인
+            errSheet.setColumnWidth(colSolution, 55 * 256);             // ?�결 방법
+            errSheet.setColumnWidth(colSystem,   65 * 256);             // ?�스??메시지
 
             errFileName = "ERR_" + (jobId != null ? jobId : UUID.randomUUID().toString()) + ".xlsx";
             java.io.File errFile = new java.io.File(getSampleFileDir(), errFileName);
             try (FileOutputStream errFos = new FileOutputStream(errFile)) { errWb.write(errFos); }
-            log.info("[ExcelUpload] 오류 리포트 생성 완료: {}", errFileName);
+            log.info("[ExcelUpload] ?�류 리포???�성 ?�료: {}", errFileName);
 
         } catch (Exception e) {
-            log.error("[ExcelUpload] 오류 리포트 생성 실패: {}", e.getMessage(), e);
+            log.error("[ExcelUpload] ?�류 리포???�성 ?�패: {}", e.getMessage(), e);
         } finally {
             closeWorkbook(errWb);
         }
@@ -1384,11 +1438,11 @@ for (String errColName : errColNames) {
     }
 
     // =====================================================================
-    // 6. JSON 파싱
+    // 6. JSON ?�싱
     // =====================================================================
 
     public Object parseJson(String jsonStr) throws Exception {
-        if (jsonStr == null || jsonStr.trim().isEmpty()) throw new Exception("JSON 문자열이 비어있습니다.");
+        if (jsonStr == null || jsonStr.trim().isEmpty()) throw new Exception("JSON 문자?�이 비어?�습?�다.");
         jsonStr = jsonStr.trim();
         try {
             Class<?> mapperClass = Class.forName("com.fasterxml.jackson.databind.ObjectMapper");
@@ -1409,7 +1463,7 @@ for (String errColName : errColNames) {
         return new LiteJsonParser(jsonStr).parse();
     }
 
-    /** 경량 JSON 파서 (Jackson/Nashorn 모두 없는 환경 폴백) */
+    /** 경량 JSON ?�서 (Jackson/Nashorn 모두 ?�는 ?�경 ?�백) */
     public static class LiteJsonParser {
         private int pos = 0;
         private final String s;
@@ -1418,7 +1472,7 @@ for (String errColName : errColNames) {
 
         private Object parseLiteValue(String str) throws Exception {
             skipWs();
-            if (pos >= str.length()) throw new Exception("JSON 파싱 오류: 예상치 못한 끝");
+            if (pos >= str.length()) throw new Exception("JSON parse error: invalid state");
             char c = str.charAt(pos);
             if (c == '{') return parseLiteObject();
             if (c == '[') return parseLiteArray();
@@ -1435,15 +1489,15 @@ for (String errColName : errColNames) {
             while (pos < s.length()) {
                 skipWs();
                 String key = parseLiteString(); skipWs();
-                if (s.charAt(pos) != ':') throw new Exception("':' 기대");
+                if (s.charAt(pos) != ':') throw new Exception("':' 기�?");
                 pos++;
                 Object val = parseLiteValue(s); m.put(key, val); skipWs();
                 char ch = s.charAt(pos);
                 if (ch == '}') { pos++; return m; }
                 if (ch == ',') { pos++; continue; }
-                throw new Exception("',' 또는 '}' 기대");
+                throw new Exception("',' ?�는 '}' 기�?");
             }
-            throw new Exception("JSON Object 닫히지 않음");
+            throw new Exception("JSON Object ?�히지 ?�음");
         }
         private List<Object> parseLiteArray() throws Exception {
             List<Object> l = new ArrayList<>();
@@ -1454,12 +1508,12 @@ for (String errColName : errColNames) {
                 char ch = s.charAt(pos);
                 if (ch == ']') { pos++; return l; }
                 if (ch == ',') { pos++; continue; }
-                throw new Exception("',' 또는 ']' 기대");
+                throw new Exception("',' ?�는 ']' 기�?");
             }
-            throw new Exception("JSON Array 닫히지 않음");
+            throw new Exception("JSON Array ?�히지 ?�음");
         }
         private String parseLiteString() throws Exception {
-            if (s.charAt(pos) != '"') throw new Exception("'\"' 기대");
+            if (s.charAt(pos) != '"') throw new Exception("'\"' 기�?");
             pos++;
             StringBuilder sb = new StringBuilder();
             while (pos < s.length()) {
@@ -1475,7 +1529,7 @@ for (String errColName : errColNames) {
                     else sb.append(e);
                 } else { sb.append(c); }
             }
-            throw new Exception("JSON String 닫히지 않음");
+            throw new Exception("JSON String ?�히지 ?�음");
         }
         private Number parseLiteNumber() {
             int start = pos;
@@ -1493,7 +1547,7 @@ for (String errColName : errColNames) {
     }
 
     // =====================================================================
-    // 7. 공통 문자열/파일 유틸
+    // 7. 공통 문자???�일 ?�틸
     // =====================================================================
 
     public String decodeSafeBase64(String encoded) {
@@ -1517,6 +1571,27 @@ for (String errColName : errColNames) {
         return s.matches("^[a-zA-Z0-9_.]+$");
     }
 
+    public int countDataRows(org.apache.poi.ss.usermodel.Sheet sheet, int headerIdx) {
+        if (sheet == null) return 0;
+        int startRow = Math.max(headerIdx + 1, 0);
+        int count = 0;
+        for (int rowIdx = startRow; rowIdx <= sheet.getLastRowNum(); rowIdx++) {
+            org.apache.poi.ss.usermodel.Row row = sheet.getRow(rowIdx);
+            if (hasAnyCellValue(row)) count++;
+        }
+        return count;
+    }
+
+    public boolean hasAnyCellValue(org.apache.poi.ss.usermodel.Row row) {
+        if (row == null || row.getLastCellNum() <= 0) return false;
+        for (int ci = 0; ci < row.getLastCellNum(); ci++) {
+            if (!getCellValue(row.getCell(ci)).trim().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public String restore(String s) {
         if (s == null) return "";
         return s.replace("&quot;", "\"").replace("&#34;", "\"")
@@ -1538,13 +1613,13 @@ for (String errColName : errColNames) {
         // String dirPath = "/Users/leejunhyuk/apps/egene/app/data/attach/loader";
         java.io.File dir = new java.io.File(dirPath);
         if (!dir.exists()) {
-            if (!dir.mkdirs()) throw new Exception("업로드 폴더를 생성할 권한이 없습니다: " + dir.getAbsolutePath());
+            if (!dir.mkdirs()) throw new Exception("?�로???�더�??�성??권한???�습?�다: " + dir.getAbsolutePath());
         }
         return dirPath;
     }
 
     // =====================================================================
-    // 8. 내부 스타일 헬퍼 (오류 리포트용)
+    // 8. ?��? ?��????�퍼 (?�류 리포?�용)
     // =====================================================================
 
     private org.apache.poi.ss.usermodel.CellStyle createHeaderStyle(org.apache.poi.ss.usermodel.Workbook wb, boolean isMeta) {

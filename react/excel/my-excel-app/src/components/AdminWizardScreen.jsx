@@ -1,6 +1,14 @@
 import React from 'react';
-import { toast } from 'react-toastify';
+import Swal from 'sweetalert2';
 import StepIndicator from './StepIndicator';
+
+const showFileTypeAlert = () => {
+  Swal.fire({
+    icon: 'warning',
+    title: '.xls/.xlsx 파일만 업로드할 수 있습니다.',
+    confirmButtonColor: '#6366f1',
+  });
+};
 
 const AdminStageHero = ({ eyebrow, title, desc, status, meta = [] }) => (
   <div className="admin-stage-hero">
@@ -37,6 +45,25 @@ const AdminOpsStrip = ({ items = [] }) => (
   </div>
 );
 
+const AdminConfigModal = ({ title, desc, onClose, children }) => (
+  <div className="excel-modal-overlay" onClick={onClose}>
+    <div className="excel-modal admin-config-modal" onClick={e => e.stopPropagation()}>
+      <div className="excel-modal-head">
+        <div>
+          <div className="excel-modal-kicker">Admin Settings</div>
+          <div className="excel-modal-title">{title}</div>
+          {desc && <div className="admin-modal-desc">{desc}</div>}
+        </div>
+        <button className="excel-modal-close" onClick={onClose}>닫기</button>
+      </div>
+      <div className="excel-modal-body">{children}</div>
+      <div className="excel-modal-footer">
+        <button className="side-action-btn side-action-btn-primary" onClick={onClose}>적용</button>
+      </div>
+    </div>
+  </div>
+);
+
 const AdminStep0 = ({
   jobName,
   setJobName,
@@ -49,97 +76,115 @@ const AdminStep0 = ({
   setSampleFileName,
   sampleFileDownloadName,
   setSampleFileDownloadName,
+  sampleFilePath,
+  setSampleFilePath,
+  upsertKeepEmptyYn,
+  setUpsertKeepEmptyYn,
+  maxUploadRows,
+  setMaxUploadRows,
   downloadSampleFile,
   instructions,
   setInstructions,
-}) => (
-  <div className="wizard-panel">
-    <AdminStageHero
-      eyebrow="Admin Setup"
-      title="기본 설정"
-      status="Step 1"
-      desc="업로드 작업의 이름, 헤더 기준, 샘플 양식, 사용자 안내 문구를 먼저 정리합니다."
-      meta={[
-        { label: '작업명', value: jobName?.trim() || '미입력' },
-        { label: '헤더 행', value: `${headerRow || 1}행` },
-        { label: '샘플 파일', value: sampleFileName || sampleFile?.name || '없음' },
-      ]}
-    />
-    <AdminOpsStrip
-      items={[
-        { label: '작업명 점검', value: jobName?.trim() ? '완료' : '입력 필요', desc: jobName?.trim() || '사용자에게 보일 작업 이름을 정하세요.', tone: jobName?.trim() ? 'success' : 'warn' },
-        { label: '헤더 기준', value: `${headerRow || 1}행`, desc: '엑셀 헤더가 인식될 행 번호입니다.' },
-        { label: '샘플 양식', value: sampleFileName || sampleFile?.name || '등록 전', desc: sampleFileName || sampleFile?.name ? '사용자 다운로드 양식으로 활용됩니다.' : '샘플 파일을 등록해두면 문의가 줄어듭니다.', tone: sampleFileName || sampleFile?.name ? 'success' : 'warn' },
-        { label: '안내 문구', value: instructions?.trim() ? '작성됨' : '권장', desc: instructions?.trim() ? '사용자 화면에 바로 노출됩니다.' : '업로드 규칙과 예외사항을 적어두면 좋습니다.', tone: instructions?.trim() ? 'success' : 'warn' },
-      ]}
-    />
-    <div className="preflight-checklist-card admin-checklist-card">
-      <div className="preflight-checklist-head">
+}) => {
+  const [openModal, setOpenModal] = React.useState(null);
+
+  return (
+    <div className="wizard-panel admin-basic-panel">
+      <div className="admin-basic-head">
         <div>
-          <div className="preflight-checklist-title">설정 전 체크포인트</div>
-          <div className="preflight-checklist-desc">저장 전에 운영자가 다시 확인해야 할 항목을 한곳에 모았습니다.</div>
+          <div className="admin-stage-eyebrow">Admin Setup</div>
+          <div className="admin-basic-title">기본 설정</div>
+          <div className="admin-basic-desc">화면에는 저장에 필요한 핵심값만 두고, 세부 설정은 모달에서 관리합니다.</div>
         </div>
-        <div className={`preflight-checklist-summary ${(jobName?.trim() && (sampleFileName || sampleFile?.name)) ? 'ok' : 'warn'}`}>
-          {(jobName?.trim() ? 1 : 0) + ((sampleFileName || sampleFile?.name) ? 1 : 0) + (instructions?.trim() ? 1 : 0)} / 3 점검
+        <div className="admin-basic-summary">
+          <span>{jobName?.trim() ? '작업명 입력됨' : '작업명 필요'}</span>
+          <span>{Number(maxUploadRows) > 0 ? `최대 ${Number(maxUploadRows).toLocaleString()}건` : '제한 없음'}</span>
+          <span>{sampleFileName || sampleFile?.name ? '샘플 등록됨' : '샘플 없음'}</span>
         </div>
       </div>
-      <div className="preflight-checklist-grid admin-checklist-grid">
-        {[
-          { label: '작업명', detail: jobName?.trim() || '사용자 화면 제목으로 노출됩니다.', ok: !!jobName?.trim() },
-          { label: '샘플 양식', detail: sampleFileName || sampleFile?.name || '등록해두면 재문의가 줄어듭니다.', ok: !!(sampleFileName || sampleFile?.name) },
-          { label: '안내 문구', detail: instructions?.trim() || '입력해두면 업로드 실패를 줄이는 데 도움이 됩니다.', ok: !!instructions?.trim() },
-        ].map(item => (
-          <div key={item.label} className={`preflight-check-item ${item.ok ? 'ok' : 'warn'}`}>
-            <div className="preflight-check-icon">{item.ok ? '✓' : '!'}</div>
-            <div>
-              <div className="preflight-check-label">{item.label}</div>
-              <div className="preflight-check-detail">{item.detail}</div>
-            </div>
+
+      <section className="admin-basic-card admin-essential-card">
+        <div className="admin-basic-card-title">필수 설정</div>
+        <div className="admin-basic-card-desc">작업명, 헤더 위치, 업로드 제한만 바로 입력합니다.</div>
+        <div className="admin-essential-grid">
+          <div className="wiz-field-group">
+            <label className="wiz-label">작업명 <span style={{ color: '#ef4444' }}>*</span></label>
+            <input type="text" value={jobName} onChange={e => setJobName(e.target.value)} placeholder="예: 직원 정보 일괄 등록" className="wiz-input" />
           </div>
-        ))}
-      </div>
-    </div>
-    <div className="wiz-grid-2" style={{ marginTop: '28px' }}>
-      <div className="wiz-field-group">
-        <label className="wiz-label">작업명 <span style={{ color: '#ef4444' }}>*</span></label>
-        <input type="text" value={jobName} onChange={e => setJobName(e.target.value)} placeholder="예: 직원 정보 일괄 등록" className="wiz-input" />
-      </div>
-      <div className="wiz-field-group">
-        <label className="wiz-label">헤더 행 번호</label>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <input type="number" value={headerRow} onChange={e => setHeaderRow(e.target.value)} min="1" className="wiz-input" style={{ width: '90px', textAlign: 'center', fontSize: '1.1rem', fontWeight: 700 }} />
-          <span style={{ fontSize: '0.82rem', color: '#64748b' }}>헤더가 위치한 행 번호</span>
+          <div className="wiz-field-group">
+            <label className="wiz-label">헤더 행 번호</label>
+            <input type="number" value={headerRow} onChange={e => setHeaderRow(e.target.value)} min="1" className="wiz-input" />
+          </div>
+          <div className="wiz-field-group">
+            <label className="wiz-label">최대 업로드 건수</label>
+            {/* 2026-06-20: 대량 업로드로 인한 서버 부하를 줄이기 위해 로더별 최대 처리 행 수를 입력받는다. */}
+            <input type="number" value={maxUploadRows} onChange={e => setMaxUploadRows(e.target.value)} min="0" placeholder="예: 5000" className="wiz-input admin-limit-input" />
+          </div>
         </div>
+      </section>
+
+      <div className="admin-modal-setting-row">
+        <button className="admin-modal-setting-btn" onClick={() => setOpenModal('sample')}>
+          <strong>샘플 파일</strong>
+          <span>{sampleFileName || sampleFile?.name || '등록 전'}</span>
+        </button>
+        <button className="admin-modal-setting-btn" onClick={() => setOpenModal('options')}>
+          <strong>처리 옵션</strong>
+          <span>{upsertKeepEmptyYn === 'Y' ? '빈칸 유지' : '기본 동작'}</span>
+        </button>
+        <button className="admin-modal-setting-btn" onClick={() => setOpenModal('instructions')}>
+          <strong>사용자 안내</strong>
+          <span>{instructions?.trim() ? '작성됨' : '미작성'}</span>
+        </button>
       </div>
+
+      {openModal === 'sample' && (
+        <AdminConfigModal title="샘플 파일 설정" desc="사용자가 내려받을 엑셀 양식과 저장 경로를 관리합니다." onClose={() => setOpenModal(null)}>
+          <div className="admin-sample-row">
+            <input
+              type="file"
+              id="sampleFileInput"
+              accept=".xls,.xlsx"
+              onChange={e => {
+                const selected = e.target.files[0];
+                if (selected) {
+                  setSampleFile(selected);
+                  setSampleFileName(selected.name);
+                  setSampleFileDownloadName(prev => prev?.trim() ? prev : selected.name);
+                }
+              }}
+              className="admin-sample-file"
+            />
+            {uploadId && sampleFileName && <button className="side-action-btn" onClick={downloadSampleFile}>테스트 다운로드</button>}
+          </div>
+          {(sampleFile || sampleFileName) && <div className="admin-basic-help">{sampleFile ? `업로드 대기: ${sampleFile.name}` : `서버 보관: ${sampleFileName}`}</div>}
+          {/* 2026-06-19: 샘플 파일 저장 경로 입력을 추가한다. */}
+          <input type="text" value={sampleFilePath} onChange={e => setSampleFilePath(e.target.value)} placeholder="샘플 파일 저장 경로" className="wiz-input" />
+          <input type="text" value={sampleFileDownloadName} onChange={e => setSampleFileDownloadName(e.target.value)} placeholder="사용자에게 보일 다운로드 파일명" className="wiz-input" />
+        </AdminConfigModal>
+      )}
+
+      {openModal === 'options' && (
+        <AdminConfigModal title="처리 옵션" desc="UPSERT와 같은 저장 동작의 세부 정책을 설정합니다." onClose={() => setOpenModal(null)}>
+          {/* 2026-06-19: UPSERT 빈 칸 유지 옵션을 추가한다. */}
+          <label className="admin-option-toggle">
+            <input type="checkbox" checked={upsertKeepEmptyYn === 'Y'} onChange={e => setUpsertKeepEmptyYn(e.target.checked ? 'Y' : 'N')} />
+            <span>
+              <strong>빈칸 유지</strong>
+              <small>업데이트 시 엑셀 값이 비어 있으면 기존 DB 값을 유지합니다.</small>
+            </span>
+          </label>
+        </AdminConfigModal>
+      )}
+
+      {openModal === 'instructions' && (
+        <AdminConfigModal title="사용자 안내 및 주의사항" desc="일반 사용자가 업로드 전에 확인해야 할 내용을 작성합니다." onClose={() => setOpenModal(null)}>
+          <textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="일반 사용자가 업로드 시 참고할 주의사항을 입력하세요." className="wiz-textarea admin-instructions-textarea" />
+        </AdminConfigModal>
+      )}
     </div>
-    <div className="wiz-section">
-      <div className="wiz-section-title">📎 샘플 파일 등록</div>
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-        <input
-          type="file"
-          id="sampleFileInput"
-          accept=".xls,.xlsx"
-          onChange={e => {
-            const selected = e.target.files[0];
-            if (selected) {
-              setSampleFile(selected);
-              setSampleFileName(selected.name);
-              setSampleFileDownloadName(prev => prev?.trim() ? prev : selected.name);
-            }
-          }}
-          style={{ flex: 1, padding: '8px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '0.88rem' }}
-        />
-        {uploadId && sampleFileName && <button className="btn btn-mini btn-add" onClick={downloadSampleFile}>테스트 다운로드</button>}
-      </div>
-      {(sampleFile || sampleFileName) && <div style={{ marginTop: '6px', fontSize: '0.8rem', color: '#64748b' }}>{sampleFile ? `📄 업로드 대기: ${sampleFile.name}` : `💾 서버 보관: ${sampleFileName}`}</div>}
-      <input type="text" value={sampleFileDownloadName} onChange={e => setSampleFileDownloadName(e.target.value)} placeholder="사용자에게 보일 다운로드 파일명 (예: 직원등록양식.xlsx)" className="wiz-input" style={{ marginTop: '10px' }} />
-    </div>
-    <div className="wiz-section">
-      <div className="wiz-section-title">📢 사용자 안내 및 주의사항</div>
-      <textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="일반 사용자가 업로드 시 참고할 주의사항을 입력하세요." className="wiz-textarea" style={{ minHeight: '100px' }} />
-    </div>
-  </div>
-);
+  );
+};
 
 const AdminStep1 = ({
   structs,
@@ -305,13 +350,74 @@ const AdminStep2 = ({
   setMappingPage,
   updateMappingVal,
   handleReplaceSetup,
-  MySelect,
   previewLoading,
   isDragging,
   setIsDragging,
 }) => {
   const mappedCount = filteredCols.filter(c => currentAliasMapping[c.value]).length;
   const unmappedCount = Math.max(0, filteredCols.length - mappedCount);
+  // 2026-06-20: 샘플 엑셀 헤더가 없으면 DB 컬럼 매핑을 진행하지 못하도록 잠근다.
+  const canUseMapping = !!file && excelHeaders.length > 0;
+  const [mappingOptionTarget, setMappingOptionTarget] = React.useState(null);
+  // 2026-06-20: 컬럼 매핑 옵션을 행 안에 펼치지 않고 모달에서 설정하도록 공통 옵션 목록을 분리한다.
+  const systemMappingValues = ['_CURRENT_DTM_COMPACT_', '_CURRENT_DATE_COMPACT_', '_CURRENT_DATE_', '_CURRENT_DATETIME_MIN_', '_CURRENT_DATETIME_SEC_', '_LOGIN_USER_', '_LOGIN_MTN_'];
+  const systemMappingOptions = [
+    // 2026-06-20: 현재 날짜 특수값을 저장 컬럼 형식에 맞게 선택할 수 있게 제공한다.
+    { value: '_CURRENT_DTM_COMPACT_', label: '년월일시분초' },
+    { value: '_CURRENT_DATE_COMPACT_', label: '년월일' },
+    { value: '_CURRENT_DATE_', label: '년-월-일' },
+    { value: '_CURRENT_DATETIME_MIN_', label: '년-월-일 시:분' },
+    { value: '_CURRENT_DATETIME_SEC_', label: '년-월-일 시:분:초' },
+    { value: '_LOGIN_USER_', label: '현재 로그인 사용자' },
+    { value: '_LOGIN_MTN_', label: '현재 로그인 MTN' }
+  ];
+  const getMappingState = (mapVal = '') => {
+    const isFixed = mapVal.startsWith('_FIXED_:');
+    const isReplace = mapVal.startsWith('_REPLACE_:');
+    const isUnique = mapVal.startsWith('_UNIQUE_:');
+    let selectValue = mapVal;
+    let fixedText = '';
+    if (isFixed) {
+      selectValue = '_FIXED_';
+      fixedText = mapVal.substring(8);
+    } else if (isReplace) {
+      selectValue = mapVal.split(':')[1];
+    } else if (isUnique) {
+      selectValue = mapVal.split(':')[1];
+    }
+    const isSystemValue = systemMappingValues.includes(mapVal);
+    const canUseExcelValueOption = !!selectValue && selectValue !== '_AUTO_SEQ_' && selectValue !== '_FIXED_' && !systemMappingValues.includes(selectValue);
+    return { isFixed, isReplace, isUnique, isSystemValue, selectValue, fixedText, canUseExcelValueOption };
+  };
+  const getMappingSummary = (mapVal = '') => {
+    if (!mapVal) return '미사용';
+    const state = getMappingState(mapVal);
+    if (state.isFixed) return state.fixedText ? `고정값: ${state.fixedText}` : '고정값 입력 필요';
+    if (state.isSystemValue) return systemMappingOptions.find(opt => opt.value === mapVal)?.label || '특수값';
+    if (mapVal === '_AUTO_SEQ_') return '자동 채번';
+    const sourceLabel = excelHeaders.find(h => h.value === state.selectValue)?.label || state.selectValue;
+    if (state.isReplace) return `${sourceLabel} / 코드 치환`;
+    if (state.isUnique) return `${sourceLabel} / 중복명 숫자`;
+    return sourceLabel || '매핑 선택 필요';
+  };
+  const openMappingOptionModal = (colValue) => {
+    if (!currentAliasMapping[colValue]) updateMappingVal(colValue, '_AUTO_SEQ_');
+    setMappingOptionTarget(colValue);
+  };
+  const closeMappingOptionModal = () => setMappingOptionTarget(null);
+  const optionMapVal = mappingOptionTarget ? (currentAliasMapping[mappingOptionTarget] || '_AUTO_SEQ_') : '';
+  const optionState = getMappingState(optionMapVal);
+  const optionColumn = mappingOptionTarget ? filteredCols.find(c => c.value === mappingOptionTarget) : null;
+  const handleMappingFileDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped && (dropped.name.endsWith('.xlsx') || dropped.name.endsWith('.xls'))) {
+      processSelectedFile(dropped);
+    } else if (dropped) {
+      showFileTypeAlert();
+    }
+  };
 
   return (
     <div className="wizard-panel">
@@ -337,14 +443,33 @@ const AdminStep2 = ({
     <div className="wiz-section" style={{ marginTop: '28px' }}>
       <div className="wiz-section-title" style={{ marginBottom: '10px' }}>샘플 엑셀 파일 선택 (헤더 파악용)</div>
       <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-        <label htmlFor="mappingFileInput" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', background: '#f8fafc', border: '1.5px dashed #cbd5e1', borderRadius: '10px', cursor: 'pointer', fontSize: '0.88rem', color: '#475569', flex: 1 }}>
-          📂 {file ? <span style={{ fontWeight: 600, color: '#059669' }}>{file.name} ({formatFileSize(file.size)})</span> : <span>엑셀 파일을 선택하세요 (.xls, .xlsx)</span>}
+        <label
+          htmlFor="mappingFileInput"
+          className={`admin-mapping-file-drop${isDragging ? ' dragging' : ''}${file ? ' has-file' : ''}`}
+          onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={e => { e.preventDefault(); setIsDragging(false); }}
+          onDrop={handleMappingFileDrop}
+        >
+          <span className="admin-mapping-file-icon">{isDragging ? '📥' : '📂'}</span>
+          <span className="admin-mapping-file-text">
+            {file ? <strong>{file.name} ({formatFileSize(file.size)})</strong> : <strong>{isDragging ? '여기에 놓아주세요' : '엑셀 파일을 드래그하거나 클릭하여 선택'}</strong>}
+            <small>.xls, .xlsx 파일만 사용할 수 있습니다.</small>
+          </span>
         </label>
         <input id="mappingFileInput" type="file" accept=".xls,.xlsx" style={{ display: 'none' }} onChange={e => { const selected = e.target.files[0]; if (selected) processSelectedFile(selected); }} />
         {file && <span style={{ fontSize: '0.8rem', color: '#10b981', fontWeight: 600, whiteSpace: 'nowrap' }}>헤더 {excelHeaders.length}개 인식</span>}
       </div>
     </div>
-    {structs[0].table && (
+    {structs[0].table && !canUseMapping && (
+      <div className="admin-mapping-locked-card">
+        <div className="admin-mapping-locked-icon">📂</div>
+        <div>
+          <div className="admin-mapping-locked-title">샘플 엑셀 파일을 먼저 업로드하세요</div>
+          <div className="admin-mapping-locked-desc">엑셀 헤더를 읽어야 DB 컬럼과 엑셀 값을 정확히 매핑할 수 있습니다. 위 영역에서 .xls 또는 .xlsx 파일을 선택하면 매핑 화면이 열립니다.</div>
+        </div>
+      </div>
+    )}
+    {structs[0].table && canUseMapping && (
       <div className="wiz-section">
         <div className="admin-alias-tabs">
           {structs.map(s => (
@@ -367,40 +492,31 @@ const AdminStep2 = ({
               {pagedCols.map(col => {
                 const mapVal = currentAliasMapping[col.value] || '';
                 const isChecked = !!mapVal;
-                const isFixed = mapVal.startsWith('_FIXED_:');
-                const isReplace = mapVal.startsWith('_REPLACE_:');
-                const isUnique = mapVal.startsWith('_UNIQUE_:');
-                let selectValue = mapVal;
-                let fixedText = '';
-                if (isFixed) {
-                  selectValue = '_FIXED_';
-                  fixedText = mapVal.substring(8);
-                } else if (isReplace) {
-                  selectValue = mapVal.split(':')[1];
-                } else if (isUnique) {
-                  selectValue = mapVal.split(':')[1];
-                }
+                const rowOptionState = getMappingState(mapVal);
                 return (
                   <tr key={col.value} style={{ opacity: isChecked ? 1 : 0.45, background: isChecked ? '#f0fdfa' : 'transparent' }}>
                     <td style={{ textAlign: 'center' }}>
                       <input type="checkbox" checked={isChecked} onChange={() => updateMappingVal(col.value, isChecked ? '' : '_AUTO_SEQ_')} style={{ transform: 'scale(1.2)', cursor: 'pointer', accentColor: '#10b981' }} />
                     </td>
-                    <td><b style={{ color: isChecked ? '#065f46' : '#475569' }}>{col.label}</b><br /><small style={{ color: '#94a3b8' }}>{col.value}</small></td>
-                    <td style={{ textAlign: 'center', fontSize: '1rem' }}>{isChecked ? (isFixed ? '📌' : isReplace ? '🔀' : isUnique ? '🔢' : '➡️') : '↔️'}</td>
+                    <td>
+                      <div className="mapping-db-column-name" style={{ color: isChecked ? '#065f46' : '#475569' }}>{col.value}</div>
+                      {col.comment && <div className="mapping-db-column-comment">{col.comment}</div>}
+                    </td>
+                    <td style={{ textAlign: 'center', fontSize: '1rem' }}>{isChecked ? (rowOptionState.isFixed ? '📌' : rowOptionState.isSystemValue ? '⚙️' : rowOptionState.isReplace ? '🔀' : rowOptionState.isUnique ? '🔢' : '➡️') : '↔️'}</td>
                     <td style={{ padding: '6px 12px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                          <div style={{ flex: 1 }}>
-                            <MySelect options={[{ value: '_AUTO_SEQ_', label: '✨ 자동 채번' }, { value: '_FIXED_', label: '📌 고정값' }, ...excelHeaders]} value={selectValue} onChange={v => { if (v === '_FIXED_') updateMappingVal(col.value, '_FIXED_:'); else updateMappingVal(col.value, v); }} isDisabled={!isChecked} placeholder="매핑 선택..." />
-                          </div>
-                          {isChecked && selectValue && selectValue !== '_AUTO_SEQ_' && selectValue !== '_FIXED_' && (
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                              <button className="btn btn-mini" onClick={() => handleReplaceSetup(col.value, mapVal)} style={{ height: '38px', padding: '0 10px', background: isReplace ? '#10b981' : '#f8fafc', color: isReplace ? 'white' : '#475569', border: isReplace ? 'none' : '1px solid #e2e8f0' }}>{isReplace ? '🔀 ON' : '🔀'}</button>
-                              <button className="btn btn-mini" onClick={() => isUnique ? updateMappingVal(col.value, selectValue) : updateMappingVal(col.value, `_UNIQUE_:${selectValue}`)} style={{ height: '38px', padding: '0 10px', background: isUnique ? '#3b82f6' : '#f8fafc', color: isUnique ? 'white' : '#475569', border: isUnique ? 'none' : '1px solid #e2e8f0' }}>{isUnique ? '🔢 ON' : '🔢'}</button>
-                            </div>
-                          )}
+                      <div className="admin-mapping-option-row">
+                        <div className="admin-mapping-option-summary">
+                          <strong>{getMappingSummary(mapVal)}</strong>
+                          {isChecked && <span>클릭해서 매핑 방식과 옵션을 조정하세요.</span>}
                         </div>
-                        {isFixed && isChecked && <input type="text" value={fixedText} onChange={e => updateMappingVal(col.value, '_FIXED_:' + e.target.value)} placeholder="고정값 입력" style={{ padding: '8px 12px', borderRadius: '6px', border: '1px dashed #6366f1', background: '#eef2ff', color: '#4338ca', fontSize: '0.88rem', fontWeight: 600, outline: 'none' }} />}
+                        <button
+                          type="button"
+                          className="side-action-btn"
+                          onClick={() => openMappingOptionModal(col.value)}
+                          style={{ height: '32px', padding: '0 12px', whiteSpace: 'nowrap' }}
+                        >
+                          옵션
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -427,6 +543,125 @@ const AdminStep2 = ({
           </div>
         )}
       </div>
+    )}
+    {mappingOptionTarget && (
+      <AdminConfigModal
+        title="컬럼 매핑 옵션"
+        desc="DB 컬럼에 저장할 값의 출처와 부가 옵션을 설정합니다."
+        onClose={closeMappingOptionModal}
+      >
+        <div className="admin-mapping-modal-head">
+          <div>
+            <div className="admin-mapping-modal-label">DB 컬럼</div>
+            <strong>{optionColumn?.value || mappingOptionTarget}</strong>
+            {optionColumn?.comment && <span>{optionColumn.comment}</span>}
+          </div>
+          <button
+            type="button"
+            className="side-action-btn"
+            onClick={() => {
+              updateMappingVal(mappingOptionTarget, '');
+              closeMappingOptionModal();
+            }}
+          >
+            매핑 해제
+          </button>
+        </div>
+
+        <div className="admin-mapping-modal-section">
+          <div className="admin-mapping-modal-title">기본값</div>
+          <div className="admin-mapping-token-grid">
+            <button
+              type="button"
+              className={`admin-mapping-token-btn${optionMapVal === '_AUTO_SEQ_' ? ' active' : ''}`}
+              onClick={() => updateMappingVal(mappingOptionTarget, '_AUTO_SEQ_')}
+            >
+              자동 채번
+            </button>
+            <button
+              type="button"
+              className={`admin-mapping-token-btn${optionState.isFixed ? ' active' : ''}`}
+              onClick={() => updateMappingVal(mappingOptionTarget, '_FIXED_:')}
+            >
+              고정값
+            </button>
+          </div>
+          {optionState.isFixed && (
+            <input
+              type="text"
+              value={optionState.fixedText}
+              onChange={e => updateMappingVal(mappingOptionTarget, '_FIXED_:' + e.target.value)}
+              placeholder="고정값 입력"
+              className="wiz-input"
+              style={{ marginTop: '8px' }}
+            />
+          )}
+        </div>
+
+        <div className="admin-mapping-modal-section">
+          <div className="admin-mapping-modal-title">엑셀 값 선택</div>
+          {excelHeaders.length > 0 ? (
+            <div className="admin-mapping-excel-grid">
+              {excelHeaders.map(header => (
+                <button
+                  key={header.value}
+                  type="button"
+                  className={`admin-mapping-excel-btn${optionState.selectValue === header.value ? ' active' : ''}`}
+                  onClick={() => updateMappingVal(mappingOptionTarget, header.value)}
+                >
+                  <span>{header.value}</span>
+                  <strong>{header.label}</strong>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="admin-mapping-option-help">샘플 엑셀 파일을 먼저 선택하면 엑셀 컬럼 목록이 표시됩니다.</div>
+          )}
+        </div>
+
+        <div className="admin-mapping-modal-section">
+          <div className="admin-mapping-modal-title">특수값 빠른 선택</div>
+          <div className="admin-mapping-token-grid">
+            {systemMappingOptions.map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                className={`admin-mapping-token-btn${optionMapVal === opt.value ? ' active' : ''}`}
+                onClick={() => updateMappingVal(mappingOptionTarget, opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="admin-mapping-modal-section">
+          <div className="admin-mapping-modal-title">엑셀값 옵션</div>
+          <div className="admin-mapping-option-actions">
+            <button
+              type="button"
+              className={`admin-mapping-large-option${optionState.isReplace ? ' active green' : ''}`}
+              onClick={() => handleReplaceSetup(mappingOptionTarget, optionMapVal)}
+              disabled={!optionState.canUseExcelValueOption}
+            >
+              <strong>코드 치환{optionState.isReplace ? ' ON' : ''}</strong>
+              <span>엑셀 값을 코드값으로 변환해서 저장합니다.</span>
+            </button>
+            <button
+              type="button"
+              className={`admin-mapping-large-option${optionState.isUnique ? ' active blue' : ''}`}
+              onClick={() => optionState.isUnique ? updateMappingVal(mappingOptionTarget, optionState.selectValue) : updateMappingVal(mappingOptionTarget, `_UNIQUE_:${optionState.selectValue}`)}
+              disabled={!optionState.canUseExcelValueOption}
+            >
+              <strong>중복명 숫자{optionState.isUnique ? ' ON' : ''}</strong>
+              <span>같은 이름이 있으면 뒤에 숫자를 붙여 저장합니다.</span>
+            </button>
+          </div>
+          {!optionState.canUseExcelValueOption && (
+            <div className="admin-mapping-option-help">엑셀 컬럼을 선택했을 때만 코드 치환과 중복명 숫자 옵션을 사용할 수 있습니다.</div>
+          )}
+        </div>
+      </AdminConfigModal>
     )}
     </div>
   );
@@ -684,9 +919,9 @@ const AdminStep3 = (props) => {
             </div>
           </div>
         ) : (
-          <>
+          <div className="admin-launch-layout">
             {file ? (
-              <div style={{ background: '#f0fdf4', border: '1.5px solid #6ee7a0', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+              <div className="admin-file-card" style={{ background: '#f0fdf4', border: '1.5px solid #6ee7a0', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
                 <div style={{ width: '38px', height: '38px', borderRadius: '9px', background: 'white', border: '1px solid #a7f3d0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', flexShrink: 0 }}>📊</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, color: '#065f46', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.9rem' }}>{file.name}</div>
@@ -699,7 +934,7 @@ const AdminStep3 = (props) => {
                 <button onClick={() => { setFile(null); setPreviewData([]); setTotalRows(0); setEditedCells({}); setFailedRows({}); const input = document.getElementById('adminUploadFileInput'); if (input) input.value = ''; }} style={{ height: '28px', padding: '0 10px', borderRadius: '7px', border: '1px solid #fca5a5', background: 'white', color: '#ef4444', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer' }}>✕</button>
               </div>
             ) : (
-              <label htmlFor="adminUploadFileInput" onDragOver={e => { e.preventDefault(); setIsDragging(true); }} onDragLeave={e => { e.preventDefault(); setIsDragging(false); }} onDrop={e => { e.preventDefault(); setIsDragging(false); const dropped = e.dataTransfer.files[0]; if (dropped && (dropped.name.endsWith('.xlsx') || dropped.name.endsWith('.xls'))) processSelectedFile(dropped); else if (dropped) toast.error('❌ .xls/.xlsx만 가능합니다.'); }} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px 20px', borderRadius: '12px', cursor: 'pointer', border: isDragging ? '2px solid #6366f1' : '2px dashed #cbd5e1', background: isDragging ? '#eef2ff' : '#f9fafb', transition: 'all 0.18s', marginBottom: '12px' }}>
+              <label className="admin-file-dropzone" htmlFor="adminUploadFileInput" onDragOver={e => { e.preventDefault(); setIsDragging(true); }} onDragLeave={e => { e.preventDefault(); setIsDragging(false); }} onDrop={e => { e.preventDefault(); setIsDragging(false); const dropped = e.dataTransfer.files[0]; if (dropped && (dropped.name.endsWith('.xlsx') || dropped.name.endsWith('.xls'))) processSelectedFile(dropped); else if (dropped) showFileTypeAlert(); }} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px 20px', borderRadius: '12px', cursor: 'pointer', border: isDragging ? '2px solid #6366f1' : '2px dashed #cbd5e1', background: isDragging ? '#eef2ff' : '#f9fafb', transition: 'all 0.18s', marginBottom: '12px' }}>
                 <input id="adminUploadFileInput" type="file" accept=".xls,.xlsx" style={{ display: 'none' }} onChange={e => { const selected = e.target.files[0]; if (selected) processSelectedFile(selected); }} />
                 <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: isDragging ? '#6366f1' : 'white', border: isDragging ? 'none' : '1.5px solid #e5e8eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem', flexShrink: 0 }}>{isDragging ? '📂' : '📤'}</div>
                 <div>
@@ -710,7 +945,7 @@ const AdminStep3 = (props) => {
             )}
 
             {previewData.length > 0 && (
-              <div style={{ border: `1px solid ${Object.keys(failedRows).length > 0 ? '#fecdd3' : '#e5e8eb'}`, borderRadius: '10px', overflow: 'hidden', marginBottom: '14px' }}>
+              <div className="admin-preview-card" style={{ border: `1px solid ${Object.keys(failedRows).length > 0 ? '#fecdd3' : '#e5e8eb'}`, borderRadius: '10px', overflow: 'hidden', marginBottom: '14px' }}>
                 {Object.keys(failedRows).length > 0 && (
                   <>
                     <div style={{ background: '#fff1f2', borderBottom: '1px solid #fecdd3', padding: '8px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
@@ -765,7 +1000,7 @@ const AdminStep3 = (props) => {
                     <span style={{ fontSize: '0.73rem', fontWeight: 700, color: '#3182f6', background: '#ebf3ff', padding: '2px 8px', borderRadius: '20px' }}>총 {totalRows.toLocaleString()}건</span>
                   </div>
                 </div>
-                <div style={{ overflowX: 'auto', maxHeight: '280px', position: 'relative' }}>
+                <div style={{ overflowX: 'auto', maxHeight: 'min(62vh, 680px)', position: 'relative' }}>
                   {previewLoading && <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, fontWeight: 600, color: '#3182f6', fontSize: '0.85rem' }}>로딩 중...</div>}
                   <table className="data-table" style={{ margin: 0, whiteSpace: 'nowrap', border: 'none', fontSize: '0.78rem' }}>
                     <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
@@ -832,7 +1067,7 @@ const AdminStep3 = (props) => {
                                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
                                     <span style={{ background: '#fee2e2', color: '#e11d48', fontWeight: 700, fontSize: '0.7rem', padding: '2px 7px', borderRadius: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>❌ {friendlyMsg}</span>
                                     {failedColInfos.filter(c => c.colLabel).map((c, i) => <span key={i} style={{ background: '#fef3c7', color: '#92400e', fontWeight: 600, fontSize: '0.7rem', padding: '2px 7px', borderRadius: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>📌 {c.colLabel} 컬럼</span>)}
-                                    <span style={{ color: '#9f1239', fontSize: '0.68rem', lineHeight: 1.4, wordBreak: 'break-all' }}>{failMsg}</span>
+                                    <span style={{ color: '#9f1239', fontSize: '0.68rem', lineHeight: 1.4, wordBreak: 'break-word' }}>{friendlyMsg}</span>
                                   </div>
                                 </td>
                               </tr>
@@ -870,7 +1105,7 @@ const AdminStep3 = (props) => {
               const hasFailed = Object.keys(failedRows).length > 0;
               const hasKnownFailed = knownFailedRows.length > 0;
               return (
-                <div style={{ padding: '16px 20px', background: hasFailed ? 'linear-gradient(135deg,#fff1f2,#fef2f2)' : 'linear-gradient(135deg,#eef2ff,#f5f3ff)', borderRadius: '12px', border: hasFailed ? '1px solid #fecdd3' : '1px solid #e0e7ff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                <div className="admin-execution-panel" style={{ padding: '16px 20px', background: hasFailed ? 'linear-gradient(135deg,#fff1f2,#fef2f2)' : 'linear-gradient(135deg,#eef2ff,#f5f3ff)', borderRadius: '12px', border: hasFailed ? '1px solid #fecdd3' : '1px solid #e0e7ff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                   <div>
                     <div style={{ fontWeight: 700, color: '#1e293b', fontSize: '0.9rem' }}>{hasFailed ? `🚨 ${Object.keys(failedRows).length}건 실패 — 수정 후 재업로드` : '업로드 준비 완료'}</div>
                     <div style={{ color: '#64748b', fontSize: '0.78rem', marginTop: '2px' }}>{previewLoading ? '데이터 분석 중...' : hasFailed ? '빨간 행의 셀을 클릭해 직접 수정하세요.' : `총 ${totalRows.toLocaleString()}건을 전송합니다`}</div>
@@ -927,7 +1162,7 @@ const AdminStep3 = (props) => {
                 </div>
               );
             })()}
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -940,6 +1175,8 @@ const AdminWizardScreen = ({
   isLastStep,
   goPrev,
   goNext,
+  onStepClick,
+  canNavigateStep,
   canGoNext,
   nextLabel,
   adminStepProps,
@@ -952,23 +1189,23 @@ const AdminWizardScreen = ({
   ][currentStep];
 
   return (
-    <>
-      <StepIndicator steps={steps} current={currentStep} />
-      <div style={{ background: 'white', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.07), 0 4px 20px rgba(0,0,0,0.04)', border: '1px solid #f1f5f9', overflow: 'hidden' }}>
+    <div className="wizard-shell">
+      <StepIndicator steps={steps} current={currentStep} onStepClick={onStepClick} canNavigateStep={canNavigateStep} />
+      <div className="wizard-content-card">
         {content}
         {!isLastStep && (
-          <div style={{ padding: '18px 32px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fafafa' }}>
-            <button onClick={goPrev} disabled={currentStep === 0} style={{ padding: '10px 22px', borderRadius: '10px', border: '1px solid #e2e8f0', background: 'white', color: currentStep === 0 ? '#cbd5e1' : '#475569', fontWeight: 600, cursor: currentStep === 0 ? 'not-allowed' : 'pointer', fontSize: '0.88rem' }}>
-              ← 이전
+          <div className="wizard-footer">
+            <button type="button" onClick={goPrev} disabled={currentStep === 0} className="wizard-nav-btn secondary">
+              이전
             </button>
-            <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{currentStep + 1} / {steps.length}</span>
-            <button onClick={goNext} disabled={!canGoNext} style={{ padding: '10px 26px', borderRadius: '10px', border: 'none', background: canGoNext ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : '#e2e8f0', color: canGoNext ? 'white' : '#94a3b8', fontWeight: 700, cursor: canGoNext ? 'pointer' : 'not-allowed', fontSize: '0.88rem', boxShadow: canGoNext ? '0 2px 8px rgba(99,102,241,0.28)' : 'none' }}>
+            <span className="wizard-footer-count">{currentStep + 1} / {steps.length}</span>
+            <button type="button" onClick={goNext} disabled={!canGoNext} className="wizard-nav-btn primary">
               {nextLabel}
             </button>
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 };
 

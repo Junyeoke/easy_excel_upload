@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import Select from 'react-select';
-import { ToastContainer, toast } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';
 import Swal from 'sweetalert2';
 import './App.css';
+import { translateError as translateUploadError, parseFailedColsFromMsg as parseUploadFailedColsFromMsg, friendlyFailMsg as friendlyUploadFailMsg } from './excelErrorText';
 
 const AdminWizardScreen = lazy(() => import('./components/AdminWizardScreen'));
 const UserUploadScreen = lazy(() => import('./components/UserUploadScreen'));
@@ -13,6 +12,11 @@ const ACTIVE_UPLOAD_STATE_KEY = 'excel_upload_active_state_v1';
 const ACTIVE_UPLOAD_HEARTBEAT_MS = 3000;
 const COMPLETION_SNAPSHOT_KEY = 'excel_upload_last_completion_v1';
 const CURRENT_EMP_ID_KEY = 'excel_upload_current_emp_id';
+const CURRENT_MTN_ID_KEY = 'excel_upload_current_mtn_id';
+const isUsableMtnId = (value) => {
+  const v = String(value || '').trim();
+  return !!v && v !== '*';
+};
 const getCurrentEmpId = () => {
   try {
     const fromGlobal = window.$egene?._user?.emp_id || window.$egene?.emp_id || '';
@@ -30,9 +34,102 @@ const getCurrentEmpId = () => {
     }
   }
 };
+// 2026-06-20: 컬럼 매핑의 "현재 로그인 MTN" 특수값 처리를 위해 런타임 MTN 값을 수집한다.
+const getCurrentMtnId = () => {
+  try {
+    // 2026-06-20: '*' 와일드카드 MTN보다 JSP가 내려준 실제 세션 emp_mtn_id를 우선 사용한다.
+    const candidates = [
+      window.__EXCEL_UPLOAD_SESSION__?.emp_mtn_id,
+      window.__EXCEL_UPLOAD_SESSION__?.mtn_id,
+      window.$egene?._user?.emp_mtn_id,
+      window.$egene?._user?.mtn_id,
+      window.$egene?.mtn?.mtn_id,
+      window.$egene?._mtn?.mtn_id,
+      window.$egene?.mtn_id,
+      window.$egene?.mtn_cd,
+      localStorage.getItem(CURRENT_MTN_ID_KEY)
+    ];
+    const found = candidates.find(isUsableMtnId) || '';
+    if (found) {
+      localStorage.setItem(CURRENT_MTN_ID_KEY, String(found).trim());
+      return String(found).trim();
+    }
+    return '';
+  } catch {
+    try {
+      const fromStorage = localStorage.getItem(CURRENT_MTN_ID_KEY) || '';
+      return isUsableMtnId(fromStorage) ? fromStorage : '';
+    } catch {
+      return '';
+    }
+  }
+};
 const getScopedStorageKey = (baseKey, empId = getCurrentEmpId()) => {
   const id = String(empId || '').trim();
   return id ? `${baseKey}::${encodeURIComponent(id)}` : baseKey;
+};
+
+const alertText = (value) => {
+  if (value == null) return '';
+  if (typeof value === 'string') return value.replace(/[✅❌⚠️🎉🚀💾🔎📥]/g, '').trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value?.props?.children) {
+    const children = Array.isArray(value.props.children) ? value.props.children : [value.props.children];
+    return children.map(alertText).filter(Boolean).join(' ');
+  }
+  return String(value);
+};
+
+const alertIcon = (type) => {
+  if (type === 'error') return 'error';
+  if (type === 'warning' || type === 'warn') return 'warning';
+  if (type === 'info') return 'info';
+  return 'success';
+};
+
+// 2026-06-20: react-toastify 알림을 SweetAlert2 기반 알림으로 대체한다.
+const toast = {
+  loading(message) {
+    Swal.fire({
+      title: alertText(message) || '처리 중...',
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+      didOpen: () => Swal.showLoading(),
+    });
+    return Date.now();
+  },
+  update(_id, options = {}) {
+    const message = alertText(options.render || options.message);
+    if (options.isLoading) {
+      Swal.fire({
+        title: message || '처리 중...',
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        didOpen: () => Swal.showLoading(),
+      });
+      return;
+    }
+    Swal.fire({
+      icon: alertIcon(options.type),
+      title: message || '처리되었습니다.',
+      timer: options.autoClose,
+      timerProgressBar: !!options.autoClose,
+      showConfirmButton: !options.autoClose,
+      confirmButtonColor: '#6366f1',
+    });
+  },
+  success(message, options = {}) {
+    Swal.fire({ icon: 'success', title: alertText(message), timer: options.autoClose || 1800, timerProgressBar: true, showConfirmButton: false });
+  },
+  error(message) {
+    Swal.fire({ icon: 'error', title: alertText(message), confirmButtonColor: '#6366f1' });
+  },
+  warn(message) {
+    Swal.fire({ icon: 'warning', title: alertText(message), confirmButtonColor: '#6366f1' });
+  },
+  info(message) {
+    Swal.fire({ icon: 'info', title: alertText(message), confirmButtonColor: '#6366f1' });
+  },
 };
 
 // ─────────────────────────────────────────────
@@ -123,6 +220,116 @@ const MyMultiSelect = ({ options = [], value = [], onChange, placeholder, isDisa
       styles={{ menuPortal: b => ({ ...b, zIndex: 9999 }), control: b => ({ ...b, minHeight: '40px', borderRadius: '8px', borderColor: '#e2e8f0', fontSize: '0.88rem', boxShadow: 'none', '&:hover': { borderColor: '#f59e0b' } }), multiValue: b => ({ ...b, background: '#fef3c7', borderRadius: '4px' }), multiValueLabel: b => ({ ...b, color: '#92400e', fontWeight: 600 }) }} />
   );
 };
+
+const UploadAdvancedSettingsModal = ({
+  debugDetailEnabled,
+  setDebugDetailEnabled,
+  debugRowLimit,
+  setDebugRowLimit,
+  alertEnabled,
+  setAlertEnabled,
+  alertWebhookUrl,
+  setAlertWebhookUrl,
+  alertFailRateThreshold,
+  setAlertFailRateThreshold,
+  alertFailCountThreshold,
+  setAlertFailCountThreshold,
+  onClose,
+}) => (
+  <div className="excel-modal-overlay" onClick={onClose}>
+    <div className="excel-modal excel-advanced-modal" onClick={e => e.stopPropagation()}>
+      <div className="excel-modal-head">
+        <div>
+          <div className="excel-modal-kicker">Advanced Settings</div>
+          <div className="excel-modal-title">업로드 고급 설정</div>
+        </div>
+        <button className="excel-modal-close" onClick={onClose}>닫기</button>
+      </div>
+      <div className="excel-modal-body">
+        <div className="advanced-setting-section">
+          <div className="advanced-setting-top">
+            <div>
+              <div className="advanced-setting-title">디버깅 모드</div>
+              <div className="advanced-setting-desc">업로드 로그에 행별 매핑값, 예상 SQL, Row-SQL 치환 결과를 자세히 출력합니다.</div>
+            </div>
+            <label className="advanced-switch">
+              <input type="checkbox" checked={debugDetailEnabled} onChange={(e) => setDebugDetailEnabled(e.target.checked)} />
+              <span>{debugDetailEnabled ? 'ON' : 'OFF'}</span>
+            </label>
+          </div>
+          <div className="advanced-field-row">
+            <label className="advanced-field-label">상세 로그 행 수</label>
+            <input
+              type="number"
+              min="1"
+              max="200"
+              value={debugRowLimit}
+              onChange={(e) => setDebugRowLimit(e.target.value)}
+              disabled={!debugDetailEnabled}
+              className="advanced-input short"
+            />
+            <span className="advanced-field-hint">1 ~ 200, 기본 20</span>
+          </div>
+        </div>
+
+        <div className="advanced-setting-section">
+          <div className="advanced-setting-top">
+            <div>
+              <div className="advanced-setting-title">운영 알림(Webhook)</div>
+              <div className="advanced-setting-desc">
+                업로드 실패율 또는 실패 건수가 기준을 넘으면 지정한 Webhook URL로 운영 알림을 전송합니다. Slack, Teams, 사내 알림 중계 API처럼 HTTP 요청을 받을 수 있는 주소를 입력하면 됩니다.
+              </div>
+            </div>
+            <label className="advanced-switch">
+              <input type="checkbox" checked={alertEnabled} onChange={(e) => setAlertEnabled(e.target.checked)} />
+              <span>{alertEnabled ? 'ON' : 'OFF'}</span>
+            </label>
+          </div>
+          <div className="advanced-webhook-note">
+            실패율 기준과 실패 건수 기준 중 하나라도 초과하면 알림 대상입니다. Webhook URL은 운영 알림 수신 서버의 전체 주소를 입력하세요.
+          </div>
+          <label className="advanced-field-label">Webhook URL</label>
+          <input
+            type="text"
+            value={alertWebhookUrl}
+            onChange={(e) => setAlertWebhookUrl(e.target.value)}
+            placeholder="https://example.com/hooks/excel-upload"
+            disabled={!alertEnabled}
+            className="advanced-input"
+          />
+          <div className="advanced-threshold-grid">
+            <div>
+              <label className="advanced-field-label">실패율 임계치(%)</label>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={alertFailRateThreshold}
+                onChange={(e) => setAlertFailRateThreshold(e.target.value)}
+                disabled={!alertEnabled}
+                className="advanced-input"
+              />
+            </div>
+            <div>
+              <label className="advanced-field-label">실패 건수 임계치</label>
+              <input
+                type="number"
+                min="1"
+                value={alertFailCountThreshold}
+                onChange={(e) => setAlertFailCountThreshold(e.target.value)}
+                disabled={!alertEnabled}
+                className="advanced-input"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="excel-modal-footer">
+        <button className="side-action-btn side-action-btn-primary" onClick={onClose}>적용</button>
+      </div>
+    </div>
+  </div>
+);
 
 const readCompletionSnapshot = () => {
   try {
@@ -244,7 +451,7 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
       ) : error ? (
         <div className="result-list-card result-list-card-error">
           <div className="result-list-title">완료 화면 오류</div>
-          <div className="result-error-raw">{error}</div>
+          <div className="result-error-raw">{translateUploadError(error).friendlyMsg}</div>
         </div>
       ) : (
         <>
@@ -318,7 +525,7 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
           <div className="result-action-grid">
             <button className="result-action-card action-primary" onClick={onOpenWorkbench}>
               <span className="result-action-title">작업 화면 열기</span>
-              <span className="result-action-desc">오류가 있으면 수정 작업대로 바로 돌아갈 수 있습니다.</span>
+              <span className="result-action-desc">오류가 있으면 미리보기로 바로 돌아갈 수 있습니다.</span>
             </button>
             <button className="result-action-card action-neutral" onClick={onOpenDashboard}>
               <span className="result-action-title">대시보드 보기</span>
@@ -407,6 +614,7 @@ function ExcelApp() {
   const [debugRowLimit, setDebugRowLimit] = useState(20);
   const [retryPolicy, setRetryPolicy] = useState('failed_only'); // failed_only | failed_and_edited | fail_type
   const [retryFailTypes, setRetryFailTypes] = useState([]);
+  const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
   const [alertEnabled, setAlertEnabled] = useState(false);
   const [alertWebhookUrl, setAlertWebhookUrl] = useState('');
   const [alertFailRateThreshold, setAlertFailRateThreshold] = useState(30);
@@ -440,6 +648,12 @@ function ExcelApp() {
   const [sampleFile, setSampleFile] = useState(null);
   const [sampleFileName, setSampleFileName] = useState('');
   const [sampleFileDownloadName, setSampleFileDownloadName] = useState('');
+  // 2026-06-19: 샘플 파일 저장 경로를 운영자가 직접 지정할 수 있도록 추가한다.
+  const [sampleFilePath, setSampleFilePath] = useState('');
+  // 2026-06-19: UPSERT 빈 칸 유지 옵션을 화면 상태로 둔다.
+  const [upsertKeepEmptyYn, setUpsertKeepEmptyYn] = useState('N');
+  // 2026-06-20: 로더별 엑셀 업로드 최대 행 수 제한을 화면 상태로 둔다. 빈 값은 제한 없음.
+  const [maxUploadRows, setMaxUploadRows] = useState('');
   const [instructions, setInstructions] = useState('');
   const [loaderList, setLoaderList] = useState([]);
   const [showLoaderPanel, setShowLoaderPanel] = useState(false);
@@ -447,6 +661,14 @@ function ExcelApp() {
 
   const formatFileSize = b => !b ? '' : b < 1024 ? b + ' B' : b < 1024*1024 ? (b/1024).toFixed(1)+' KB' : (b/(1024*1024)).toFixed(2)+' MB';
   const encodeSafeBase64 = str => btoa(encodeURIComponent(str || '').replace(/%([0-9A-F]{2})/g, (m, p1) => String.fromCharCode('0x' + p1)));
+  const isLikelyDirectoryPath = (value) => {
+    const text = String(value || '').trim();
+    if (!text) return false;
+    if (/[\\/]$/.test(text)) return true;
+    const lastSlash = Math.max(text.lastIndexOf('\\'), text.lastIndexOf('/'));
+    const lastPart = lastSlash >= 0 ? text.slice(lastSlash + 1) : text;
+    return lastPart && !lastPart.includes('.');
+  };
   const classifyFailTypeClient = (rawMsg) => {
     const m = (rawMsg || '').toLowerCase();
     if (!m) return '기타';
@@ -614,8 +836,8 @@ function ExcelApp() {
         } else if (data.type === 'waiting') {
           touchUploadWatchdog();
           setUploadLogs(prev => {
-            if (prev.some(v => v.includes('작업 대기 중'))) return prev;
-            return [...prev, resumed ? '⌛ 이전 작업 상태를 조회 중입니다...' : '⌛ 작업 대기 중... 서버 준비를 확인하고 있습니다.'].slice(-100);
+            if (prev.some(v => v.includes("\uC791\uC5C5 \uB300\uAE30 \uC911"))) return prev;
+            return [...prev, resumed ? "\u231B \uC774\uC804 \uC791\uC5C5 \uC0C1\uD0DC\uB97C \uC870\uD68C \uC911\uC785\uB2C8\uB2E4..." : "\u231B \uC791\uC5C5 \uB300\uAE30 \uC911... \uC11C\uBC84 \uC900\ube44\ub97c \uD655\uc778\ud558\uACE0 \uC788\uC2B5\uB2C8\uB2E4."].slice(-100);
           });
         }
       } catch {}
@@ -883,7 +1105,10 @@ function ExcelApp() {
         setPostSqls(safeJsonParse(res.post_sql_json, [{ sql: '' }]));
         setRowSqls(safeJsonParse(res.row_sql_json, [{ sql: '' }]));
         setSampleFileName(res.sample_file_name || '');
+        setSampleFilePath((res.sample_file_name || '').includes('\\') || (res.sample_file_name || '').includes('/') ? res.sample_file_name : '');
         setSampleFileDownloadName(res.sample_file_org_name || '');
+        setUpsertKeepEmptyYn((res.upsert_keep_empty_yn || 'N') === 'Y' ? 'Y' : 'N');
+        setMaxUploadRows(Number(res.max_upload_rows) > 0 ? String(res.max_upload_rows) : '');
         setInstructions(res.instructions || '');
         const loadedEntries = await Promise.all(s.map(async item => {
           if (!item.table) return [item.table, []];
@@ -903,7 +1128,13 @@ function ExcelApp() {
   const loadCols = async tbl => {
     if (!tbl) return [];
     const d = await post(API_URL, getParams({ mode: 'get_columns', table_name: tbl }));
-    const cols = Array.isArray(d) ? d : [];
+    const cols = Array.isArray(d)
+      ? d.map(col => ({
+          ...col,
+          label: col.display_label || col.label || col.value,
+          raw_label: col.label || col.value,
+        }))
+      : [];
     setColsCache(prev => ({ ...prev, [tbl]: cols }));
     return cols;
   };
@@ -1014,6 +1245,14 @@ function ExcelApp() {
     fd.append('row_sql_json_b64', encodeSafeBase64(JSON.stringify(rowSqls)));
     fd.append('instructions_b64', encodeSafeBase64(instructions));
     if (sampleFile) fd.append('sample_file', sampleFile);
+    if (sampleFilePath?.trim()) {
+      const normalizedSamplePath = sampleFilePath.trim();
+      // 2026-06-19: 입력값이 폴더 경로면 sample_file_dir 로, 파일 경로면 sample_file_path 로 보낸다.
+      if (isLikelyDirectoryPath(normalizedSamplePath)) fd.append('sample_file_dir', normalizedSamplePath);
+      else fd.append('sample_file_path', normalizedSamplePath);
+    }
+    fd.append('upsert_keep_empty_yn', upsertKeepEmptyYn);
+    fd.append('max_upload_rows', String(Math.max(Number(maxUploadRows) || 0, 0)));
     if (sampleFileDownloadName?.trim()) fd.append('sample_file_download_name', sampleFileDownloadName.trim());
     try {
       const res = await post(API_URL, fd);
@@ -1031,6 +1270,7 @@ function ExcelApp() {
     const fd = new FormData();
     fd.append('mode', 'preview'); fd.append('file', f); fd.append('header_row', hr || headerRow);
     fd.append('page', page); fd.append('page_size', previewPageSize);
+    fd.append('max_upload_rows', String(Math.max(Number(maxUploadRows) || 0, 0)));
     post(API_URL, fd).then(res => {
       setPreviewLoading(false);
       if (res.status === 'ok') {
@@ -1192,104 +1432,20 @@ function ExcelApp() {
 
   const runPolicyRetry = () => handleUpload({ retryMode: retryPolicy });
 
-  const renderDebugUploadOptions = (compact = false) => (
-    <div style={{
-      padding: compact ? '10px 12px' : '12px 14px',
-      borderRadius: '10px',
-      border: '1px solid #dbeafe',
-      background: debugDetailEnabled ? '#eff6ff' : '#f8fafc',
-      minWidth: compact ? '260px' : '320px'
-    }}>
-      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-        <input
-          type="checkbox"
-          checked={debugDetailEnabled}
-          onChange={(e) => setDebugDetailEnabled(e.target.checked)}
-          style={{ width: '16px', height: '16px', accentColor: '#4f46e5' }}
-        />
-        <span style={{ fontWeight: 700, color: '#1e293b', fontSize: compact ? '0.82rem' : '0.86rem' }}>
-          디버깅 모드
-        </span>
-        <span style={{
-          fontSize: '0.68rem',
-          fontWeight: 700,
-          color: debugDetailEnabled ? '#1d4ed8' : '#64748b',
-          background: debugDetailEnabled ? '#dbeafe' : '#e2e8f0',
-          padding: '2px 8px',
-          borderRadius: '999px'
-        }}>
-          {debugDetailEnabled ? 'ON' : 'OFF'}
-        </span>
-      </label>
-      <div style={{ color: '#64748b', fontSize: compact ? '0.72rem' : '0.75rem', marginTop: '6px', lineHeight: 1.5 }}>
-        켜면 업로드 로그 창에 행별 매핑값, 예상 SQL, row-sql 치환 결과를 자세히 보여줍니다.
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: compact ? '0.75rem' : '0.78rem', color: '#334155', fontWeight: 600 }}>상세 로그 행 수</span>
-        <input
-          type="number"
-          min="1"
-          max="200"
-          value={debugRowLimit}
-          onChange={(e) => setDebugRowLimit(e.target.value)}
-          disabled={!debugDetailEnabled}
-          style={{
-            width: '84px',
-            padding: '7px 10px',
-            borderRadius: '8px',
-            border: '1px solid #cbd5e1',
-            background: debugDetailEnabled ? 'white' : '#f1f5f9',
-            color: debugDetailEnabled ? '#0f172a' : '#94a3b8',
-            fontWeight: 700,
-            fontFamily: 'inherit'
-          }}
-        />
-        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>1 ~ 200, 기본 20</span>
-      </div>
-      <div style={{ marginTop: '12px', borderTop: '1px dashed #cbd5e1', paddingTop: '10px' }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={alertEnabled}
-            onChange={(e) => setAlertEnabled(e.target.checked)}
-            style={{ width: '16px', height: '16px', accentColor: '#0ea5e9' }}
-          />
-          <span style={{ fontWeight: 700, color: '#1e293b', fontSize: compact ? '0.82rem' : '0.86rem' }}>
-            운영 알림(Webhook)
-          </span>
-        </label>
-        <input
-          type="text"
-          value={alertWebhookUrl}
-          onChange={(e) => setAlertWebhookUrl(e.target.value)}
-          placeholder="Webhook URL"
-          disabled={!alertEnabled}
-          style={{ width: '100%', marginTop: '8px', padding: '7px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.74rem', fontFamily: 'inherit', background: alertEnabled ? 'white' : '#f1f5f9' }}
-        />
-        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-          <input
-            type="number"
-            min="1"
-            max="100"
-            value={alertFailRateThreshold}
-            onChange={(e) => setAlertFailRateThreshold(e.target.value)}
-            disabled={!alertEnabled}
-            style={{ width: '110px', padding: '6px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.73rem', fontFamily: 'inherit', background: alertEnabled ? 'white' : '#f1f5f9' }}
-          />
-          <input
-            type="number"
-            min="1"
-            value={alertFailCountThreshold}
-            onChange={(e) => setAlertFailCountThreshold(e.target.value)}
-            disabled={!alertEnabled}
-            style={{ width: '120px', padding: '6px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.73rem', fontFamily: 'inherit', background: alertEnabled ? 'white' : '#f1f5f9' }}
-          />
-        </div>
-        <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '5px' }}>
-          실패율(%) / 실패건수 임계치 초과 시 알림 전송
-        </div>
-      </div>
-    </div>
+  const renderDebugUploadOptions = () => (
+    <button
+      type="button"
+      className="side-action-btn advanced-settings-trigger"
+      onClick={() => setAdvancedSettingsOpen(true)}
+    >
+      고급 설정
+      <span className={debugDetailEnabled || alertEnabled ? 'advanced-settings-badge active' : 'advanced-settings-badge'}>
+        {[
+          debugDetailEnabled ? '디버깅' : null,
+          alertEnabled ? '알림' : null,
+        ].filter(Boolean).join(' · ') || '기본'}
+      </span>
+    </button>
   );
 
   // 오류 메시지에서 DB 컬럼명(들) 추출 → 매핑으로 엑셀 컬럼 인덱스 역조회 (다중 컬럼 지원)
@@ -1351,7 +1507,7 @@ function ExcelApp() {
 
   // 하위 호환: 기존 parseFailedColIdxFromMsg 참조 → 첫 번째 컬럼 반환
   const parseFailedColIdxFromMsg = (msg) => {
-    const cols = parseFailedColsFromMsg(msg);
+    const cols = parseUploadFailedColsFromMsg(msg, mapping, excelHeaders);
     if (!cols.length) return null;
     return { colIdx: cols[0].colIdx, dbCol: cols[0].dbCol };
   };
@@ -1389,16 +1545,16 @@ function ExcelApp() {
         unknownCnt += 1;
         return;
       }
-      const parsed = parseFailedColsFromMsg(msg);
+      const parsed = parseUploadFailedColsFromMsg(msg, mapping, excelHeaders);
       if (!parsed.length) {
-        const fallbackType = friendlyFailMsg(msg);
+        const fallbackType = friendlyUploadFailMsg(msg);
         byType[fallbackType] = (byType[fallbackType] || 0) + 1;
         byColumn['행 특정 불가'] = (byColumn['행 특정 불가'] || 0) + 1;
         totalErrItems += 1;
         return;
       }
       parsed.forEach(item => {
-        const typeKey = item.errType || friendlyFailMsg(msg);
+        const typeKey = item.errType || friendlyUploadFailMsg(msg);
         const colKey = item.colLabel || item.dbCol || '행 특정 불가';
         byType[typeKey] = (byType[typeKey] || 0) + 1;
         byColumn[colKey] = (byColumn[colKey] || 0) + 1;
@@ -1438,7 +1594,7 @@ function ExcelApp() {
     const cr = await Swal.fire({ title: '데이터 업로드 실행', html: '데이터를 서버로 전송하시겠습니까?<br><small style="color:#ef4444">대량 데이터는 수 분이 소요될 수 있습니다.</small>', icon: 'question', showCancelButton: true, confirmButtonColor: '#6366f1', cancelButtonColor: '#94a3b8', confirmButtonText: '🚀 진행', cancelButtonText: '취소', reverseButtons: true });
     if (!cr.isConfirmed) return;
 
-    setUploading(true); setProgress({ current: 0, total: 0, percent: 0 }); setUploadLogs([useTargetRows ? '🎯 실패행 재처리를 시작합니다...' : '🚀 파일 전송을 시작합니다...']); setUploadResult(null);
+    setUploading(true); setProgress({ current: 0, total: 0, percent: 0 }); setUploadLogs([useTargetRows ? "\uD83C\uDFAF \uC2E4\uD328\uD589 \uC7AC\uCC98\ub9ac\ub97c \uC2DC\uc791\ud569\ub2c8\ub2e4..." : "\uD83D\uDE80 \uD30C\uc77c \uc804\uc1a1\uc744 \uc2dc\uc791\ud569\ub2c8\ub2e4..."]); setUploadResult(null);
     sseCompletedRef.current = false; // SSE 완료 플래그 초기화
     const jobId = 'JOB_' + Date.now();
     setUploadJobId(jobId);
@@ -1475,6 +1631,11 @@ function ExcelApp() {
     fd.append('pre_sql_json_b64', encodeSafeBase64(JSON.stringify(preSqls)));
     fd.append('post_sql_json_b64', encodeSafeBase64(JSON.stringify(postSqls)));
     fd.append('row_sql_json_b64', encodeSafeBase64(JSON.stringify(rowSqls)));
+    fd.append('upsert_keep_empty_yn', upsertKeepEmptyYn);
+    fd.append('max_upload_rows', String(Math.max(Number(maxUploadRows) || 0, 0)));
+    // 2026-06-20: 관리자 컬럼 매핑의 현재 로그인 사용자/MTN 특수값을 서버에서 치환할 수 있도록 전달한다.
+    fd.append('login_user_id', getCurrentEmpId());
+    fd.append('login_mtn_id', getCurrentMtnId());
     if (debugDetailEnabled) {
       fd.append('debug_detail', 'Y');
       fd.append('debug_row_limit', String(Math.min(Math.max(Number(debugRowLimit) || 20, 1), 200)));
@@ -1486,7 +1647,10 @@ function ExcelApp() {
       fd.append('retry_reason_types', retryFailTypes.join(','));
     }
 
-    const tid = toast.loading(useTargetRows ? '🎯 실패행만 재처리 중...' : '🚀 서버 전송 중...', { position: 'top-left' });
+    const tid = null;
+    const updateUploadToast = (options) => {
+      if (tid) toast.update(tid, options);
+    };
     try {
       const res = await post(API_URL, fd);
       // ── SSE 스트림 정리 ──
@@ -1585,7 +1749,7 @@ function ExcelApp() {
             error_file: res.error_file || '',
             last_log: `${res.fail_cnt || 0}건 실패로 부분 완료`,
           });
-          toast.update(tid, { render: `⚠️ ${res.fail_cnt}건 실패 — 미리보기에서 수정 후 재업로드`, type: 'warning', isLoading: false, autoClose: 5000 });
+          updateUploadToast({ render: `⚠️ ${res.fail_cnt}건 실패 — 미리보기에서 수정 후 재업로드`, type: 'warning', isLoading: false, autoClose: 5000 });
           // 첫 번째 실패 행 페이지로 자동 이동
           if (Object.keys(failedMsgs).length > 0 && file) {
             const firstFailedRowNum = Math.min(...Object.keys(failedMsgs).map(Number));
@@ -1631,15 +1795,15 @@ function ExcelApp() {
             error_file: res.error_file || '',
             last_log: '업로드가 정상 완료되었습니다.',
           });
-          toast.update(tid, { render: '🎉 완료', type: 'success', isLoading: false, autoClose: 3000 });
+          updateUploadToast({ render: '🎉 완료', type: 'success', isLoading: false, autoClose: 3000 });
           setFile(null); setPreviewData([]); setEditedCells({});
           const el = document.getElementById('fileInput'); if (el) el.value = '';
           const el2 = document.getElementById('adminUploadFileInput'); if (el2) el2.value = '';
         }
       } else {
         // err: 파일 유지, 오류 메시지 + 행 강조
-        toast.update(tid, { render: '❌ 실패', type: 'error', isLoading: false, autoClose: 3000 });
-        const { friendlyMsg, solution } = translateError(res.msg);
+        updateUploadToast({ render: '❌ 실패', type: 'error', isLoading: false, autoClose: 3000 });
+        const { friendlyMsg, solution } = translateUploadError(res.msg);
         setUploadResult({ ...res, friendlyMsg, solution, retry_summary: retrySummaryBase });
         publishCompletionSnapshot({
           status: 'err',
@@ -1763,7 +1927,7 @@ function ExcelApp() {
             error_file: nextSnapshot.error_file || '',
             last_log: '업로드가 정상 완료되었습니다.',
           });
-          toast.update(tid, { render: '🎉 업로드 완료', type: 'success', isLoading: false, autoClose: 3000 });
+          updateUploadToast({ render: '🎉 업로드 완료', type: 'success', isLoading: false, autoClose: 3000 });
           setFailedRows({});
           setFile(null); setPreviewData([]); setEditedCells({});
           const el = document.getElementById('fileInput'); if (el) el.value = '';
@@ -1783,7 +1947,7 @@ function ExcelApp() {
             percent: 100,
             last_log: '업로드가 정상 완료되었습니다.',
           });
-          toast.update(tid, { render: '🎉 업로드 완료', type: 'success', isLoading: false, autoClose: 3000 });
+          updateUploadToast({ render: '🎉 업로드 완료', type: 'success', isLoading: false, autoClose: 3000 });
           setFailedRows({});
           setUploadResult({ ...finalSnapshotBase });
           setFile(null); setPreviewData([]); setEditedCells({});
@@ -1822,7 +1986,7 @@ function ExcelApp() {
         heartbeat_at: new Date().toISOString(),
         last_log: '통신 오류 (서버 응답 지연 또는 연결 문제)',
       });
-      toast.update(tid, { render: '❌ 통신 오류 (서버 응답 지연 또는 연결 문제)', type: 'error', isLoading: false, autoClose: 3500 });
+      updateUploadToast({ render: '❌ 통신 오류 (서버 응답 지연 또는 연결 문제)', type: 'error', isLoading: false, autoClose: 3500 });
       void sendOpsAlert('upload_network_error', {
         file_name: file?.name || '',
         retry_mode: retryMode,
@@ -1862,6 +2026,7 @@ function ExcelApp() {
     fd.append('header_row', headerRow);
     fd.append('struct_json_b64', encodeSafeBase64(JSON.stringify(structs)));
     fd.append('mapping_json_b64', encodeSafeBase64(JSON.stringify(sanitizedMapping)));
+    fd.append('max_upload_rows', String(Math.max(Number(maxUploadRows) || 0, 0)));
     if (Object.keys(editedCells).length > 0) {
       fd.append('edited_rows_b64', encodeSafeBase64(JSON.stringify(editedCells)));
     }
@@ -1925,7 +2090,12 @@ function ExcelApp() {
   const activeTable = structs.find(s => s.alias === activeAlias)?.table;
   const currentDbCols = colsCache[activeTable] || [];
   const currentAliasMapping = mapping[activeAlias] || {};
-  const filteredCols = currentDbCols.filter(c => c.label.toLowerCase().includes(searchTerm.toLowerCase())).sort((a, b) => { const ac = !!currentAliasMapping[a.value], bc = !!currentAliasMapping[b.value]; return ac === bc ? 0 : ac ? -1 : 1; });
+  const filteredCols = currentDbCols.filter(c => {
+    const keyword = searchTerm.toLowerCase();
+    return String(c.label || '').toLowerCase().includes(keyword)
+      || String(c.value || '').toLowerCase().includes(keyword)
+      || String(c.comment || '').toLowerCase().includes(keyword);
+  }).sort((a, b) => { const ac = !!currentAliasMapping[a.value], bc = !!currentAliasMapping[b.value]; return ac === bc ? 0 : ac ? -1 : 1; });
   const mappingTotalPages = Math.ceil(filteredCols.length / MAPPING_PAGE_SIZE);
   const pagedCols = filteredCols.slice((mappingPage - 1) * MAPPING_PAGE_SIZE, mappingPage * MAPPING_PAGE_SIZE);
 
@@ -1937,7 +2107,13 @@ function ExcelApp() {
   const goPrev = () => setCurrentStep(s => Math.max(0, s - 1));
 
   const canGoNext = () => {
-    if (isAdmin) { if (currentStep === 0) return !!jobName.trim(); if (currentStep === 1) return !!structs[0].table; return true; }
+    if (isAdmin) {
+      if (currentStep === 0) return !!jobName.trim();
+      if (currentStep === 1) return !!structs[0].table;
+      // 2026-06-20: 샘플 엑셀 헤더가 인식된 뒤에만 컬럼 매핑 저장 단계로 진행할 수 있게 제한한다.
+      if (currentStep === 2) return !!file && excelHeaders.length > 0;
+      return true;
+    }
     return true; // 사용자는 항상 다음 버튼 활성 (STEP 1은 hideNextBtn으로 숨김)
   };
 
@@ -1976,7 +2152,7 @@ function ExcelApp() {
     setPreviewPage,
     fetchPreviewPage,
     setUploadResult,
-    translateError,
+    translateError: translateUploadError,
     downloadErrorReport,
     setUploadLogs,
     setProgress,
@@ -1987,8 +2163,8 @@ function ExcelApp() {
     formatFileSize,
     moveToFirstFailedRow,
     moveBetweenFailedRows,
-    parseFailedColsFromMsg,
-    friendlyFailMsg,
+    parseFailedColsFromMsg: parseUploadFailedColsFromMsg,
+    friendlyFailMsg: friendlyUploadFailMsg,
     setEditedCells,
     renderDebugUploadOptions,
     handleUpload,
@@ -2018,6 +2194,12 @@ function ExcelApp() {
     setSampleFileName,
     sampleFileDownloadName,
     setSampleFileDownloadName,
+    sampleFilePath,
+    setSampleFilePath,
+    upsertKeepEmptyYn,
+    setUpsertKeepEmptyYn,
+    maxUploadRows,
+    setMaxUploadRows,
     downloadSampleFile,
     instructions,
     setInstructions,
@@ -2082,8 +2264,8 @@ function ExcelApp() {
     setEditedCells,
     failedRows,
     moveToFirstFailedRow,
-    parseFailedColsFromMsg,
-    friendlyFailMsg,
+    parseFailedColsFromMsg: parseUploadFailedColsFromMsg,
+    friendlyFailMsg: friendlyUploadFailMsg,
     previewData,
     previewTotalPages,
     renderDebugUploadOptions,
@@ -2106,7 +2288,6 @@ function ExcelApp() {
     const latestHistory = completionHistoryList[0] || null;
     return (
       <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
-        <ToastContainer position="top-left" autoClose={3000} style={{ position: 'fixed', zIndex: 99999 }} />
         <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '0 32px' }}>
           <div style={{ maxWidth: '100%', margin: '0 auto', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -2139,6 +2320,20 @@ function ExcelApp() {
     );
   }
 
+  const canNavigateStep = (stepIndex) => {
+    if (!isAdmin) return true;
+    if (stepIndex <= currentStep) return true;
+    if (stepIndex === 1) return !!jobName.trim();
+    if (stepIndex === 2) return !!jobName.trim() && !!structs[0]?.table;
+    if (stepIndex === 3) return !!uploadId;
+    return false;
+  };
+
+  const handleStepClick = (stepIndex) => {
+    if (!canNavigateStep(stepIndex)) return;
+    setCurrentStep(stepIndex);
+  };
+
   const renderStep = () => {
     if (isAdmin) {
       return (
@@ -2149,6 +2344,8 @@ function ExcelApp() {
             isLastStep={isLastStep}
             goPrev={goPrev}
             goNext={goNext}
+            onStepClick={handleStepClick}
+            canNavigateStep={canNavigateStep}
             canGoNext={canGoNext()}
             nextLabel={nextLabel}
             adminStepProps={adminStepProps}
@@ -2165,6 +2362,8 @@ function ExcelApp() {
           isLastStep={isLastStep}
           goPrev={goPrev}
           goNext={goNext}
+          onStepClick={handleStepClick}
+          canNavigateStep={canNavigateStep}
           canGoNext={canGoNext()}
           nextLabel={nextLabel}
           hideNextBtn={hideNextBtn}
@@ -2180,7 +2379,23 @@ function ExcelApp() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
-      <ToastContainer position="top-left" autoClose={3000} style={{ position: 'fixed', zIndex: 99999 }} />
+      {advancedSettingsOpen && (
+        <UploadAdvancedSettingsModal
+          debugDetailEnabled={debugDetailEnabled}
+          setDebugDetailEnabled={setDebugDetailEnabled}
+          debugRowLimit={debugRowLimit}
+          setDebugRowLimit={setDebugRowLimit}
+          alertEnabled={alertEnabled}
+          setAlertEnabled={setAlertEnabled}
+          alertWebhookUrl={alertWebhookUrl}
+          setAlertWebhookUrl={setAlertWebhookUrl}
+          alertFailRateThreshold={alertFailRateThreshold}
+          setAlertFailRateThreshold={setAlertFailRateThreshold}
+          alertFailCountThreshold={alertFailCountThreshold}
+          setAlertFailCountThreshold={setAlertFailCountThreshold}
+          onClose={() => setAdvancedSettingsOpen(false)}
+        />
+      )}
 
       {/* 헤더 */}
       <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '0 32px' }}>

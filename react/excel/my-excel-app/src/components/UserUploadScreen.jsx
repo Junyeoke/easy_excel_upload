@@ -266,6 +266,12 @@ const UserWorkbenchStep = ({
           </div>
 
           <div className="upload-stats-grid">
+            {isRolledBackResult && (
+              <div className="upload-stat-card">
+                <div className="upload-stat-label">시도 성공 건수</div>
+                <div className="upload-stat-value success">{uploadResult.attempt_success_cnt?.toLocaleString?.() || 0}</div>
+              </div>
+            )}
             <div className="upload-stat-card">
               <div className="upload-stat-label">성공 건수</div>
               <div className="upload-stat-value success">{uploadResult.success_cnt?.toLocaleString?.() || 0}</div>

@@ -510,6 +510,7 @@ export default function ExcelDashboard() {
         .itsm-badge.ok { background: #dcfce7; color: #166534; }
         .itsm-badge.err { background: #fee2e2; color: #991b1b; }
         .itsm-badge.rollback { margin-top: 5px; min-width: 0; background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; }
+        .itsm-badge.attempt { margin-top: 5px; min-width: 0; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
         .itsm-link { font-size: 12px; color: #2563eb; text-decoration: none; font-weight: 600; }
         .itsm-placeholder { color: #9ca3af; font-size: 12px; }
         .itsm-floating-progress { position: fixed; right: 20px; bottom: 20px; width: min(360px, calc(100vw - 24px)); background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.2); z-index: 3500; overflow: hidden; }
@@ -774,6 +775,7 @@ export default function ExcelDashboard() {
                             <div className="itsm-file">{h.file_name || '-'}</div>
                             <div className="itsm-time">{dt(h.reg_dttm)}</div>
                             {h.rolled_back_yn === 'Y' && <span className="itsm-badge rollback">전체 롤백</span>}
+                            {h.rolled_back_yn === 'Y' && <span className="itsm-badge attempt">시도 성공 {fmt(h.attempt_success_cnt || 0)}</span>}
                           </div>
                           <div style={{ textAlign: 'center' }}>
                             <span className="itsm-badge ok">{fmt(h.success_cnt)}</span>

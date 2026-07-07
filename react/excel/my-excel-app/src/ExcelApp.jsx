@@ -386,6 +386,7 @@ const snapshotToHistoryRow = (snapshot) => {
     job_name: snapshot.job_name || '',
     file_name: snapshot.file_name || '',
     success_cnt: Number(snapshot.success_cnt) || 0,
+    attempt_success_cnt: Number(snapshot.attempt_success_cnt ?? snapshot.success_cnt) || 0,
     fail_cnt: Number(snapshot.fail_cnt) || 0,
     error_file: snapshot.error_file || '',
     reg_dttm: snapshot.completed_at || snapshot.reg_dttm || new Date().toISOString(),
@@ -405,6 +406,7 @@ const progressToHistoryRow = (state, fallback = {}) => {
     job_name: state.job_name || fallback.job_name || '',
     file_name: state.file_name || fallback.file_name || '',
     success_cnt: Number(state.success_cnt ?? fallback.success_cnt) || 0,
+    attempt_success_cnt: Number(state.attempt_success_cnt ?? fallback.attempt_success_cnt ?? state.success_cnt ?? fallback.success_cnt) || 0,
     fail_cnt: Number(state.fail_cnt ?? fallback.fail_cnt) || 0,
     error_file: state.error_file || fallback.error_file || '',
     reg_dttm: state.completed_at || fallback.completed_at || fallback.reg_dttm || new Date().toISOString(),
@@ -536,6 +538,7 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
                 <div className="history-item-file">📁 {latest.file_name || '-'}</div>
               <div className="history-item-stats">
                   {latest.rolled_back_yn === 'Y' && <span className="stat-chip rollback">↩ 전체 롤백</span>}
+                  {latest.rolled_back_yn === 'Y' && <span className="stat-chip attempt">시도 성공 {Number(latest.attempt_success_cnt || 0).toLocaleString()}건</span>}
                   <span className="stat-chip success">✅ {Number(latest.success_cnt || 0).toLocaleString()}건 성공</span>
                   <span className="stat-chip fail">❌ {Number(latest.fail_cnt || 0).toLocaleString()}건 실패</span>
                   {latest.error_file && <span className="stat-chip">🚨 오류 파일 생성</span>}
@@ -572,6 +575,7 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
                     <div className="history-item-file">📁 {h.file_name || '-'}</div>
                     <div className="history-item-stats">
                       {h.rolled_back_yn === 'Y' && <span className="stat-chip rollback">↩ 전체 롤백</span>}
+                      {h.rolled_back_yn === 'Y' && <span className="stat-chip attempt">시도 성공 {Number(h.attempt_success_cnt || 0).toLocaleString()}건</span>}
                       <span className="stat-chip success">✅ {Number(h.success_cnt || 0).toLocaleString()}건</span>
                       <span className="stat-chip fail">❌ {Number(h.fail_cnt || 0).toLocaleString()}건</span>
                       {h.error_file && <span className="stat-chip">🚨 오류 파일</span>}
@@ -677,6 +681,8 @@ function ExcelApp() {
   const [upsertKeepEmptyYn, setUpsertKeepEmptyYn] = useState('N');
   // 2026-07-07: 업로드 실패 시 전체 트랜잭션을 롤백할지 설정한다.
   const [rollbackOnFailYn, setRollbackOnFailYn] = useState('N');
+  // 2026-07-07: Post-SQL 실패 시 업로드 데이터까지 롤백할지 설정한다.
+  const [postSqlRollbackOnFailYn, setPostSqlRollbackOnFailYn] = useState('N');
   // 2026-06-20: 로더별 엑셀 업로드 최대 행 수 제한을 화면 상태로 둔다. 빈 값은 제한 없음.
   const [maxUploadRows, setMaxUploadRows] = useState('');
   const [instructions, setInstructions] = useState('');
@@ -1146,6 +1152,7 @@ function ExcelApp() {
         setSampleFileDownloadName(res.sample_file_org_name || '');
         setUpsertKeepEmptyYn((res.upsert_keep_empty_yn || 'N') === 'Y' ? 'Y' : 'N');
         setRollbackOnFailYn((res.rollback_on_fail_yn || 'N') === 'Y' ? 'Y' : 'N');
+        setPostSqlRollbackOnFailYn((res.post_sql_rollback_on_fail_yn || 'N') === 'Y' ? 'Y' : 'N');
         setMaxUploadRows(Number(res.max_upload_rows) > 0 ? String(res.max_upload_rows) : '');
         setInstructions(res.instructions || '');
         const loadedEntries = await Promise.all(s.map(async item => {
@@ -1291,6 +1298,7 @@ function ExcelApp() {
     }
     fd.append('upsert_keep_empty_yn', upsertKeepEmptyYn);
     fd.append('rollback_on_fail_yn', rollbackOnFailYn);
+    fd.append('post_sql_rollback_on_fail_yn', postSqlRollbackOnFailYn);
     fd.append('max_upload_rows', String(Math.max(Number(maxUploadRows) || 0, 0)));
     if (sampleFileDownloadName?.trim()) fd.append('sample_file_download_name', sampleFileDownloadName.trim());
     try {
@@ -1665,10 +1673,14 @@ function ExcelApp() {
       target_count: retryTargetRows.length,
       before_fail_count: Object.keys(failedRows).filter(k => Number.isFinite(Number(k))).length,
     } : null;
-    const uploadConfirmHtml = rollbackOnFailYn === 'Y'
-      ? '데이터를 서버로 전송하시겠습니까?<br><small style="color:#ef4444">실패 행이 하나라도 있으면 성공 처리된 행까지 모두 반영하지 않습니다.</small><br><small style="color:#64748b">대량 데이터는 수 분이 소요될 수 있습니다.</small>'
-      : '데이터를 서버로 전송하시겠습니까?<br><small style="color:#ef4444">대량 데이터는 수 분이 소요될 수 있습니다.</small>';
-    const cr = await Swal.fire({ title: '데이터 업로드 실행', html: uploadConfirmHtml, icon: rollbackOnFailYn === 'Y' ? 'warning' : 'question', showCancelButton: true, confirmButtonColor: '#6366f1', cancelButtonColor: '#94a3b8', confirmButtonText: '🚀 진행', cancelButtonText: '취소', reverseButtons: true });
+    const rollbackNotes = [
+      rollbackOnFailYn === 'Y' ? '실패 행이 하나라도 있으면 성공 처리된 행까지 모두 반영하지 않습니다.' : '',
+      postSqlRollbackOnFailYn === 'Y' ? 'Post-SQL 오류가 발생해도 업로드 데이터까지 모두 반영하지 않습니다.' : '',
+    ].filter(Boolean);
+    const uploadConfirmHtml = '데이터를 서버로 전송하시겠습니까?'
+      + rollbackNotes.map(note => `<br><small style="color:#ef4444">${note}</small>`).join('')
+      + '<br><small style="color:#64748b">대량 데이터는 수 분이 소요될 수 있습니다.</small>';
+    const cr = await Swal.fire({ title: '데이터 업로드 실행', html: uploadConfirmHtml, icon: rollbackNotes.length > 0 ? 'warning' : 'question', showCancelButton: true, confirmButtonColor: '#6366f1', cancelButtonColor: '#94a3b8', confirmButtonText: '🚀 진행', cancelButtonText: '취소', reverseButtons: true });
     if (!cr.isConfirmed) return;
 
     setUploading(true); setProgress({ current: 0, total: 0, percent: 0 }); setUploadLogs([useTargetRows ? "\uD83C\uDFAF \uC2E4\uD328\uD589 \uC7AC\uCC98\ub9ac\ub97c \uC2DC\uc791\ud569\ub2c8\ub2e4..." : "\uD83D\uDE80 \uD30C\uc77c \uc804\uc1a1\uc744 \uc2dc\uc791\ud569\ub2c8\ub2e4..."]); setUploadResult(null);
@@ -1710,6 +1722,7 @@ function ExcelApp() {
     fd.append('row_sql_json_b64', encodeSafeBase64(JSON.stringify(rowSqls)));
     fd.append('upsert_keep_empty_yn', upsertKeepEmptyYn);
     fd.append('rollback_on_fail_yn', rollbackOnFailYn);
+    fd.append('post_sql_rollback_on_fail_yn', postSqlRollbackOnFailYn);
     fd.append('max_upload_rows', String(Math.max(Number(maxUploadRows) || 0, 0)));
     // 2026-06-20: 관리자 컬럼 매핑의 현재 로그인 사용자/MTN 특수값을 서버에서 치환할 수 있도록 전달한다.
     fd.append('login_user_id', getCurrentEmpId());
@@ -1755,6 +1768,7 @@ function ExcelApp() {
             status: res.status,
             file_name: file?.name || '',
             success_cnt: successCnt,
+            attempt_success_cnt: Number(res.attempt_success_cnt ?? res.success_cnt) || 0,
             fail_cnt: failCnt,
             fail_rate: Number(failRate.toFixed(2)),
             retry_mode: retryMode,
@@ -1775,6 +1789,7 @@ function ExcelApp() {
             job_name: jobName || '',
             file_name: file?.name || '',
             success_cnt: successCnt,
+            attempt_success_cnt: Number(res.attempt_success_cnt ?? res.success_cnt) || 0,
             fail_cnt: failCnt,
             error_file: res.error_file || '',
             msg: res.msg || '',
@@ -1816,6 +1831,7 @@ function ExcelApp() {
             job_name: jobName || '',
             file_name: file?.name || '',
             success_cnt: successCnt,
+            attempt_success_cnt: Number(res.attempt_success_cnt ?? res.success_cnt) || 0,
             fail_cnt: failCnt,
             error_file: res.error_file || '',
             msg: res.msg || '',
@@ -1837,6 +1853,7 @@ function ExcelApp() {
             current: Number(res.success_cnt || 0),
             total: Number(res.success_cnt || 0),
             success_cnt: successCnt,
+            attempt_success_cnt: Number(res.attempt_success_cnt ?? res.success_cnt) || 0,
             fail_cnt: failCnt,
             error_file: res.error_file || '',
             last_log: '업로드가 정상 완료되었습니다.',
@@ -1870,6 +1887,7 @@ function ExcelApp() {
           job_name: jobName || '',
           file_name: file?.name || '',
           success_cnt: Number(res.success_cnt) || 0,
+          attempt_success_cnt: Number(res.attempt_success_cnt ?? res.success_cnt) || 0,
           fail_cnt: Number(res.fail_cnt) || 0,
           error_file: res.error_file || '',
           msg: res.msg || '',
@@ -1889,6 +1907,7 @@ function ExcelApp() {
           uploader_alive: false,
           heartbeat_at: new Date().toISOString(),
           success_cnt: Number(res.success_cnt) || 0,
+          attempt_success_cnt: Number(res.attempt_success_cnt ?? res.success_cnt) || 0,
           fail_cnt: Number(res.fail_cnt) || 0,
           error_file: res.error_file || '',
           last_log: res.msg || '업로드 실패',
@@ -2250,6 +2269,8 @@ function ExcelApp() {
     setUpsertKeepEmptyYn,
     rollbackOnFailYn,
     setRollbackOnFailYn,
+    postSqlRollbackOnFailYn,
+    setPostSqlRollbackOnFailYn,
     maxUploadRows,
     setMaxUploadRows,
     downloadSampleFile,

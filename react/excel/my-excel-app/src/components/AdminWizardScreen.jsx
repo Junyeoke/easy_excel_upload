@@ -82,6 +82,8 @@ const AdminStep0 = ({
   setUpsertKeepEmptyYn,
   rollbackOnFailYn,
   setRollbackOnFailYn,
+  postSqlRollbackOnFailYn,
+  setPostSqlRollbackOnFailYn,
   maxUploadRows,
   setMaxUploadRows,
   downloadSampleFile,
@@ -132,7 +134,7 @@ const AdminStep0 = ({
         </button>
         <button className="admin-modal-setting-btn" onClick={() => setOpenModal('options')}>
           <strong>처리 옵션</strong>
-          <span>{rollbackOnFailYn === 'Y' ? '실패 시 롤백' : upsertKeepEmptyYn === 'Y' ? '빈칸 유지' : '기본 동작'}</span>
+          <span>{rollbackOnFailYn === 'Y' || postSqlRollbackOnFailYn === 'Y' ? '롤백 정책 적용' : upsertKeepEmptyYn === 'Y' ? '빈칸 유지' : '기본 동작'}</span>
         </button>
         <button className="admin-modal-setting-btn" onClick={() => setOpenModal('instructions')}>
           <strong>사용자 안내</strong>
@@ -183,6 +185,13 @@ const AdminStep0 = ({
               <span>
                 <strong>실패 시 전체 롤백</strong>
                 <small>업로드 중 실패 행이 하나라도 있으면 성공 처리된 행까지 모두 반영하지 않습니다.</small>
+              </span>
+            </label>
+            <label className="admin-option-toggle">
+              <input type="checkbox" checked={postSqlRollbackOnFailYn === 'Y'} onChange={e => setPostSqlRollbackOnFailYn(e.target.checked ? 'Y' : 'N')} />
+              <span>
+                <strong>Post-SQL 실패 시 전체 롤백</strong>
+                <small>후처리 SQL에서 오류가 발생하면 업로드 데이터와 Post-SQL 변경을 모두 반영하지 않습니다.</small>
               </span>
             </label>
           </div>

@@ -78,6 +78,8 @@ public class ExcelUploadUploadActionController {
         boolean keepEmptyValues = isTruthy(params.get("upsert_keep_empty_yn"));
         // 2026-07-07: 실패 행이 있으면 업로드 데이터 전체를 한 트랜잭션으로 롤백한다.
         boolean rollbackOnFail = isTruthy(params.get("rollback_on_fail_yn"));
+        // 2026-07-07: Post-SQL 실패도 업로드 데이터와 함께 롤백할지 결정한다.
+        boolean postSqlRollbackOnFail = isTruthy(params.get("post_sql_rollback_on_fail_yn"));
         String histId = null;
         String configSnapshotHash = uploadResultSupport.sha256Hex(
                 String.valueOf(structJson == null ? "" : structJson) + "||"
@@ -87,6 +89,7 @@ public class ExcelUploadUploadActionController {
                         + String.valueOf(rowSqlJson == null ? "" : rowSqlJson) + "||"
                         + String.valueOf(params.get("upsert_keep_empty_yn") == null ? "" : params.get("upsert_keep_empty_yn")) + "||"
                         + String.valueOf(params.get("rollback_on_fail_yn") == null ? "" : params.get("rollback_on_fail_yn")) + "||"
+                        + String.valueOf(params.get("post_sql_rollback_on_fail_yn") == null ? "" : params.get("post_sql_rollback_on_fail_yn")) + "||"
                         + String.valueOf(params.get("max_upload_rows") == null ? "" : params.get("max_upload_rows")));
 
         int headerIdx = 0;
@@ -265,6 +268,7 @@ public class ExcelUploadUploadActionController {
         int unknownFailCnt = 0;
         int processedExcelRowCnt = 0;
         int successCnt = 0, failCnt = 0;
+        int attemptedSuccessCnt = 0;
         boolean rolledBackOnFail = false;
         String errFileName = null;
 
@@ -453,7 +457,9 @@ public class ExcelUploadUploadActionController {
             // 그대로 쓰면 성공 건수가 중복 집계될 수 있다.
             failCnt = failedExcelRowNums.size() + unknownFailCnt;
             successCnt = Math.max(processedExcelRowCnt - failCnt, 0);
-            int attemptedSuccessCnt = successCnt;
+            attemptedSuccessCnt = successCnt;
+            boolean hasPostSql = postSqls != null && !postSqls.isEmpty();
+            boolean deferCommitForPostSqlRollback = postSqlRollbackOnFail && hasPostSql;
             if (rollbackOnFail && failCnt > 0) {
                 conn.rollback();
                 rolledBackOnFail = true;
@@ -461,8 +467,10 @@ public class ExcelUploadUploadActionController {
                 addLog.accept("↩ 실패 행이 있어 전체 업로드를 롤백했습니다. DB 반영 건수: 0건");
                 log.info("[ExcelUpload] rollback_on_fail_yn=Y - 실패 {}건으로 업로드 데이터 전체 롤백 (롤백 전 성공 계산: {}건)",
                         failCnt, attemptedSuccessCnt);
-            } else {
+            } else if (!deferCommitForPostSqlRollback) {
                 conn.commit();
+            } else {
+                addLog.accept("⏸ Post-SQL 성공 확인 전까지 업로드 데이터 커밋을 보류합니다.");
             }
             log.info("[ExcelUpload] Batch 처리 완료 - 성공(row): {}건, 실패(row): {}건, 처리(row): {}건 (배치성공:{}건/배치실패:{}건, 식별실패행:{}건, 미식별실패:{}건)",
                 successCnt, failCnt, processedExcelRowCnt, counters[0], counters[1], failedExcelRowNums.size(), unknownFailCnt);
@@ -492,9 +500,33 @@ public class ExcelUploadUploadActionController {
             // 이력 저장 실패는 업로드 성공/실패를 뒤집지 않고 경고로 노출한다.
             String failTypeJson = uploadResultSupport.buildFailTypeJson(failedRowMsgMap);
             histId = UUID.randomUUID().toString();
+            // Post-SQL 실행
+            if (!rolledBackOnFail && hasPostSql) {
+                log.info("[ExcelUpload] Post-SQL 실행 시작...");
+                addLog.accept("\u2699\uFE0F Post-SQL \uC2E4\uD589 \uC911...");
+                try {
+                    service.executeSqlArray(conn, postSqls, "Post-SQL");
+                    conn.commit();
+                    addLog.accept("\u2705 Post-SQL \uC644\uB8CC");
+                    log.info("[ExcelUpload] Post-SQL 완료");
+                } catch (Throwable e) {
+                    log.error("[ExcelUpload] Post-SQL 중 오류 발생: {}", e.getMessage(), e);
+                    if (postSqlRollbackOnFail) {
+                        try { conn.rollback(); } catch (Throwable ignore) {}
+                        rolledBackOnFail = true;
+                        successCnt = 0;
+                        finalStatus = "err";
+                        finalMsg = attemptedSuccessCnt + "\uAC74 \uCC98\uB9AC \uD6C4 Post-SQL \uC624\uB958\uB85C \uC804\uCCB4 \uB864\uBC31\uB418\uC5C8\uC2B5\uB2C8\uB2E4. DB \uBC18\uC601: 0\uAC74 (Post-SQL \uC624\uB958: " + e.getMessage() + ")";
+                        addLog.accept("↩ Post-SQL 오류로 전체 업로드를 롤백했습니다. DB 반영 건수: 0건");
+                    } else {
+                        try { conn.rollback(); } catch (Throwable ignore) {}
+                        finalMsg = successCnt + "\uAC74 \uC131\uACF5, " + failCnt + "\uAC74 \uC2E4\uD328 (Post-SQL \uC624\uB958: " + e.getMessage() + ")";
+                    }
+                }
+            }
             String historySaveError = repository.insertHistory(conn, histId,
                     (String) params.get("job_name"), (String) params.get("file_name"),
-                    successCnt, failCnt, errFileName, nowFuncU, uploadId, configSnapshotHash, failTypeJson,
+                    successCnt, failCnt, attemptedSuccessCnt, errFileName, nowFuncU, uploadId, configSnapshotHash, failTypeJson,
                     structJson, mapJson, preSqlJson, postSqlJson, rowSqlJson, retryMode, retryReasonTypes,
                     rolledBackOnFail ? "Y" : "N");
             if (historySaveError != null) {
@@ -509,32 +541,6 @@ public class ExcelUploadUploadActionController {
             if (jobId != null) {
                 ProgressStore.setFinalResult(jobId, histId, uploadId, successCnt, failCnt, errFileName, finalStatus);
             }
-            // Post-SQL 실행
-            if (!rolledBackOnFail && postSqls != null && !postSqls.isEmpty()) {
-                log.info("[ExcelUpload] Post-SQL 실행 시작...");
-                addLog.accept("\u2699\uFE0F Post-SQL \uC2E4\uD589 \uC911...");
-                try {
-                    service.executeSqlArray(conn, postSqls, "Post-SQL");
-                    conn.commit();
-                    addLog.accept("\u2705 Post-SQL \uC644\uB8CC");
-                    log.info("[ExcelUpload] Post-SQL 완료");
-                } catch (Throwable e) {
-                    log.error("[ExcelUpload] Post-SQL 중 오류 발생: {}", e.getMessage(), e);
-                    result.put("status", finalStatus);
-                    result.put("msg", successCnt + "\uAC74 \uC131\uACF5, " + failCnt + "\uAC74 \uC2E4\uD328 (Post-SQL \uC624\uB958: " + e.getMessage() + ")");
-                    result.put("success_cnt", successCnt);
-                    result.put("fail_cnt", failCnt);
-                    result.put("error_file", errFileName);
-                    result.put("hist_id", histId);
-                    if (!failedRowMsgMap.isEmpty()) {
-                        result.put("failed_row_msgs", failedRowMsgMap);
-                    }
-                    uploadResultSupport.clearProgressSessionArtifacts(request, jobId);
-                    response.setContentType("application/json; charset=UTF-8");
-                    response.getWriter().write(jsonToString(result));
-                    return;
-                }
-            }
             long elapsed = System.currentTimeMillis() - processStartTime;
             log.info("=====================================================");
             log.info("[ExcelUpload] 🎉 업로드 프로세스 종료 - 총 소요시간: {} ms", elapsed);
@@ -544,12 +550,14 @@ public class ExcelUploadUploadActionController {
             result.put("status", finalStatus);
             result.put("msg", finalMsg);
             result.put("success_cnt", successCnt);
+            result.put("attempt_success_cnt", attemptedSuccessCnt);
             result.put("fail_cnt", failCnt);
             result.put("error_file", errFileName);
             result.put("hist_id", histId);
             result.put("upload_id", uploadId);
             result.put("config_snapshot_hash", configSnapshotHash);
             result.put("rollback_on_fail_yn", rollbackOnFail ? "Y" : "N");
+            result.put("post_sql_rollback_on_fail_yn", postSqlRollbackOnFail ? "Y" : "N");
             result.put("rolled_back_yn", rolledBackOnFail ? "Y" : "N");
             log.info("[ExcelUpload] completion summary hist_id={}, upload_id={}, job_id={}, file_name={}, success_cnt={}, fail_cnt={}, error_file={}",
                     histId, uploadId, jobId, params.get("file_name"), successCnt, failCnt, errFileName);

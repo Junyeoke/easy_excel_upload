@@ -143,11 +143,14 @@ const UserWorkbenchStep = ({
   const hasPreview = previewData.length > 0;
   const knownFailedRows = getKnownFailedRowNumbers();
   const hasKnownFailedRows = knownFailedRows.length > 0;
-  const hasUnknownFailedRows = !!failedRows.__unknown__;
+  const hasUnknownFailedRows = Object.keys(failedRows).some(k => !Number.isFinite(Number(k)));
   const failedRowCount = hasUnknownFailedRows ? (uploadResult?.fail_cnt || Object.keys(failedRows).length) : knownFailedRows.length;
   const editedRowCount = Object.keys(editedCells).length;
   const currentSelectedErrorIndex = selectedErrorRow ? knownFailedRows.indexOf(selectedErrorRow) : -1;
   const displayedUploadLogs = showDetailedUploadLogs ? uploadLogs : uploadLogs.slice(-8);
+  const resultFailedRowMsgs = uploadResult?.failed_row_msgs || {};
+  const hasResultFailedRows = Object.keys(resultFailedRowMsgs).some(k => Number.isFinite(Number(k)));
+  const isRolledBackResult = uploadResult?.rolled_back_yn === 'Y';
   const stageInfo = getUploadStageInfo();
   const validationTone = !hasFile ? 'idle' : previewLoading ? 'loading' : hasKnownFailedRows || hasUnknownFailedRows ? 'warning' : hasPreview ? 'ready' : 'idle';
   const validationSummaryText = !hasFile
@@ -178,7 +181,7 @@ const UserWorkbenchStep = ({
   const failedColumnIndexSet = React.useMemo(() => {
     const set = new Set();
     Object.entries(failedRows).forEach(([rowKey, message]) => {
-      if (rowKey === '__unknown__') return;
+      if (!Number.isFinite(Number(rowKey))) return;
       parseFailedColsFromMsg(message || '').forEach(info => {
         if (info.colIdx !== null) set.add(info.colIdx);
       });
@@ -194,7 +197,7 @@ const UserWorkbenchStep = ({
   const searchKeyword = previewSearchTerm.trim().toLowerCase();
   const filteredPreviewData = previewData.filter((row, index) => {
     const rowNum = row._rowNum ?? ((previewPage - 1) * previewPageSize + index + 1);
-    const isFailedRow = failedRows[String(rowNum)] !== undefined && !failedRows.__unknown__;
+    const isFailedRow = failedRows[String(rowNum)] !== undefined;
     if (showOnlyFailedRows && !isFailedRow) {
       return false;
     }
@@ -209,7 +212,7 @@ const UserWorkbenchStep = ({
   const openCorrectionWorkbench = () => {
     if (uploadResult?.failed_row_msgs && Object.keys(uploadResult.failed_row_msgs).length > 0) {
       setFailedRows(uploadResult.failed_row_msgs);
-      const validKeys = Object.keys(uploadResult.failed_row_msgs).filter(k => k !== '__unknown__');
+      const validKeys = Object.keys(uploadResult.failed_row_msgs).filter(k => Number.isFinite(Number(k)));
       if (validKeys.length > 0) {
         const firstFail = Math.min(...validKeys.map(Number));
         setSelectedErrorRow(firstFail);
@@ -248,11 +251,13 @@ const UserWorkbenchStep = ({
             <div className="result-hero-icon">{uploadResult.status === 'ok' ? '✅' : uploadResult.status === 'partial' ? '⚠️' : '❌'}</div>
             <div className="result-hero-content">
               <div className="result-hero-title">
-                {uploadResult.status === 'ok' ? '업로드가 정상적으로 완료되었습니다.' : uploadResult.status === 'partial' ? '일부 행 업로드에 실패했습니다.' : '업로드 중 오류가 발생했습니다.'}
+                {uploadResult.status === 'ok' ? '업로드가 정상적으로 완료되었습니다.' : isRolledBackResult ? '오류가 발생해 전체 업로드가 롤백되었습니다.' : uploadResult.status === 'partial' ? '일부 행 업로드에 실패했습니다.' : '업로드 중 오류가 발생했습니다.'}
               </div>
               <div className="result-hero-desc">
                 {uploadResult.status === 'ok'
                   ? (uploadResult.msg || '데이터 저장이 완료되었습니다.')
+                  : isRolledBackResult
+                    ? '실패한 행을 미리보기에서 확인해 수정한 뒤 다시 업로드할 수 있습니다. DB에는 반영되지 않았습니다.'
                   : uploadResult.status === 'partial'
                     ? '실패한 행만 다시 점검해 재업로드하거나, 오류 리포트를 내려받아 원인을 확인할 수 있습니다.'
                     : (uploadResult.friendlyMsg || uploadResult.msg)}
@@ -281,7 +286,7 @@ const UserWorkbenchStep = ({
             </div>
           )}
 
-          {uploadResult.status === 'partial' && uploadResult.failed_row_msgs && Object.keys(uploadResult.failed_row_msgs).filter(k => k !== '__unknown__').length > 0 && (
+          {hasResultFailedRows && (
             <div className="result-list-card">
               <div className="result-list-title">오류 발생 행 요약</div>
               <div className="result-list-wrap">
@@ -293,8 +298,8 @@ const UserWorkbenchStep = ({
                     </tr>
                   </thead>
                   <tbody>
-                    {Object.entries(uploadResult.failed_row_msgs)
-                      .filter(([k]) => k !== '__unknown__')
+                    {Object.entries(resultFailedRowMsgs)
+                      .filter(([k]) => Number.isFinite(Number(k)))
                       .sort(([a], [b]) => Number(a) - Number(b))
                       .map(([rowNum, errMsg]) => {
                         const translated = translateError(errMsg);
@@ -314,7 +319,7 @@ const UserWorkbenchStep = ({
             </div>
           )}
 
-          {uploadResult.status === 'err' && (
+          {uploadResult.status === 'err' && !hasResultFailedRows && (
             <div className="result-list-card result-list-card-error">
               <div className="result-list-title">상세 원인</div>
               <div className="result-error-raw">{translateError(uploadResult.msg).friendlyMsg}</div>
@@ -322,9 +327,9 @@ const UserWorkbenchStep = ({
             </div>
           )}
 
-          <div className={`result-action-grid ${uploadResult.status === 'partial' ? 'result-action-grid-priority' : ''}`}>
+          <div className={`result-action-grid ${uploadResult.status === 'partial' || hasResultFailedRows ? 'result-action-grid-priority' : ''}`}>
             {uploadResult.status !== 'ok' && file && (
-              <button className={`result-action-card action-primary ${uploadResult.status === 'partial' ? 'action-emphasis' : ''}`} onClick={openCorrectionWorkbench}>
+              <button className={`result-action-card action-primary ${uploadResult.status === 'partial' || hasResultFailedRows ? 'action-emphasis' : ''}`} onClick={openCorrectionWorkbench}>
                 <span className="result-action-title">미리보기에서 바로 수정</span>
                 <span className="result-action-desc">실패 행을 다시 불러와서 빨간 셀만 수정합니다.</span>
               </button>
@@ -608,7 +613,7 @@ const UserWorkbenchStep = ({
                               const rowNum = row._rowNum ?? ((previewPage - 1) * previewPageSize + originalIndex + 1);
                               const rowEdits = editedCells[rowNum] || {};
                               const isEdited = Object.keys(rowEdits).length > 0;
-                              const isFailed = failedRows[String(rowNum)] !== undefined && !failedRows.__unknown__;
+                              const isFailed = failedRows[String(rowNum)] !== undefined;
                               const isCurrentError = selectedErrorRow === rowNum;
                               const failMsg = failedRows[String(rowNum)] || '';
                               const failedColInfos = isFailed ? parseFailedColsFromMsg(failMsg) : [];

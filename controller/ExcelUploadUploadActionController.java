@@ -76,6 +76,8 @@ public class ExcelUploadUploadActionController {
         String retryReasonTypes = (String) params.get("retry_reason_types");
         // 2026-06-19: UPSERT에서 빈 칸을 기존 값으로 남길지 업로드 경로에 전달한다.
         boolean keepEmptyValues = isTruthy(params.get("upsert_keep_empty_yn"));
+        // 2026-07-07: 실패 행이 있으면 업로드 데이터 전체를 한 트랜잭션으로 롤백한다.
+        boolean rollbackOnFail = isTruthy(params.get("rollback_on_fail_yn"));
         String histId = null;
         String configSnapshotHash = uploadResultSupport.sha256Hex(
                 String.valueOf(structJson == null ? "" : structJson) + "||"
@@ -84,6 +86,7 @@ public class ExcelUploadUploadActionController {
                         + String.valueOf(postSqlJson == null ? "" : postSqlJson) + "||"
                         + String.valueOf(rowSqlJson == null ? "" : rowSqlJson) + "||"
                         + String.valueOf(params.get("upsert_keep_empty_yn") == null ? "" : params.get("upsert_keep_empty_yn")) + "||"
+                        + String.valueOf(params.get("rollback_on_fail_yn") == null ? "" : params.get("rollback_on_fail_yn")) + "||"
                         + String.valueOf(params.get("max_upload_rows") == null ? "" : params.get("max_upload_rows")));
 
         int headerIdx = 0;
@@ -262,6 +265,7 @@ public class ExcelUploadUploadActionController {
         int unknownFailCnt = 0;
         int processedExcelRowCnt = 0;
         int successCnt = 0, failCnt = 0;
+        boolean rolledBackOnFail = false;
         String errFileName = null;
 
         try {
@@ -291,7 +295,9 @@ public class ExcelUploadUploadActionController {
             if (preSqls != null && !preSqls.isEmpty()) {
                 log.info("[ExcelUpload] Pre-SQL 실행 시작...");
                 addLog.accept("\u2699\uFE0F Pre-SQL \uC2E4\uD589 \uC911...");
-                conn.commit();
+                if (!rollbackOnFail) {
+                    conn.commit();
+                }
                 addLog.accept("\u2705 Pre-SQL \uC644\uB8CC");
                 log.info("[ExcelUpload] Pre-SQL 완료");
             }
@@ -394,8 +400,12 @@ public class ExcelUploadUploadActionController {
                             log.error("[ExcelUpload] ❌ 행 특정 불가 오류: {}", errMsg);
                         }
                     }
-                    conn.commit();
-                    addLog.accept("\u2705 " + done + "\uD589 \uBC30\uCE58 \uC800\uC7A5 \uC644\uB8CC");
+                    if (!rollbackOnFail) {
+                        conn.commit();
+                        addLog.accept("\u2705 " + done + "\uD589 \uBC30\uCE58 \uC800\uC7A5 \uC644\uB8CC");
+                    } else {
+                        addLog.accept("\u2705 " + done + "\uD589 \uBC30\uCE58 \uCC98\uB9AC \uC644\uB8CC (\uCD5C\uC885 \uACB0\uACFC\uAE4C\uC9C0 \uCEE4\uBC0B \uBCF4\uB958)");
+                    }
                 }
             }
 
@@ -422,7 +432,6 @@ public class ExcelUploadUploadActionController {
                     log.error("[ExcelUpload] ❌ 행 특정 불가 오류: {}", errMsg);
                 }
             }
-            conn.commit();
 
             // ── 안전망: errorRows 전체를 재스캔하여 failedRowMsgMap 누락 방지 ──
             // (flushBatch 인덱스 불일치 등 예외 상황 대비)
@@ -444,15 +453,30 @@ public class ExcelUploadUploadActionController {
             // 그대로 쓰면 성공 건수가 중복 집계될 수 있다.
             failCnt = failedExcelRowNums.size() + unknownFailCnt;
             successCnt = Math.max(processedExcelRowCnt - failCnt, 0);
+            int attemptedSuccessCnt = successCnt;
+            if (rollbackOnFail && failCnt > 0) {
+                conn.rollback();
+                rolledBackOnFail = true;
+                successCnt = 0;
+                addLog.accept("↩ 실패 행이 있어 전체 업로드를 롤백했습니다. DB 반영 건수: 0건");
+                log.info("[ExcelUpload] rollback_on_fail_yn=Y - 실패 {}건으로 업로드 데이터 전체 롤백 (롤백 전 성공 계산: {}건)",
+                        failCnt, attemptedSuccessCnt);
+            } else {
+                conn.commit();
+            }
             log.info("[ExcelUpload] Batch 처리 완료 - 성공(row): {}건, 실패(row): {}건, 처리(row): {}건 (배치성공:{}건/배치실패:{}건, 식별실패행:{}건, 미식별실패:{}건)",
                 successCnt, failCnt, processedExcelRowCnt, counters[0], counters[1], failedExcelRowNums.size(), unknownFailCnt);
-            addLog.accept("\uD83C\uDFC6 \uC644\uB8CC! \uC131\uACF5: " + successCnt + "\uAC74" + (failCnt > 0 ? ", \uC2E4\uD328: " + failCnt + "\uAC74" : ""));
+            String finalStatus = rolledBackOnFail ? "err" : (failCnt > 0 ? "partial" : "ok");
+            String finalMsg = rolledBackOnFail
+                    ? (failCnt + "\uAC74 \uC2E4\uD328\uB85C \uC804\uCCB4 \uB864\uBC31\uB418\uC5C8\uC2B5\uB2C8\uB2E4. DB \uBC18\uC601: 0\uAC74")
+                    : (successCnt + "\uAC74 \uC131\uACF5" + (failCnt > 0 ? ", " + failCnt + "\uAC74 \uC2E4\uD328" : ""));
+            addLog.accept("\uD83C\uDFC6 \uC644\uB8CC! " + finalMsg);
 
             // 최종 진행률 100% 세팅
             if (jobId != null) {
                 request.getSession().setAttribute("EXCEL_PROGRESS_" + jobId, actualTotalRows + "/" + actualTotalRows);
                 ProgressStore.update(jobId, actualTotalRows);
-                ProgressStore.setFinalResult(jobId, null, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
+                ProgressStore.setFinalResult(jobId, null, uploadId, successCnt, failCnt, errFileName, finalStatus);
                 ProgressStore.complete(jobId);
             }
 
@@ -482,10 +506,10 @@ public class ExcelUploadUploadActionController {
                 result.put("history_saved", true);
             }
             if (jobId != null) {
-                ProgressStore.setFinalResult(jobId, histId, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
+                ProgressStore.setFinalResult(jobId, histId, uploadId, successCnt, failCnt, errFileName, finalStatus);
             }
             // Post-SQL 실행
-            if (postSqls != null && !postSqls.isEmpty()) {
+            if (!rolledBackOnFail && postSqls != null && !postSqls.isEmpty()) {
                 log.info("[ExcelUpload] Post-SQL 실행 시작...");
                 addLog.accept("\u2699\uFE0F Post-SQL \uC2E4\uD589 \uC911...");
                 try {
@@ -495,7 +519,7 @@ public class ExcelUploadUploadActionController {
                     log.info("[ExcelUpload] Post-SQL 완료");
                 } catch (Throwable e) {
                     log.error("[ExcelUpload] Post-SQL 중 오류 발생: {}", e.getMessage(), e);
-                    result.put("status", failCnt > 0 ? "partial" : "ok");
+                    result.put("status", finalStatus);
                     result.put("msg", successCnt + "\uAC74 \uC131\uACF5, " + failCnt + "\uAC74 \uC2E4\uD328 (Post-SQL \uC624\uB958: " + e.getMessage() + ")");
                     result.put("success_cnt", successCnt);
                     result.put("fail_cnt", failCnt);
@@ -516,18 +540,20 @@ public class ExcelUploadUploadActionController {
             log.info("[ExcelUpload] \uCD5C\uC885 \uACB0\uACFC - \uC131\uACF5: {}\uAC74, \uC2E4\uD328: {}\uAC74", successCnt, failCnt);
             log.info("=====================================================");
 
-            result.put("status", failCnt > 0 ? "partial" : "ok");
-            result.put("msg", successCnt + "\uAC74 \uC131\uACF5" + (failCnt > 0 ? ", " + failCnt + "\uAC74 \uC2E4\uD328" : ""));
+            result.put("status", finalStatus);
+            result.put("msg", finalMsg);
             result.put("success_cnt", successCnt);
             result.put("fail_cnt", failCnt);
             result.put("error_file", errFileName);
             result.put("hist_id", histId);
             result.put("upload_id", uploadId);
             result.put("config_snapshot_hash", configSnapshotHash);
+            result.put("rollback_on_fail_yn", rollbackOnFail ? "Y" : "N");
+            result.put("rolled_back_yn", rolledBackOnFail ? "Y" : "N");
             log.info("[ExcelUpload] completion summary hist_id={}, upload_id={}, job_id={}, file_name={}, success_cnt={}, fail_cnt={}, error_file={}",
                     histId, uploadId, jobId, params.get("file_name"), successCnt, failCnt, errFileName);
             if (jobId != null) {
-                ProgressStore.setFinalResult(jobId, histId, uploadId, successCnt, failCnt, errFileName, failCnt > 0 ? "partial" : "ok");
+                ProgressStore.setFinalResult(jobId, histId, uploadId, successCnt, failCnt, errFileName, finalStatus);
             }
             if (!failedRowMsgMap.isEmpty()) {
                 result.put("failed_row_msgs", failedRowMsgMap);

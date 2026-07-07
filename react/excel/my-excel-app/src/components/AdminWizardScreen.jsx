@@ -80,6 +80,8 @@ const AdminStep0 = ({
   setSampleFilePath,
   upsertKeepEmptyYn,
   setUpsertKeepEmptyYn,
+  rollbackOnFailYn,
+  setRollbackOnFailYn,
   maxUploadRows,
   setMaxUploadRows,
   downloadSampleFile,
@@ -130,7 +132,7 @@ const AdminStep0 = ({
         </button>
         <button className="admin-modal-setting-btn" onClick={() => setOpenModal('options')}>
           <strong>처리 옵션</strong>
-          <span>{upsertKeepEmptyYn === 'Y' ? '빈칸 유지' : '기본 동작'}</span>
+          <span>{rollbackOnFailYn === 'Y' ? '실패 시 롤백' : upsertKeepEmptyYn === 'Y' ? '빈칸 유지' : '기본 동작'}</span>
         </button>
         <button className="admin-modal-setting-btn" onClick={() => setOpenModal('instructions')}>
           <strong>사용자 안내</strong>
@@ -166,14 +168,24 @@ const AdminStep0 = ({
 
       {openModal === 'options' && (
         <AdminConfigModal title="처리 옵션" desc="UPSERT와 같은 저장 동작의 세부 정책을 설정합니다." onClose={() => setOpenModal(null)}>
-          {/* 2026-06-19: UPSERT 빈 칸 유지 옵션을 추가한다. */}
-          <label className="admin-option-toggle">
-            <input type="checkbox" checked={upsertKeepEmptyYn === 'Y'} onChange={e => setUpsertKeepEmptyYn(e.target.checked ? 'Y' : 'N')} />
-            <span>
-              <strong>빈칸 유지</strong>
-              <small>업데이트 시 엑셀 값이 비어 있으면 기존 DB 값을 유지합니다.</small>
-            </span>
-          </label>
+          <div className="admin-option-stack">
+            {/* 2026-06-19: UPSERT 빈 칸 유지 옵션을 추가한다. */}
+            <label className="admin-option-toggle">
+              <input type="checkbox" checked={upsertKeepEmptyYn === 'Y'} onChange={e => setUpsertKeepEmptyYn(e.target.checked ? 'Y' : 'N')} />
+              <span>
+                <strong>빈칸 유지</strong>
+                <small>업데이트 시 엑셀 값이 비어 있으면 기존 DB 값을 유지합니다.</small>
+              </span>
+            </label>
+            {/* 2026-07-07: 부분 성공을 남기지 않고 실패 시 전체 업로드를 되돌리는 옵션을 추가한다. */}
+            <label className="admin-option-toggle">
+              <input type="checkbox" checked={rollbackOnFailYn === 'Y'} onChange={e => setRollbackOnFailYn(e.target.checked ? 'Y' : 'N')} />
+              <span>
+                <strong>실패 시 전체 롤백</strong>
+                <small>업로드 중 실패 행이 하나라도 있으면 성공 처리된 행까지 모두 반영하지 않습니다.</small>
+              </span>
+            </label>
+          </div>
         </AdminConfigModal>
       )}
 

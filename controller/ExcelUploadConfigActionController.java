@@ -45,6 +45,7 @@ public class ExcelUploadConfigActionController {
             String uploadId = (String) params.get("upload_id");
             boolean isUpdate = uploadId != null && !uploadId.trim().isEmpty() && !"undefined".equals(uploadId);
             String upsertKeepEmptyYn = normalizeYn((String) params.get("upsert_keep_empty_yn"));
+            String rollbackOnFailYn = normalizeYn((String) params.get("rollback_on_fail_yn"));
 
             Object ukeyObj;
             try {
@@ -100,6 +101,8 @@ public class ExcelUploadConfigActionController {
             configData.put("sample_file_org_name", savedSampleFileOrgName);
             // 2026-06-19: UPSERT에서 빈 칸은 기존 값을 유지할지 저장한다.
             configData.put("upsert_keep_empty_yn", upsertKeepEmptyYn);
+            // 2026-07-07: 업로드 실패 행이 있으면 전체 업로드 트랜잭션을 롤백할지 저장한다.
+            configData.put("rollback_on_fail_yn", rollbackOnFailYn);
             // 2026-06-20: 대량 업로드 서버 부하 방지를 위해 로더별 최대 업로드 행 수를 저장한다. 0이면 제한 없음.
             configData.put("max_upload_rows", Math.max(parseIntParam((String) params.get("max_upload_rows"), 0), 0));
 

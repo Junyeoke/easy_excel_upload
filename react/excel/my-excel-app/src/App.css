@@ -1306,6 +1306,12 @@ body {
   cursor: pointer;
 }
 
+.admin-option-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .admin-option-toggle input {
   width: 17px;
   height: 17px;

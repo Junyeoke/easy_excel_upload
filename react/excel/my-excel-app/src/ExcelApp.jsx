@@ -668,6 +668,8 @@ function ExcelApp() {
   const [sampleFilePath, setSampleFilePath] = useState('');
   // 2026-06-19: UPSERT 빈 칸 유지 옵션을 화면 상태로 둔다.
   const [upsertKeepEmptyYn, setUpsertKeepEmptyYn] = useState('N');
+  // 2026-07-07: 업로드 실패 시 전체 트랜잭션을 롤백할지 설정한다.
+  const [rollbackOnFailYn, setRollbackOnFailYn] = useState('N');
   // 2026-06-20: 로더별 엑셀 업로드 최대 행 수 제한을 화면 상태로 둔다. 빈 값은 제한 없음.
   const [maxUploadRows, setMaxUploadRows] = useState('');
   const [instructions, setInstructions] = useState('');
@@ -1136,6 +1138,7 @@ function ExcelApp() {
         setSampleFilePath((res.sample_file_name || '').includes('\\') || (res.sample_file_name || '').includes('/') ? res.sample_file_name : '');
         setSampleFileDownloadName(res.sample_file_org_name || '');
         setUpsertKeepEmptyYn((res.upsert_keep_empty_yn || 'N') === 'Y' ? 'Y' : 'N');
+        setRollbackOnFailYn((res.rollback_on_fail_yn || 'N') === 'Y' ? 'Y' : 'N');
         setMaxUploadRows(Number(res.max_upload_rows) > 0 ? String(res.max_upload_rows) : '');
         setInstructions(res.instructions || '');
         const loadedEntries = await Promise.all(s.map(async item => {
@@ -1280,6 +1283,7 @@ function ExcelApp() {
       else fd.append('sample_file_path', normalizedSamplePath);
     }
     fd.append('upsert_keep_empty_yn', upsertKeepEmptyYn);
+    fd.append('rollback_on_fail_yn', rollbackOnFailYn);
     fd.append('max_upload_rows', String(Math.max(Number(maxUploadRows) || 0, 0)));
     if (sampleFileDownloadName?.trim()) fd.append('sample_file_download_name', sampleFileDownloadName.trim());
     try {
@@ -1344,10 +1348,46 @@ function ExcelApp() {
   };
 
   const getKnownFailedRowNumbers = () => Object.keys(failedRows)
-    .filter(key => key !== '__unknown__')
     .map(Number)
     .filter(Number.isFinite)
     .sort((a, b) => a - b);
+
+  const resolveUploadFailedMessages = (res) => {
+    let failedMsgs = (res?.failed_row_msgs && Object.keys(res.failed_row_msgs).length > 0)
+      ? res.failed_row_msgs : {};
+
+    if (Object.keys(failedMsgs).length === 0) {
+      const logFailedMsgs = {};
+      const hRow = parseInt(headerRow) || 1;
+      uploadLogsRef.current.forEach(log => {
+        const m = log.match(/❌\s*(\d+)행\s*(?:개별\s*)?오류[:\s]+(.+)/);
+        if (m) {
+          const sheetRow1based = parseInt(m[1]);
+          const dataRow = sheetRow1based - hRow;
+          if (dataRow > 0) logFailedMsgs[String(dataRow)] = m[2].trim();
+        }
+      });
+      if (Object.keys(logFailedMsgs).length > 0) failedMsgs = logFailedMsgs;
+    }
+
+    if (Object.keys(failedMsgs).length === 0 && Number(res?.fail_cnt) > 0) {
+      failedMsgs = { '__unknown__': `${res.fail_cnt}건 실패 (행 특정 불가 - 오류 리포트를 확인하세요)` };
+    }
+
+    return failedMsgs;
+  };
+
+  const focusFirstFailedMessagePage = (failedMsgs) => {
+    const validKeys = Object.keys(failedMsgs || {}).filter(k => Number.isFinite(Number(k)));
+    if (validKeys.length === 0 || !file) return;
+    const firstFailedRowNum = Math.min(...validKeys.map(Number));
+    setSelectedErrorRow(firstFailedRowNum);
+    const failedPage = Math.ceil(firstFailedRowNum / previewPageSize);
+    if (failedPage !== previewPage && failedPage >= 1) {
+      setPreviewPage(failedPage);
+      fetchPreviewPage(file, failedPage, headerRow, null);
+    }
+  };
 
   const moveToFirstFailedRow = () => {
     const knownFailedRows = getKnownFailedRowNumbers();
@@ -1420,7 +1460,6 @@ function ExcelApp() {
   const retryTypeRowMap = useMemo(() => {
     const map = {};
     Object.entries(failedRows).forEach(([rowKey, msg]) => {
-      if (rowKey === '__unknown__') return;
       const rowNum = Number(rowKey);
       if (!Number.isFinite(rowNum) || rowNum <= 0) return;
       const t = classifyFailTypeClient(msg);
@@ -1569,7 +1608,7 @@ function ExcelApp() {
     let totalErrItems = 0;
 
     Object.entries(failedMap || {}).forEach(([rowKey, msg]) => {
-      if (rowKey === '__unknown__') {
+      if (!Number.isFinite(Number(rowKey))) {
         unknownCnt += 1;
         return;
       }
@@ -1617,7 +1656,7 @@ function ExcelApp() {
     const retrySummaryBase = useTargetRows ? {
       mode: retryMode,
       target_count: retryTargetRows.length,
-      before_fail_count: Object.keys(failedRows).filter(k => k !== '__unknown__').length,
+      before_fail_count: Object.keys(failedRows).filter(k => Number.isFinite(Number(k))).length,
     } : null;
     const cr = await Swal.fire({ title: '데이터 업로드 실행', html: '데이터를 서버로 전송하시겠습니까?<br><small style="color:#ef4444">대량 데이터는 수 분이 소요될 수 있습니다.</small>', icon: 'question', showCancelButton: true, confirmButtonColor: '#6366f1', cancelButtonColor: '#94a3b8', confirmButtonText: '🚀 진행', cancelButtonText: '취소', reverseButtons: true });
     if (!cr.isConfirmed) return;
@@ -1660,6 +1699,7 @@ function ExcelApp() {
     fd.append('post_sql_json_b64', encodeSafeBase64(JSON.stringify(postSqls)));
     fd.append('row_sql_json_b64', encodeSafeBase64(JSON.stringify(rowSqls)));
     fd.append('upsert_keep_empty_yn', upsertKeepEmptyYn);
+    fd.append('rollback_on_fail_yn', rollbackOnFailYn);
     fd.append('max_upload_rows', String(Math.max(Number(maxUploadRows) || 0, 0)));
     // 2026-06-20: 관리자 컬럼 매핑의 현재 로그인 사용자/MTN 특수값을 서버에서 치환할 수 있도록 전달한다.
     fd.append('login_user_id', getCurrentEmpId());
@@ -1713,37 +1753,10 @@ function ExcelApp() {
 
         if (res.status === 'partial') {
           // partial: 파일/미리보기 항상 유지, 실패 행 강조
-          let failedMsgs = (res.failed_row_msgs && Object.keys(res.failed_row_msgs).length > 0)
-            ? res.failed_row_msgs : {};
-
-          // ── 폴백: failed_row_msgs 없으면 uploadLogs에서 파싱 ──────────────
-          // 서버 로그 형식: "❌ N행 오류: 메시지"  (N = currentRowForLog = 1-based 시트행)
-          // 데이터행 변환: dataRow = currentRowForLog - headerRow
-          //   (failed_row_msgs의 key = row.getRowNum() - headerIdx = 같은 값)
-          if (Object.keys(failedMsgs).length === 0) {
-            const logFailedMsgs = {};
-            const hRow = parseInt(headerRow) || 1;
-            uploadLogsRef.current.forEach(log => {
-              const m = log.match(/❌\s*(\d+)행\s*(?:개별\s*)?오류[:\s]+(.+)/);
-              if (m) {
-                const sheetRow1based = parseInt(m[1]);          // 로그의 행 번호
-                const dataRow = sheetRow1based - hRow;          // 미리보기 _rowNum 기준으로 변환
-                if (dataRow > 0) logFailedMsgs[String(dataRow)] = m[2].trim();
-              }
-            });
-            console.log('[ExcelUpload] 로그 폴백 결과:', logFailedMsgs, '/ headerRow:', hRow);
-            if (Object.keys(logFailedMsgs).length > 0) failedMsgs = logFailedMsgs;
-          }
-
-          // failed_row_msgs도 로그도 없으면: fail_cnt만큼 placeholder 생성 (행 특정 불가 → 경고용)
-          if (Object.keys(failedMsgs).length === 0 && res.fail_cnt > 0) {
-            failedMsgs = { '__unknown__': `${res.fail_cnt}건 실패 (행 특정 불가 - 오류 리포트를 확인하세요)` };
-          }
-
-          console.log('[ExcelUpload] 최종 failedMsgs:', failedMsgs, '/ res.failed_row_msgs:', res.failed_row_msgs);
+          const failedMsgs = resolveUploadFailedMessages(res);
           setFailedRows(failedMsgs);
           // uploadResult에도 failedMsgs 병합 (버튼에서 사용)
-          setUploadResult({ ...res, failed_row_msgs: failedMsgs, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: Object.keys(failedMsgs).filter(k => k !== '__unknown__').length } : null });
+          setUploadResult({ ...res, failed_row_msgs: failedMsgs, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: Object.keys(failedMsgs).filter(k => Number.isFinite(Number(k))).length } : null });
           publishCompletionSnapshot({
             status: 'partial',
             hist_id: res.hist_id || '',
@@ -1778,15 +1791,7 @@ function ExcelApp() {
             last_log: `${res.fail_cnt || 0}건 실패로 부분 완료`,
           });
           updateUploadToast({ render: `⚠️ ${res.fail_cnt}건 실패 — 미리보기에서 수정 후 재업로드`, type: 'warning', isLoading: false, autoClose: 5000 });
-          // 첫 번째 실패 행 페이지로 자동 이동
-          if (Object.keys(failedMsgs).length > 0 && file) {
-            const firstFailedRowNum = Math.min(...Object.keys(failedMsgs).map(Number));
-            const failedPage = Math.ceil(firstFailedRowNum / previewPageSize);
-            if (failedPage !== previewPage && failedPage >= 1) {
-              setPreviewPage(failedPage);
-              fetchPreviewPage(file, failedPage, headerRow, null);
-            }
-          }
+          focusFirstFailedMessagePage(failedMsgs);
         } else {
           // ok: 완전 성공 → 결과 화면으로
           setFailedRows({});
@@ -1832,7 +1837,17 @@ function ExcelApp() {
         // err: 파일 유지, 오류 메시지 + 행 강조
         updateUploadToast({ render: '❌ 실패', type: 'error', isLoading: false, autoClose: 3000 });
         const { friendlyMsg, solution } = translateUploadError(res.msg);
-        setUploadResult({ ...res, friendlyMsg, solution, retry_summary: retrySummaryBase });
+        let failedMsgs = resolveUploadFailedMessages(res);
+        const rowMatch = res.msg?.match(/엑셀 \[ (\d+) 번째 행 \]/);
+        if (Object.keys(failedMsgs).length === 0 && rowMatch) {
+          const errRowNum = parseInt(rowMatch[1]);
+          const dataRowNum = errRowNum - parseInt(headerRow);
+          if (dataRowNum > 0) {
+            failedMsgs = { [String(dataRowNum)]: res.msg };
+          }
+        }
+        setFailedRows(failedMsgs);
+        setUploadResult({ ...res, friendlyMsg, solution, failed_row_msgs: failedMsgs, retry_summary: retrySummaryBase ? { ...retrySummaryBase, after_fail_count: Object.keys(failedMsgs).filter(k => Number.isFinite(Number(k))).length } : null });
         publishCompletionSnapshot({
           status: 'err',
           hist_id: res.hist_id || '',
@@ -1844,6 +1859,7 @@ function ExcelApp() {
           fail_cnt: Number(res.fail_cnt) || 0,
           error_file: res.error_file || '',
           msg: res.msg || '',
+          failed_row_msgs: failedMsgs,
           retry_mode: retryMode,
           retry_reason_types: retryMode === 'fail_type' ? retryFailTypes.join(',') : '',
           config_snapshot_hash: res.config_snapshot_hash || '',
@@ -1868,18 +1884,8 @@ function ExcelApp() {
           msg: res.msg || '',
           retry_mode: retryMode,
         }, `${uploadId}|${retryMode}|upload_error|${file?.name || ''}|${res.msg || ''}`);
-        const rowMatch = res.msg?.match(/엑셀 \[ (\d+) 번째 행 \]/);
-        if (rowMatch && file) {
-          const errRowNum = parseInt(rowMatch[1]);
-          const dataRowNum = errRowNum - parseInt(headerRow);
-          if (dataRowNum > 0) {
-            setFailedRows({ [String(dataRowNum)]: res.msg });
-            const failedPage = Math.ceil(dataRowNum / previewPageSize);
-            if (failedPage !== previewPage && failedPage >= 1) {
-              setPreviewPage(failedPage);
-              fetchPreviewPage(file, failedPage, headerRow, null);
-            }
-          }
+        if (Object.keys(failedMsgs).filter(k => Number.isFinite(Number(k))).length > 0) {
+          focusFirstFailedMessagePage(failedMsgs);
         }
       }
     } catch {
@@ -2226,6 +2232,8 @@ function ExcelApp() {
     setSampleFilePath,
     upsertKeepEmptyYn,
     setUpsertKeepEmptyYn,
+    rollbackOnFailYn,
+    setRollbackOnFailYn,
     maxUploadRows,
     setMaxUploadRows,
     downloadSampleFile,

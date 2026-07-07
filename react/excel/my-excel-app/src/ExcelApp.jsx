@@ -392,6 +392,7 @@ const snapshotToHistoryRow = (snapshot) => {
     config_snapshot_hash: snapshot.config_snapshot_hash || '',
     retry_mode: snapshot.retry_mode || '',
     retry_reason_types: snapshot.retry_reason_types || '',
+    rolled_back_yn: snapshot.rolled_back_yn || 'N',
   };
 };
 
@@ -410,6 +411,7 @@ const progressToHistoryRow = (state, fallback = {}) => {
     config_snapshot_hash: state.config_snapshot_hash || fallback.config_snapshot_hash || '',
     retry_mode: state.retry_mode || fallback.retry_mode || '',
     retry_reason_types: state.retry_reason_types || fallback.retry_reason_types || '',
+    rolled_back_yn: state.rolled_back_yn || fallback.rolled_back_yn || 'N',
   };
 };
 
@@ -430,12 +432,15 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
   const latest = rows[0] || null;
   const totalSuccess = rows.reduce((sum, row) => sum + (Number(row.success_cnt) || 0), 0);
   const totalFail = rows.reduce((sum, row) => sum + (Number(row.fail_cnt) || 0), 0);
+  const latestRolledBack = latest?.rolled_back_yn === 'Y';
   const latestStatus = latest
-    ? (Number(latest.fail_cnt) > 0 ? 'partial' : 'ok')
+    ? (latestRolledBack ? 'rollback' : Number(latest.fail_cnt) > 0 ? 'partial' : 'ok')
     : 'none';
-  const statusLabel = latestStatus === 'ok' ? '완료' : latestStatus === 'partial' ? '부분 완료' : '대기';
+  const statusLabel = latestStatus === 'ok' ? '완료' : latestStatus === 'rollback' ? '전체 롤백' : latestStatus === 'partial' ? '부분 완료' : '대기';
   const statusDesc = latestStatus === 'ok'
     ? '업로드가 정상적으로 끝났습니다.'
+    : latestStatus === 'rollback'
+      ? '실패 행이 있어 성공 처리된 행까지 모두 반영하지 않았습니다.'
     : latestStatus === 'partial'
       ? '일부 행이 실패했습니다. 결과 내역에서 오류 파일을 확인하세요.'
       : '완료 이력을 아직 불러오지 못했습니다.';
@@ -474,7 +479,7 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
           <div className="upload-stats-grid">
             <div className="upload-stat-card">
               <div className="upload-stat-label">최신 상태</div>
-              <div className="upload-stat-value success">{statusLabel}</div>
+              <div className={`upload-stat-value ${latestStatus === 'ok' ? 'success' : 'danger'}`}>{statusLabel}</div>
             </div>
             <div className="upload-stat-card">
               <div className="upload-stat-label">성공 건수</div>
@@ -529,7 +534,8 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
                   <span className="history-item-time">{latest.reg_dttm?.substring(0, 16)}</span>
                 </div>
                 <div className="history-item-file">📁 {latest.file_name || '-'}</div>
-                <div className="history-item-stats">
+              <div className="history-item-stats">
+                  {latest.rolled_back_yn === 'Y' && <span className="stat-chip rollback">↩ 전체 롤백</span>}
                   <span className="stat-chip success">✅ {Number(latest.success_cnt || 0).toLocaleString()}건 성공</span>
                   <span className="stat-chip fail">❌ {Number(latest.fail_cnt || 0).toLocaleString()}건 실패</span>
                   {latest.error_file && <span className="stat-chip">🚨 오류 파일 생성</span>}
@@ -565,6 +571,7 @@ const CompletionSummaryView = ({ uploadId, histId, seed, historyList, loading, e
                     </div>
                     <div className="history-item-file">📁 {h.file_name || '-'}</div>
                     <div className="history-item-stats">
+                      {h.rolled_back_yn === 'Y' && <span className="stat-chip rollback">↩ 전체 롤백</span>}
                       <span className="stat-chip success">✅ {Number(h.success_cnt || 0).toLocaleString()}건</span>
                       <span className="stat-chip fail">❌ {Number(h.fail_cnt || 0).toLocaleString()}건</span>
                       {h.error_file && <span className="stat-chip">🚨 오류 파일</span>}
@@ -1658,7 +1665,10 @@ function ExcelApp() {
       target_count: retryTargetRows.length,
       before_fail_count: Object.keys(failedRows).filter(k => Number.isFinite(Number(k))).length,
     } : null;
-    const cr = await Swal.fire({ title: '데이터 업로드 실행', html: '데이터를 서버로 전송하시겠습니까?<br><small style="color:#ef4444">대량 데이터는 수 분이 소요될 수 있습니다.</small>', icon: 'question', showCancelButton: true, confirmButtonColor: '#6366f1', cancelButtonColor: '#94a3b8', confirmButtonText: '🚀 진행', cancelButtonText: '취소', reverseButtons: true });
+    const uploadConfirmHtml = rollbackOnFailYn === 'Y'
+      ? '데이터를 서버로 전송하시겠습니까?<br><small style="color:#ef4444">실패 행이 하나라도 있으면 성공 처리된 행까지 모두 반영하지 않습니다.</small><br><small style="color:#64748b">대량 데이터는 수 분이 소요될 수 있습니다.</small>'
+      : '데이터를 서버로 전송하시겠습니까?<br><small style="color:#ef4444">대량 데이터는 수 분이 소요될 수 있습니다.</small>';
+    const cr = await Swal.fire({ title: '데이터 업로드 실행', html: uploadConfirmHtml, icon: rollbackOnFailYn === 'Y' ? 'warning' : 'question', showCancelButton: true, confirmButtonColor: '#6366f1', cancelButtonColor: '#94a3b8', confirmButtonText: '🚀 진행', cancelButtonText: '취소', reverseButtons: true });
     if (!cr.isConfirmed) return;
 
     setUploading(true); setProgress({ current: 0, total: 0, percent: 0 }); setUploadLogs([useTargetRows ? "\uD83C\uDFAF \uC2E4\uD328\uD589 \uC7AC\uCC98\ub9ac\ub97c \uC2DC\uc791\ud569\ub2c8\ub2e4..." : "\uD83D\uDE80 \uD30C\uc77c \uc804\uc1a1\uc744 \uc2dc\uc791\ud569\ub2c8\ub2e4..."]); setUploadResult(null);
@@ -1772,6 +1782,7 @@ function ExcelApp() {
             retry_mode: retryMode,
             retry_reason_types: retryMode === 'fail_type' ? retryFailTypes.join(',') : '',
             config_snapshot_hash: res.config_snapshot_hash || '',
+            rolled_back_yn: res.rolled_back_yn || 'N',
           });
           publishSharedUploadState({
             hist_id: res.hist_id || '',
@@ -1789,6 +1800,7 @@ function ExcelApp() {
             fail_cnt: failCnt,
             error_file: res.error_file || '',
             last_log: `${res.fail_cnt || 0}건 실패로 부분 완료`,
+            rolled_back_yn: res.rolled_back_yn || 'N',
           });
           updateUploadToast({ render: `⚠️ ${res.fail_cnt}건 실패 — 미리보기에서 수정 후 재업로드`, type: 'warning', isLoading: false, autoClose: 5000 });
           focusFirstFailedMessagePage(failedMsgs);
@@ -1810,6 +1822,7 @@ function ExcelApp() {
             retry_mode: retryMode,
             retry_reason_types: retryMode === 'fail_type' ? retryFailTypes.join(',') : '',
             config_snapshot_hash: res.config_snapshot_hash || '',
+            rolled_back_yn: res.rolled_back_yn || 'N',
           });
           publishSharedUploadState({
             hist_id: res.hist_id || '',
@@ -1827,6 +1840,7 @@ function ExcelApp() {
             fail_cnt: failCnt,
             error_file: res.error_file || '',
             last_log: '업로드가 정상 완료되었습니다.',
+            rolled_back_yn: res.rolled_back_yn || 'N',
           });
           updateUploadToast({ render: '🎉 완료', type: 'success', isLoading: false, autoClose: 3000 });
           setFile(null); setPreviewData([]); setEditedCells({});
@@ -1863,6 +1877,7 @@ function ExcelApp() {
           retry_mode: retryMode,
           retry_reason_types: retryMode === 'fail_type' ? retryFailTypes.join(',') : '',
           config_snapshot_hash: res.config_snapshot_hash || '',
+          rolled_back_yn: res.rolled_back_yn || 'N',
         });
         publishSharedUploadState({
           hist_id: res.hist_id || '',
@@ -1877,6 +1892,7 @@ function ExcelApp() {
           fail_cnt: Number(res.fail_cnt) || 0,
           error_file: res.error_file || '',
           last_log: res.msg || '업로드 실패',
+          rolled_back_yn: res.rolled_back_yn || 'N',
         });
         void sendOpsAlert('upload_error', {
           status: 'err',

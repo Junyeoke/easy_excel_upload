@@ -495,7 +495,8 @@ public class ExcelUploadUploadActionController {
             String historySaveError = repository.insertHistory(conn, histId,
                     (String) params.get("job_name"), (String) params.get("file_name"),
                     successCnt, failCnt, errFileName, nowFuncU, uploadId, configSnapshotHash, failTypeJson,
-                    structJson, mapJson, preSqlJson, postSqlJson, rowSqlJson, retryMode, retryReasonTypes);
+                    structJson, mapJson, preSqlJson, postSqlJson, rowSqlJson, retryMode, retryReasonTypes,
+                    rolledBackOnFail ? "Y" : "N");
             if (historySaveError != null) {
                 String historyWarning = "업로드 이력 저장 실패: " + historySaveError;
                 addLog.accept("⚠ " + historyWarning);

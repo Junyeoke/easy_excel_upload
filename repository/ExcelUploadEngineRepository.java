@@ -314,6 +314,7 @@ public class ExcelUploadEngineRepository {
                 "    REG_DTTM DATE\n" +
                 ");");
         ensureHistoryUploadIdColumn(conn);
+        ensureHistoryRolledBackColumn(conn);
         ensureHistoryUploadIdIndex(conn);
         HISTORY_SCHEMA_VERIFIED.set(true);
     }
@@ -329,6 +330,21 @@ public class ExcelUploadEngineRepository {
             if (!columnExists(conn.getMetaData(), "ESO_EXCEL_UPLOAD_HISTORY", "UPLOAD_ID")) {
                 throw new Exception("업로드 이력 테이블에 UPLOAD_ID 컬럼을 추가할 수 없습니다.\n" +
                         "필요 SQL 예시:\nALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD (UPLOAD_ID VARCHAR2(64));", e);
+            }
+        }
+    }
+
+    private void ensureHistoryRolledBackColumn(Connection conn) throws Exception {
+        DatabaseMetaData meta = conn.getMetaData();
+        if (columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "ROLLED_BACK_YN")) {
+            return;
+        }
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD (ROLLED_BACK_YN CHAR(1) DEFAULT 'N')");
+        } catch (SQLException e) {
+            if (!columnExists(conn.getMetaData(), "ESO_EXCEL_UPLOAD_HISTORY", "ROLLED_BACK_YN")) {
+                throw new Exception("업로드 이력 테이블에 ROLLED_BACK_YN 컬럼을 추가할 수 없습니다.\n" +
+                        "필요 SQL 예시:\nALTER TABLE ESO_EXCEL_UPLOAD_HISTORY ADD (ROLLED_BACK_YN CHAR(1) DEFAULT 'N');", e);
             }
         }
     }
@@ -473,7 +489,7 @@ public class ExcelUploadEngineRepository {
                                 String uploadId, String configSnapshotHash, String failTypeJson,
                                 String structSnapshotJson, String mappingSnapshotJson,
                                 String preSqlSnapshotJson, String postSqlSnapshotJson, String rowSqlSnapshotJson,
-                                String retryMode, String retryReasonTypes) {
+                                String retryMode, String retryReasonTypes, String rolledBackYn) {
         String normalizedJobName = jobName == null || jobName.trim().isEmpty() ? "일반 데이터 업로드" : jobName;
         try {
             DatabaseMetaData meta = conn.getMetaData();
@@ -487,6 +503,7 @@ public class ExcelUploadEngineRepository {
             boolean hasRowSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_ROW_SQL_JSON");
             boolean hasRetryModeCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "RETRY_MODE");
             boolean hasRetryReasonTypesCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "RETRY_REASON_TYPES");
+            boolean hasRolledBackCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "ROLLED_BACK_YN");
 
             StringBuilder colSb = new StringBuilder("HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE");
             StringBuilder valSb = new StringBuilder("?, ?, ?, ?, ?, ?");
@@ -548,6 +565,11 @@ public class ExcelUploadEngineRepository {
                 valSb.append(", ?");
                 sqlParams.add(retryReasonTypes);
             }
+            if (hasRolledBackCol) {
+                colSb.append(", ROLLED_BACK_YN");
+                valSb.append(", ?");
+                sqlParams.add(rolledBackYn);
+            }
 
             colSb.append(", REG_DTTM");
             valSb.append(", ").append(nowFunc);
@@ -591,6 +613,9 @@ public class ExcelUploadEngineRepository {
                 if (hasRetryReasonTypesCol) {
                     histPs.setString(idx++, retryReasonTypes);
                 }
+                if (hasRolledBackCol) {
+                    histPs.setString(idx++, rolledBackYn);
+                }
                 sqlLog.info(renderSql(sql, sqlParams));
                 histPs.executeUpdate();
             }
@@ -615,6 +640,7 @@ public class ExcelUploadEngineRepository {
         boolean hasFailTypeJsonCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "FAIL_TYPE_JSON");
         boolean hasRetryModeCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "RETRY_MODE");
         boolean hasRetryReasonTypesCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "RETRY_REASON_TYPES");
+        boolean hasRolledBackCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "ROLLED_BACK_YN");
 
         StringBuilder sql = new StringBuilder("SELECT HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM");
         if (hasUploadIdCol) sql.append(", UPLOAD_ID");
@@ -622,6 +648,7 @@ public class ExcelUploadEngineRepository {
         if (hasFailTypeJsonCol) sql.append(", FAIL_TYPE_JSON");
         if (hasRetryModeCol) sql.append(", RETRY_MODE");
         if (hasRetryReasonTypesCol) sql.append(", RETRY_REASON_TYPES");
+        if (hasRolledBackCol) sql.append(", ROLLED_BACK_YN");
         sql.append(" FROM ESO_EXCEL_UPLOAD_HISTORY WHERE 1=1");
 
         List<Object> bindParams = new ArrayList<>();
@@ -672,6 +699,7 @@ public class ExcelUploadEngineRepository {
                     if (hasFailTypeJsonCol) row.put("fail_type_json", rs.getString("FAIL_TYPE_JSON"));
                     if (hasRetryModeCol) row.put("retry_mode", rs.getString("RETRY_MODE"));
                     if (hasRetryReasonTypesCol) row.put("retry_reason_types", rs.getString("RETRY_REASON_TYPES"));
+                    if (hasRolledBackCol) row.put("rolled_back_yn", nullToDefault(rs.getString("ROLLED_BACK_YN"), "N"));
                     list.add(row);
                 }
             }
@@ -734,6 +762,7 @@ public class ExcelUploadEngineRepository {
         boolean hasPreSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_PRE_SQL_JSON");
         boolean hasPostSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_POST_SQL_JSON");
         boolean hasRowSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_ROW_SQL_JSON");
+        boolean hasRolledBackCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "ROLLED_BACK_YN");
 
         StringBuilder sql = new StringBuilder("SELECT HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM");
         if (hasUploadIdCol) sql.append(", UPLOAD_ID");
@@ -744,6 +773,7 @@ public class ExcelUploadEngineRepository {
         if (hasPreSqlSnapshotCol) sql.append(", CONFIG_PRE_SQL_JSON");
         if (hasPostSqlSnapshotCol) sql.append(", CONFIG_POST_SQL_JSON");
         if (hasRowSqlSnapshotCol) sql.append(", CONFIG_ROW_SQL_JSON");
+        if (hasRolledBackCol) sql.append(", ROLLED_BACK_YN");
         sql.append(" FROM ESO_EXCEL_UPLOAD_HISTORY WHERE HIST_ID = ?");
 
         try (PreparedStatement pstmt = conn.prepareStatement(sql.toString())) {
@@ -768,6 +798,7 @@ public class ExcelUploadEngineRepository {
                 if (hasPreSqlSnapshotCol) row.put("pre_sql_json", rs.getString("CONFIG_PRE_SQL_JSON"));
                 if (hasPostSqlSnapshotCol) row.put("post_sql_json", rs.getString("CONFIG_POST_SQL_JSON"));
                 if (hasRowSqlSnapshotCol) row.put("row_sql_json", rs.getString("CONFIG_ROW_SQL_JSON"));
+                if (hasRolledBackCol) row.put("rolled_back_yn", nullToDefault(rs.getString("ROLLED_BACK_YN"), "N"));
                 return row;
             }
         }
@@ -794,6 +825,7 @@ public class ExcelUploadEngineRepository {
         boolean hasPreSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_PRE_SQL_JSON");
         boolean hasPostSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_POST_SQL_JSON");
         boolean hasRowSqlSnapshotCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "CONFIG_ROW_SQL_JSON");
+        boolean hasRolledBackCol = columnExists(meta, "ESO_EXCEL_UPLOAD_HISTORY", "ROLLED_BACK_YN");
 
         StringBuilder sql = new StringBuilder("SELECT HIST_ID, JOB_NAME, FILE_NAME, SUCCESS_CNT, FAIL_CNT, ERROR_FILE, REG_DTTM");
         if (hasUploadIdCol) sql.append(", UPLOAD_ID");
@@ -804,6 +836,7 @@ public class ExcelUploadEngineRepository {
         if (hasPreSqlSnapshotCol) sql.append(", CONFIG_PRE_SQL_JSON");
         if (hasPostSqlSnapshotCol) sql.append(", CONFIG_POST_SQL_JSON");
         if (hasRowSqlSnapshotCol) sql.append(", CONFIG_ROW_SQL_JSON");
+        if (hasRolledBackCol) sql.append(", ROLLED_BACK_YN");
         sql.append(" FROM ESO_EXCEL_UPLOAD_HISTORY WHERE HIST_ID = ?");
         if (hasUploadIdCol && uploadId != null && !uploadId.trim().isEmpty()) {
             sql.append(" AND (UPLOAD_ID = ? OR UPLOAD_ID IS NULL)");
@@ -834,6 +867,7 @@ public class ExcelUploadEngineRepository {
                 if (hasPreSqlSnapshotCol) row.put("pre_sql_json", rs.getString("CONFIG_PRE_SQL_JSON"));
                 if (hasPostSqlSnapshotCol) row.put("post_sql_json", rs.getString("CONFIG_POST_SQL_JSON"));
                 if (hasRowSqlSnapshotCol) row.put("row_sql_json", rs.getString("CONFIG_ROW_SQL_JSON"));
+                if (hasRolledBackCol) row.put("rolled_back_yn", nullToDefault(rs.getString("ROLLED_BACK_YN"), "N"));
                 return row;
             }
         }

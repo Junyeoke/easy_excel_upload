@@ -1257,6 +1257,48 @@ body {
   line-height: 1.55;
 }
 
+.admin-basic-save-strip {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+}
+
+.admin-basic-save-strip strong,
+.admin-basic-save-strip span {
+  display: block;
+}
+
+.admin-basic-save-strip strong {
+  color: #14532d;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.admin-basic-save-strip span {
+  margin-top: 4px;
+  color: #166534;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.admin-basic-save-btn {
+  min-width: 154px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.admin-basic-save-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .admin-basic-form-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 180px;
@@ -6341,4 +6383,15 @@ body {
   margin: 0 22px 0 8px !important;
   font-size: 0.9rem !important;
   line-height: 1.45 !important;
+}
+
+.excel-facelift-content .admin-structure-auto-note {
+  margin: 8px 0 12px;
+  padding: 9px 12px;
+  border: 1px solid #d7e9e5;
+  border-radius: 7px;
+  background: #f2f8f6;
+  color: #38665c;
+  font-size: 0.76rem;
+  line-height: 1.5;
 }

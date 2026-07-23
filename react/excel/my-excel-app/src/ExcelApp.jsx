@@ -1223,16 +1223,30 @@ function ExcelApp() {
   };
 
   const handleStructTableChange = async (index, tableName) => {
+    const selectedTable = tableName || '';
     const nextStructs = [...structs];
     nextStructs[index] = {
       ...nextStructs[index],
-      table: tableName || '',
+      table: selectedTable,
+      ent_id: '',
       pk_col: '',
       upsert_keys: [],
     };
     setStructs(nextStructs);
 
-    if (tableName) await loadCols(tableName);
+    if (selectedTable) {
+      const columns = await loadCols(selectedTable);
+      const metadataColumn = columns.find(col => col.entity_id || col.is_pk === 'Y');
+      const primaryKeyColumn = columns.find(col => col.is_pk === 'Y');
+      const detectedEntityId = String(metadataColumn?.entity_id || '').trim().toUpperCase();
+      const detectedPrimaryKey = primaryKeyColumn?.value || '';
+
+      setStructs(current => current.map((item, itemIndex) => (
+        itemIndex === index && item.table === selectedTable
+          ? { ...item, ent_id: detectedEntityId, pk_col: detectedPrimaryKey }
+          : item
+      )));
+    }
 
     const alias = nextStructs[index].alias;
     setMapping(prev => ({
@@ -2518,7 +2532,9 @@ function ExcelApp() {
                           <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                             <button onClick={() => { window.location.href = `?admin=true&upload_id=${item.upload_id}`; }} title="편집" style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', color: '#6366f1', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}>✏️ 편집</button>
                             <button onClick={() => handleCloneLoader(item.upload_id, item.job_name)} title="복제" style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', color: '#10b981', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}>📋 복제</button>
-                            <button onClick={() => handleDeleteLoader(item.upload_id, item.job_name)} title="삭제" style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #fee2e2', background: 'white', color: '#ef4444', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}>🗑️</button>
+                            {item.can_delete === true && (
+                              <button onClick={() => handleDeleteLoader(item.upload_id, item.job_name)} title="삭제" style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #fee2e2', background: 'white', color: '#ef4444', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}>🗑️</button>
+                            )}
                           </div>
                         </div>
                       ))}

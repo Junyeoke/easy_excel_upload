@@ -20,9 +20,12 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Handles read, preview, and file-download actions for the legacy
@@ -112,6 +115,8 @@ public class ExcelUploadQueryActionController {
              ResultSet rs = pstmt.executeQuery()) {
             // 2026-06-20: 컬럼 매핑 화면에서 한글 컬럼명/코멘트를 함께 보여주기 위해 DB 컬럼 코멘트를 조회한다.
             Map<String, String> comments = loadColumnComments(conn, t);
+            Set<String> primaryKeyColumns = loadPrimaryKeyColumns(conn, t);
+            String entityId = repository.getEntityIdByTableName(conn, t);
             ResultSetMetaData m = rs.getMetaData();
             List<Map<String, String>> list = new ArrayList<>();
             for (int i = 1; i <= m.getColumnCount(); i++) {
@@ -120,6 +125,8 @@ public class ExcelUploadQueryActionController {
                 String comment = comments.get(c.toLowerCase());
                 o.put("value", c);
                 o.put("label", c);
+                o.put("is_pk", primaryKeyColumns.contains(c.toLowerCase(Locale.ROOT)) ? "Y" : "N");
+                o.put("entity_id", entityId == null ? "" : entityId);
                 if (comment != null && !comment.trim().isEmpty()) {
                     o.put("comment", comment.trim());
                     o.put("display_label", c + " (" + comment.trim() + ")");
@@ -129,6 +136,28 @@ public class ExcelUploadQueryActionController {
             response.setContentType("application/json; charset=UTF-8");
             response.getWriter().write(jsonToString(list));
         }
+    }
+
+    private Set<String> loadPrimaryKeyColumns(Connection conn, String tableName) {
+        Set<String> columns = new HashSet<>();
+        String[] candidates = {
+                tableName,
+                tableName.toUpperCase(Locale.ROOT),
+                tableName.toLowerCase(Locale.ROOT)
+        };
+        for (String candidate : candidates) {
+            try (ResultSet pkRs = conn.getMetaData().getPrimaryKeys(null, null, candidate)) {
+                while (pkRs.next()) {
+                    String columnName = pkRs.getString("COLUMN_NAME");
+                    if (columnName != null && !columnName.trim().isEmpty()) {
+                        columns.add(columnName.toLowerCase(Locale.ROOT));
+                    }
+                }
+            } catch (Throwable ignore) {
+            }
+            if (!columns.isEmpty()) break;
+        }
+        return columns;
     }
 
     public void handlePreview(byte[] fileBytes, Map<String, Object> params,

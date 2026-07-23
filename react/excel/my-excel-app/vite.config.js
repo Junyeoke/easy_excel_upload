@@ -2,7 +2,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const buildVersion = '20260620_ux2'
+const buildVersion = 'v1.5'
 
 export default defineConfig({
   plugins: [react()],

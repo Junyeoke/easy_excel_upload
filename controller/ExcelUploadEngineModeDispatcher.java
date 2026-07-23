@@ -49,11 +49,11 @@ public class ExcelUploadEngineModeDispatcher {
             HttpServletResponse response,
             Map<String, Object> result) throws Exception {
         if ("save".equals(mode)) {
-            configActionController.handleSave(ds, params, sampleFileBytes, sampleFileOrgName, result);
+            configActionController.handleSave(ds, params, sampleFileBytes, sampleFileOrgName, request, result);
         } else if ("get_list".equals(mode)) {
-            configActionController.handleGetList(ds, result);
+            configActionController.handleGetList(ds, request, result);
         } else if ("get_detail".equals(mode)) {
-            configActionController.handleGetDetail(ds, params, result);
+            configActionController.handleGetDetail(ds, params, request, result);
         } else if ("download_sample".equals(mode)) {
             queryActionController.handleDownloadSample(ds, params, response);
             return false;
@@ -89,9 +89,9 @@ public class ExcelUploadEngineModeDispatcher {
         } else if ("upload".equals(mode)) {
             uploadActionController.handleUpload(ds, fileBytes, params, request, result, response);
         } else if ("delete".equals(mode)) {
-            configActionController.handleDelete(ds, params, result);
+            configActionController.handleDelete(ds, params, request, result);
         } else if ("clone".equals(mode)) {
-            configActionController.handleClone(ds, params, result);
+            configActionController.handleClone(ds, params, request, result);
         } else {
             result.put("status", "err");
             result.put("msg", "Unknown mode: " + mode);

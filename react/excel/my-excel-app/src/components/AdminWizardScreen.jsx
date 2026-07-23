@@ -89,8 +89,17 @@ const AdminStep0 = ({
   downloadSampleFile,
   instructions,
   setInstructions,
+  handleSave,
+  setCurrentStep,
 }) => {
   const [openModal, setOpenModal] = React.useState(null);
+  const canSaveBasic = !!jobName?.trim();
+
+  const saveBasicDraft = async () => {
+    if (!canSaveBasic) return;
+    const ok = await handleSave();
+    if (ok) setCurrentStep(3);
+  };
 
   return (
     <div className="wizard-panel admin-basic-panel admin-step-panel admin-step-basic">
@@ -124,6 +133,20 @@ const AdminStep0 = ({
             {/* 2026-06-20: 대량 업로드로 인한 서버 부하를 줄이기 위해 로더별 최대 처리 행 수를 입력받는다. */}
             <input type="number" value={maxUploadRows} onChange={e => setMaxUploadRows(e.target.value)} min="0" placeholder="예: 5000" className="wiz-input admin-limit-input" />
           </div>
+        </div>
+        <div className="admin-basic-save-strip">
+          <div>
+            <strong>기본 설정만 먼저 저장할 수 있습니다.</strong>
+            <span>테이블 구조와 컬럼 매핑은 나중에 로더를 다시 열어 이어서 설정하세요.</span>
+          </div>
+          <button
+            type="button"
+            className="side-action-btn side-action-btn-green admin-basic-save-btn"
+            onClick={saveBasicDraft}
+            disabled={!canSaveBasic}
+          >
+            💾 기본 설정 저장
+          </button>
         </div>
       </section>
 
@@ -252,6 +275,9 @@ const AdminStep1 = ({
       />
     <div className="wiz-section" style={{ marginTop: '28px' }}>
       <div className="wiz-section-title">테이블 구조</div>
+      <div className="admin-structure-auto-note">
+        테이블을 선택하면 Entity ID와 PK 컬럼을 자동으로 조회합니다. 등록된 메타데이터가 없는 경우 직접 입력할 수 있습니다.
+      </div>
       <div style={{ overflowX: 'auto' }}>
         <table className="data-table" style={{ fontSize: '0.82rem' }}>
           <thead><tr><th>Alias</th><th>Table</th><th>Entity ID</th><th>PK Column</th><th>Parent</th><th>FK Column</th><th>업데이트 키 (UPSERT)</th><th width="50">삭제</th></tr></thead>
@@ -260,7 +286,7 @@ const AdminStep1 = ({
               <tr key={i}>
                 <td>{i === 0 ? <b style={{ color: '#6366f1' }}>ROOT</b> : <input type="text" value={s.alias} onChange={e => handleStructAliasChange(i, e.target.value)} className="wiz-input-sm" />}</td>
                 <td style={{ minWidth: '200px' }}><MySelect options={tableList} value={s.table} onChange={v => handleStructTableChange(i, v)} placeholder="테이블 선택" /></td>
-                <td style={{ minWidth: '90px' }}><input type="text" value={s.ent_id || ''} onChange={e => { const next = [...structs]; next[i].ent_id = e.target.value.toUpperCase(); setStructs(next); }} placeholder="예: CM" className="wiz-input-sm" style={{ textTransform: 'uppercase' }} /></td>
+                <td style={{ minWidth: '120px' }}><input type="text" value={s.ent_id || ''} onChange={e => { const next = [...structs]; next[i].ent_id = e.target.value.toUpperCase(); setStructs(next); }} placeholder={s.table ? '자동 조회 결과 없음' : '예: CM'} title={s.table && !s.ent_id ? '이 테이블에 등록된 Entity ID를 찾지 못했습니다. 직접 입력할 수 있습니다.' : ''} className="wiz-input-sm" style={{ textTransform: 'uppercase' }} /></td>
                 <td style={{ minWidth: '180px' }}><MySelect options={colsCache[s.table] || []} value={s.pk_col} onChange={v => { const next = [...structs]; next[i].pk_col = v; setStructs(next); }} placeholder="PK 선택" /></td>
                 <td style={{ minWidth: '150px' }}>{i > 0 && <MySelect options={structs.map(x => x.alias)} value={s.parent} onChange={v => { const next = [...structs]; next[i].parent = v; setStructs(next); }} placeholder="부모" />}</td>
                 <td style={{ minWidth: '130px' }}>{i > 0 && <input type="text" value={s.fk} onChange={e => { const next = [...structs]; next[i].fk = e.target.value; setStructs(next); }} placeholder="FK 컬럼" className="wiz-input-sm" />}</td>

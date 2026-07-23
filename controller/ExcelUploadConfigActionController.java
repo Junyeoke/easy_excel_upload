@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 import javax.sql.DataSource;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -36,6 +38,7 @@ public class ExcelUploadConfigActionController {
 
     public void handleSave(DataSource ds, Map<String, Object> params,
             byte[] sampleFileBytes, String sampleFileOrgName,
+            HttpServletRequest request,
             Map<String, Object> result) throws Exception {
         Connection conn = null;
         try {
@@ -57,7 +60,9 @@ public class ExcelUploadConfigActionController {
             }
 
             if (!isUpdate) {
+                String creatorEmpId = requireCurrentEmpId(request);
                 uploadId = (String) ukeyObj.getClass().getMethod("fetchNewKey").invoke(ukeyObj);
+                params.put("reg_emp_id", creatorEmpId);
             }
 
             String savedSampleFileName = null;
@@ -90,6 +95,7 @@ public class ExcelUploadConfigActionController {
             Map<String, Object> configData = new LinkedHashMap<>();
             configData.put("upload_id", uploadId);
             configData.put("is_update", isUpdate);
+            configData.put("reg_emp_id", params.get("reg_emp_id"));
             configData.put("job_name", service.restore(decodeParam(params, "job_name_b64", "job_name")));
             configData.put("header_row", parseIntParam((String) params.get("header_row"), 1));
             configData.put("struct_json", service.restore(decodeParam(params, "struct_json_b64", "struct_json")));
@@ -128,19 +134,28 @@ public class ExcelUploadConfigActionController {
         }
     }
 
-    public void handleGetList(DataSource ds, Map<String, Object> result) throws Exception {
+    public void handleGetList(DataSource ds, HttpServletRequest request,
+            Map<String, Object> result) throws Exception {
         try (Connection conn = ds.getConnection()) {
             List<Map<String, Object>> list = repository.getConfigList(conn);
+            String currentEmpId = getSessionUserValue(request, "emp_id");
+            boolean isAdmin = isAdminUser(request);
+            for (Map<String, Object> row : list) {
+                row.put("can_delete", canDelete(currentEmpId, isAdmin, row.get("reg_emp_id")));
+            }
             result.put("status", "ok");
             result.put("list", list);
         }
     }
 
     public void handleGetDetail(DataSource ds, Map<String, Object> params,
+            HttpServletRequest request,
             Map<String, Object> result) throws Exception {
         try (Connection conn = ds.getConnection()) {
             Map<String, Object> row = repository.getConfigDetail(conn, (String) params.get("upload_id"));
             if (row != null) {
+                row.put("can_delete", canDelete(getSessionUserValue(request, "emp_id"),
+                        isAdminUser(request), row.get("reg_emp_id")));
                 result.put("status", "ok");
                 result.putAll(row);
             } else {
@@ -151,6 +166,7 @@ public class ExcelUploadConfigActionController {
     }
 
     public void handleDelete(DataSource ds, Map<String, Object> params,
+            HttpServletRequest request,
             Map<String, Object> result) throws Exception {
         String uploadId = (String) params.get("upload_id");
         if (uploadId == null || uploadId.trim().isEmpty()) {
@@ -160,8 +176,18 @@ public class ExcelUploadConfigActionController {
         }
         Connection conn = null;
         try {
+            String currentEmpId = requireCurrentEmpId(request);
+            boolean isAdmin = isAdminUser(request);
             conn = ds.getConnection();
             conn.setAutoCommit(false);
+            String creatorEmpId = repository.getConfigCreatorEmpId(conn, uploadId);
+            if (!canDelete(currentEmpId, isAdmin, creatorEmpId)) {
+                log.warn("[ExcelUpload] config delete denied (Upload ID: {}, emp_id: {})", uploadId, currentEmpId);
+                result.put("status", "err");
+                result.put("msg", "\uB85C\uB354 \uC0DD\uC131\uC790\uB098 \uAD00\uB9AC\uC790\uB9CC \uC0AD\uC81C\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.");
+                conn.rollback();
+                return;
+            }
             repository.deleteConfig(conn, uploadId);
             conn.commit();
             result.put("status", "ok");
@@ -182,6 +208,7 @@ public class ExcelUploadConfigActionController {
     }
 
     public void handleClone(DataSource ds, Map<String, Object> params,
+            HttpServletRequest request,
             Map<String, Object> result) throws Exception {
         String sourceId = (String) params.get("upload_id");
         if (sourceId == null || sourceId.trim().isEmpty()) {
@@ -191,6 +218,7 @@ public class ExcelUploadConfigActionController {
         }
         Connection conn = null;
         try {
+            String creatorEmpId = requireCurrentEmpId(request);
             String newId;
             try {
                 Class<?> ukClass = Class.forName("org.sdf.util.UniqueKey");
@@ -203,7 +231,7 @@ public class ExcelUploadConfigActionController {
             conn = ds.getConnection();
             conn.setAutoCommit(false);
             String nowFunc = repository.detectNowFunction(conn);
-            String clonedId = repository.cloneConfig(conn, sourceId, newId, nowFunc);
+            String clonedId = repository.cloneConfig(conn, sourceId, newId, nowFunc, creatorEmpId);
             conn.commit();
             result.put("status", "ok");
             result.put("msg", "복제 완료");
@@ -241,6 +269,50 @@ public class ExcelUploadConfigActionController {
 
     private String normalizeYn(String value) {
         return "Y".equalsIgnoreCase(trimToNull(value)) ? "Y" : "N";
+    }
+
+    private String requireCurrentEmpId(HttpServletRequest request) throws Exception {
+        String empId = getSessionUserValue(request, "emp_id");
+        if (empId == null) {
+            throw new Exception("\uB85C\uADF8\uC778 \uC0AC\uC6A9\uC790 \uC815\uBCF4(emp_id)\uB97C \uD655\uC778\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.");
+        }
+        return empId;
+    }
+
+    private boolean isAdminUser(HttpServletRequest request) {
+        return "1".equals(getSessionUserValue(request, "emp_admin_yn"));
+    }
+
+    private boolean canDelete(String currentEmpId, boolean isAdmin, Object creatorEmpId) {
+        if (isAdmin) {
+            return true;
+        }
+        String creator = creatorEmpId == null ? null : trimToNull(String.valueOf(creatorEmpId));
+        return currentEmpId != null && currentEmpId.equals(creator);
+    }
+
+    private String getSessionUserValue(HttpServletRequest request, String key) {
+        if (request == null || request.getSession(false) == null) {
+            return null;
+        }
+        Object sessionUser = request.getSession(false).getAttribute("egene.user");
+        Object value = null;
+        if (sessionUser instanceof Map) {
+            value = ((Map<?, ?>) sessionUser).get(key);
+        } else if (sessionUser != null) {
+            try {
+                value = sessionUser.getClass().getMethod("get", String.class).invoke(sessionUser, key);
+            } catch (Throwable ignore) {
+                try {
+                    value = sessionUser.getClass().getMethod("get", Object.class).invoke(sessionUser, key);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        if (value == null) {
+            value = request.getSession(false).getAttribute(key);
+        }
+        return value == null ? null : trimToNull(String.valueOf(value));
     }
 
     private File resolveSampleFileTarget(Map<String, Object> params, String uploadId, String downloadName) throws Exception {

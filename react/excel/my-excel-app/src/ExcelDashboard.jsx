@@ -19,6 +19,7 @@ const API_URL = '/api/excel/engine';
 const ACTIVE_UPLOAD_STATE_KEY = 'excel_upload_active_state_v1';
 const DETACHED_HEARTBEAT_STALE_MS = 9000;
 const DETACHED_PROGRESS_POLL_MS = 2000;
+const LOADER_PAGE_SIZE_OPTIONS = [5, 10, 20];
 
 const post = async (params) => {
   const body = new URLSearchParams();
@@ -48,9 +49,12 @@ const rate = (success, fail) => {
 const dt = (raw) => (!raw || raw === 'null' ? '-' : raw.substring(0, 16).replace('T', ' '));
 const dtShort = (raw) => (!raw || raw === 'null' ? '-' : raw.substring(5, 10));
 
-const Stat = ({ label, value, desc }) => (
-  <div className="itsm-stat">
-    <div className="itsm-stat-label">{label}</div>
+const Stat = ({ label, value, desc, tone = 'neutral' }) => (
+  <div className={`itsm-stat ${tone}`}>
+    <div className="itsm-stat-top">
+      <div className="itsm-stat-label">{label}</div>
+      <span className="itsm-stat-indicator" aria-hidden="true" />
+    </div>
     <div className="itsm-stat-value">{value}</div>
     <div className="itsm-stat-desc">{desc}</div>
   </div>
@@ -79,6 +83,8 @@ export default function ExcelDashboard() {
   const [error, setError] = useState('');
   const [actionMsg, setActionMsg] = useState(null);
   const [loaderQuery, setLoaderQuery] = useState('');
+  const [loaderPage, setLoaderPage] = useState(1);
+  const [loaderPageSize, setLoaderPageSize] = useState(20);
   const [histPeriod, setHistPeriod] = useState('all');
   const [histStatus, setHistStatus] = useState('all');
   const [histKeyword, setHistKeyword] = useState('');
@@ -146,6 +152,20 @@ export default function ExcelDashboard() {
     );
   }, [loaders, loaderQuery]);
 
+  const loaderTotalPages = Math.max(1, Math.ceil(filteredLoaders.length / loaderPageSize));
+  const loaderPageStart = (loaderPage - 1) * loaderPageSize;
+  const pagedLoaders = filteredLoaders.slice(loaderPageStart, loaderPageStart + loaderPageSize);
+  const loaderVisibleStart = filteredLoaders.length === 0 ? 0 : loaderPageStart + 1;
+  const loaderVisibleEnd = Math.min(filteredLoaders.length, loaderPageStart + loaderPageSize);
+
+  useEffect(() => {
+    setLoaderPage(1);
+  }, [loaderQuery, loaderPageSize]);
+
+  useEffect(() => {
+    if (loaderPage > loaderTotalPages) setLoaderPage(loaderTotalPages);
+  }, [loaderPage, loaderTotalPages]);
+
   const parseFailTypeJson = (raw) => {
     if (!raw || typeof raw !== 'string') return {};
     try {
@@ -186,6 +206,10 @@ export default function ExcelDashboard() {
   const totalFail = selectedHistory.reduce((a, h) => a + (h.fail_cnt ?? 0), 0);
   const totalRuns = selectedHistory.length;
   const successPct = rate(totalSuccess, totalFail);
+  const totalProcessed = totalSuccess + totalFail;
+  const failPct = totalProcessed === 0 ? 0 : Number(((totalFail / totalProcessed) * 100).toFixed(1));
+  const healthTone = totalRuns === 0 ? 'idle' : failPct >= 20 ? 'danger' : failPct > 0 ? 'warning' : 'ok';
+  const healthLabel = totalRuns === 0 ? '이력 없음' : failPct >= 20 ? '점검 필요' : failPct > 0 ? '오류 발생' : '정상';
 
   const timelineData = [...selectedHistory]
     .slice(0, 15)
@@ -229,6 +253,13 @@ export default function ExcelDashboard() {
       .sort((a, b) => b.value - a.value)
       .slice(0, 8);
   }, [selectedHistory]);
+
+  const compareSelectedRows = useMemo(
+    () => compareHistIds
+      .map((id) => selectedHistory.find((h) => h.hist_id === id))
+      .filter(Boolean),
+    [compareHistIds, selectedHistory]
+  );
 
   const loadHistoryCompare = async () => {
     if (compareHistIds.length !== 2) return;
@@ -442,57 +473,102 @@ export default function ExcelDashboard() {
     <div className="itsm-wrap">
       <style>{`
         * { box-sizing: border-box; }
-        .itsm-wrap { min-height: 100vh; background: #f4f6f8; color: #1f2937; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; }
-        .itsm-header { height: 64px; background: #fff; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
-        .itsm-head-title { font-size: 18px; font-weight: 700; color: #111827; }
-        .itsm-head-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
-        .itsm-top-actions { display: flex; gap: 8px; align-items: center; }
-        .itsm-btn { border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #374151; height: 34px; padding: 0 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
-        .itsm-btn.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
-        .itsm-layout { height: calc(100vh - 64px); display: grid; grid-template-columns: 290px 1fr; }
-        .itsm-side { border-right: 1px solid #e5e7eb; background: #fff; display: flex; flex-direction: column; }
-        .itsm-side-head { padding: 14px; border-bottom: 1px solid #f0f2f4; display: flex; flex-direction: column; gap: 8px; }
-        .itsm-side-title { font-size: 12px; font-weight: 700; color: #4b5563; text-transform: uppercase; letter-spacing: .04em; }
-        .itsm-search { width: 100%; height: 34px; border: 1px solid #d1d5db; border-radius: 6px; padding: 0 10px; font-size: 13px; }
-        .itsm-alert { margin: 10px 14px 0; border: 1px solid; border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.5; }
+        .itsm-wrap { min-height: 100vh; background: #eef2f5; color: #1f2937; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; }
+        .itsm-header { min-height: 68px; background: #ffffff; border-bottom: 1px solid #d8dee6; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 22px; box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03); }
+        .itsm-head-title { font-size: 19px; font-weight: 800; color: #0f172a; line-height: 1.25; }
+        .itsm-head-sub { font-size: 12px; color: #64748b; margin-top: 3px; }
+        .itsm-top-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+        .itsm-count-pill { display: inline-flex; align-items: center; height: 30px; padding: 0 11px; border: 1px solid #dbe3ec; border-radius: 999px; background: #f8fafc; color: #475569; font-size: 12px; font-weight: 700; white-space: nowrap; }
+        .itsm-btn { border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334155; height: 34px; padding: 0 12px; font-size: 12px; font-weight: 700; cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, background .16s ease, transform .16s ease; }
+        .itsm-btn:hover:not(:disabled) { border-color: #64748b; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08); }
+        .itsm-btn:disabled { opacity: .55; cursor: not-allowed; }
+        .itsm-btn.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; box-shadow: 0 6px 14px rgba(29, 78, 216, .18); }
+        .itsm-btn.primary:hover { background: #1e40af; border-color: #1e40af; }
+        .itsm-layout { height: calc(100vh - 68px); display: grid; grid-template-columns: 304px 1fr; }
+        .itsm-side { border-right: 1px solid #d8dee6; background: #fbfcfe; display: flex; flex-direction: column; min-width: 0; }
+        .itsm-side-head { padding: 14px; border-bottom: 1px solid #e6ebf1; display: flex; flex-direction: column; gap: 9px; }
+        .itsm-side-title { font-size: 12px; font-weight: 800; color: #334155; text-transform: uppercase; letter-spacing: .04em; }
+        .itsm-search { width: 100%; height: 36px; border: 1px solid #cbd5e1; border-radius: 7px; padding: 0 11px; font-size: 13px; background: #fff; color: #0f172a; outline: none; }
+        .itsm-search:focus, .itsm-filter-select:focus, .itsm-filter-input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+        .itsm-alert { margin: 10px 14px 0; border: 1px solid; border-radius: 7px; padding: 9px 10px; font-size: 12px; line-height: 1.5; font-weight: 600; }
         .itsm-alert.ok { background: #f0fdf4; border-color: #86efac; color: #166534; }
         .itsm-alert.err { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
-        .itsm-loader-list { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-        .itsm-loader-item { border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; cursor: pointer; background: #fff; }
-        .itsm-loader-item:hover { border-color: #9ca3af; }
-        .itsm-loader-item.active { border-color: #2563eb; background: #eff6ff; }
-        .itsm-loader-title { font-size: 13px; font-weight: 700; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .itsm-loader-meta { margin-top: 3px; font-size: 11px; color: #6b7280; }
-        .itsm-loader-actions { display: flex; gap: 6px; margin-top: 8px; }
-        .itsm-mini-btn { flex: 1; height: 26px; border-radius: 5px; border: 1px solid #d1d5db; background: #fff; font-size: 11px; color: #374151; cursor: pointer; }
-        .itsm-mini-btn.danger { color: #b91c1c; border-color: #fecaca; background: #fff5f5; }
-        .itsm-main { overflow-y: auto; padding: 18px; }
-        .itsm-empty { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 60px 20px; text-align: center; color: #6b7280; font-size: 14px; }
-        .itsm-panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; }
-        .itsm-main-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; gap: 10px; }
-        .itsm-main-title { font-size: 20px; font-weight: 700; color: #111827; line-height: 1.3; }
-        .itsm-main-meta { margin-top: 4px; font-size: 12px; color: #6b7280; }
-        .itsm-head-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-        .itsm-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
-        .itsm-stat { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #fff; min-height: 96px; display: flex; flex-direction: column; justify-content: space-between; }
-        .itsm-stat-label { font-size: 12px; color: #6b7280; }
-        .itsm-stat-value { font-size: 24px; font-weight: 700; color: #111827; line-height: 1.1; }
-        .itsm-stat-desc { font-size: 12px; color: #6b7280; }
-        .itsm-grid-2 { display: grid; grid-template-columns: 1fr 340px; gap: 10px; margin-bottom: 10px; }
-        .itsm-chart-title { font-size: 13px; font-weight: 700; color: #374151; margin-bottom: 8px; }
-        .itsm-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-        .itsm-filter-select, .itsm-filter-input { height: 32px; border: 1px solid #d1d5db; border-radius: 6px; padding: 0 10px; font-size: 12px; color: #374151; background: #fff; }
-        .itsm-filter-input { min-width: 180px; }
-        .itsm-tip { background: #fff; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 10px; font-size: 12px; }
+        .itsm-loader-list { overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+        .itsm-loader-pager { border-top: 1px solid #e6ebf1; padding: 10px; background: #fff; display: flex; flex-direction: column; gap: 8px; }
+        .itsm-loader-pager-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: #64748b; }
+        .itsm-loader-pager-actions { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+        .itsm-loader-page-btn { height: 30px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334155; font-size: 11px; font-weight: 800; cursor: pointer; }
+        .itsm-loader-page-btn:disabled { color: #94a3b8; background: #f8fafc; cursor: not-allowed; }
+        .itsm-loader-page-now { min-width: 72px; text-align: center; color: #0f172a; font-size: 12px; font-weight: 800; }
+        .itsm-loader-page-size { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-weight: 700; }
+        .itsm-loader-page-size select { height: 28px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334155; font-size: 11px; font-weight: 800; padding: 0 6px; outline: none; }
+        .itsm-loader-page-size select:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+        .itsm-loader-item { border: 1px solid #dfe6ee; border-radius: 8px; padding: 11px; cursor: pointer; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03); transition: border-color .16s ease, box-shadow .16s ease, background .16s ease; }
+        .itsm-loader-item:hover { border-color: #94a3b8; box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08); }
+        .itsm-loader-item.active { border-color: #2563eb; background: #eff6ff; box-shadow: inset 3px 0 0 #2563eb, 0 8px 18px rgba(37, 99, 235, 0.10); }
+        .itsm-loader-title { font-size: 13px; font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .itsm-loader-meta { margin-top: 4px; font-size: 11px; color: #64748b; }
+        .itsm-loader-actions { display: flex; gap: 6px; margin-top: 10px; }
+        .itsm-mini-btn { flex: 1; height: 28px; border-radius: 6px; border: 1px solid #cbd5e1; background: #fff; font-size: 11px; font-weight: 700; color: #334155; cursor: pointer; }
+        .itsm-mini-btn:hover { border-color: #64748b; }
+        .itsm-mini-btn.danger { color: #b91c1c; border-color: #fecaca; background: #fff7f7; }
+        .itsm-main { overflow-y: auto; padding: 20px; min-width: 0; }
+        .itsm-empty { background: #fff; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 52px 20px; text-align: center; color: #64748b; font-size: 14px; }
+        .itsm-panel { background: #fff; border: 1px solid #dfe6ee; border-radius: 8px; padding: 16px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }
+        .itsm-hero-panel { border-top: 4px solid #1d4ed8; }
+        .itsm-main-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+        .itsm-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .itsm-main-title { font-size: 21px; font-weight: 800; color: #0f172a; line-height: 1.3; }
+        .itsm-main-meta { margin-top: 5px; font-size: 12px; color: #64748b; }
+        .itsm-health { display: inline-flex; align-items: center; height: 24px; border-radius: 999px; padding: 0 9px; font-size: 11px; font-weight: 800; border: 1px solid transparent; }
+        .itsm-health.ok { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+        .itsm-health.warning { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
+        .itsm-health.danger { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+        .itsm-health.idle { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+        .itsm-head-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+        .itsm-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 14px 0 12px; }
+        .itsm-stat { border: 1px solid #dfe6ee; border-radius: 8px; padding: 13px; background: #fff; min-height: 104px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: inset 0 3px 0 #cbd5e1; }
+        .itsm-stat.success { box-shadow: inset 0 3px 0 #22c55e; }
+        .itsm-stat.danger { box-shadow: inset 0 3px 0 #ef4444; }
+        .itsm-stat.info { box-shadow: inset 0 3px 0 #2563eb; }
+        .itsm-stat.warning { box-shadow: inset 0 3px 0 #f59e0b; }
+        .itsm-stat-label { font-size: 12px; color: #64748b; font-weight: 700; }
+        .itsm-stat-value { font-size: 25px; font-weight: 800; color: #0f172a; line-height: 1.1; }
+        .itsm-stat-desc { font-size: 12px; color: #64748b; }
+        .itsm-grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; margin-bottom: 12px; }
+        .itsm-chart-title { font-size: 13px; font-weight: 800; color: #334155; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        .itsm-chart-title::before { content: ''; width: 6px; height: 18px; border-radius: 999px; background: #2563eb; display: inline-block; }
+        .itsm-filter-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+        .itsm-filter-select, .itsm-filter-input { height: 34px; border: 1px solid #cbd5e1; border-radius: 7px; padding: 0 10px; font-size: 12px; color: #334155; background: #fff; outline: none; }
+        .itsm-filter-input { min-width: 210px; flex: 1; }
+        .itsm-tip { background: #fff; border: 1px solid #cbd5e1; border-radius: 7px; padding: 8px 10px; font-size: 12px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12); }
         .itsm-tip-title { font-weight: 700; margin-bottom: 6px; color: #111827; }
         .itsm-tip-row { display: flex; justify-content: space-between; gap: 8px; color: #4b5563; }
-        .itsm-table-head { display: grid; grid-template-columns: 40px 1fr 84px 84px 110px 100px; gap: 8px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; font-weight: 700; }
-        .itsm-table-body { max-height: 320px; overflow-y: auto; }
-        .itsm-row { display: grid; grid-template-columns: 40px 1fr 84px 84px 110px 100px; gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid #f3f4f6; }
+        .itsm-table-head { display: grid; grid-template-columns: 40px 1fr 84px 84px 110px 100px; gap: 8px; padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 8px 8px 0 0; background: #f8fafc; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: .03em; font-weight: 800; }
+        .itsm-table-body { max-height: 360px; overflow-y: auto; border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 8px 8px; }
+        .itsm-row { display: grid; grid-template-columns: 40px 1fr 84px 84px 110px 100px; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid #f1f5f9; background: #fff; }
+        .itsm-row:hover { background: #f8fafc; }
         .itsm-row.compare-on { background: #f0f9ff; }
-        .itsm-compare-panel { margin-top: 10px; border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 8px; padding: 10px; font-size: 12px; color: #1e3a8a; }
+        .itsm-compare-guide { margin-bottom: 12px; border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 8px; padding: 12px; font-size: 12px; color: #1e3a8a; display: flex; flex-direction: column; gap: 8px; }
+        .itsm-compare-guide strong { font-size: 13px; color: #1e40af; }
+        .itsm-compare-steps { display: flex; flex-wrap: wrap; gap: 8px; }
+        .itsm-compare-step { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #bfdbfe; background: #fff; border-radius: 999px; padding: 4px 9px; font-weight: 700; color: #1d4ed8; }
+        .itsm-compare-step-num { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #2563eb; color: #fff; font-size: 10px; }
+        .itsm-compare-selection { margin-bottom: 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .itsm-compare-selection-card { border: 1px solid #dbeafe; border-radius: 8px; background: #f8fbff; padding: 10px; min-height: 72px; }
+        .itsm-compare-selection-label { font-size: 11px; font-weight: 800; color: #1d4ed8; margin-bottom: 4px; }
+        .itsm-compare-selection-main { font-size: 12px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .itsm-compare-selection-meta { margin-top: 3px; font-size: 11px; color: #64748b; }
+        .itsm-snapshot-hash { display: inline-flex; justify-content: center; min-width: 74px; max-width: 100%; padding: 3px 7px; border-radius: 999px; background: #f1f5f9; color: #475569; font-size: 11px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .itsm-compare-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
         .itsm-compare-badge { border: 1px solid #93c5fd; background: #fff; color: #1d4ed8; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
+        .itsm-compare-result-note { border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; font-size: 12px; font-weight: 700; }
+        .itsm-compare-result-note.ok { border: 1px solid #bbf7d0; background: #f0fdf4; color: #166534; }
+        .itsm-compare-result-note.warn { border: 1px solid #fed7aa; background: #fff7ed; color: #9a3412; }
+        .itsm-modal-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+        .itsm-modal-summary-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; background: #f8fafc; }
+        .itsm-modal-summary-label { font-size: 11px; color: #64748b; font-weight: 700; }
+        .itsm-modal-summary-value { margin-top: 3px; font-size: 18px; color: #0f172a; font-weight: 800; }
         .itsm-diff-list { margin-top: 8px; max-height: 220px; overflow-y: auto; border: 1px solid #bfdbfe; border-radius: 6px; background: #fff; }
         .itsm-diff-row { display: grid; grid-template-columns: 70px 1fr 1fr; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #dbeafe; font-size: 11px; color: #1f2937; }
         .itsm-diff-row:last-child { border-bottom: none; }
@@ -506,6 +582,8 @@ export default function ExcelDashboard() {
         .itsm-modal-close { height: 30px; padding: 0 10px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #374151; cursor: pointer; font-size: 12px; font-weight: 700; }
         .itsm-file { font-size: 13px; color: #1f2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .itsm-time { margin-top: 3px; font-size: 11px; color: #6b7280; }
+        .itsm-history-upload-id { margin-top: 4px; display: inline-flex; max-width: 100%; align-items: center; gap: 4px; border: 1px solid #dbeafe; border-radius: 999px; background: #eff6ff; color: #1d4ed8; padding: 2px 7px; font-size: 11px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+        .itsm-history-upload-id span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         .itsm-badge { display: inline-flex; justify-content: center; min-width: 58px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
         .itsm-badge.ok { background: #dcfce7; color: #166534; }
         .itsm-badge.err { background: #fee2e2; color: #991b1b; }
@@ -513,7 +591,7 @@ export default function ExcelDashboard() {
         .itsm-badge.attempt { margin-top: 5px; min-width: 0; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
         .itsm-link { font-size: 12px; color: #2563eb; text-decoration: none; font-weight: 600; }
         .itsm-placeholder { color: #9ca3af; font-size: 12px; }
-        .itsm-floating-progress { position: fixed; right: 20px; bottom: 20px; width: min(360px, calc(100vw - 24px)); background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.2); z-index: 3500; overflow: hidden; }
+        .itsm-floating-progress { position: fixed; right: 20px; bottom: 20px; width: min(360px, calc(100vw - 24px)); background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 18px 36px rgba(15, 23, 42, 0.22); z-index: 3500; overflow: hidden; }
         .itsm-floating-progress-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #e5e7eb; background: #f8fafc; }
         .itsm-floating-progress-title { font-size: 12px; font-weight: 700; color: #111827; }
         .itsm-floating-progress-close { border: 0; background: transparent; font-size: 14px; color: #64748b; cursor: pointer; line-height: 1; }
@@ -529,15 +607,147 @@ export default function ExcelDashboard() {
           .itsm-stats { grid-template-columns: repeat(2, 1fr); }
           .itsm-grid-2 { grid-template-columns: 1fr; }
         }
+        @media (max-width: 860px) {
+          .itsm-header { align-items: flex-start; flex-direction: column; }
+          .itsm-top-actions { justify-content: flex-start; }
+          .itsm-layout { height: auto; min-height: calc(100vh - 68px); grid-template-columns: 1fr; }
+          .itsm-side { max-height: 320px; border-right: 0; border-bottom: 1px solid #d8dee6; }
+          .itsm-main { padding: 14px; }
+          .itsm-main-head { flex-direction: column; }
+          .itsm-head-actions { justify-content: flex-start; }
+          .itsm-stats { grid-template-columns: 1fr; }
+          .itsm-compare-selection, .itsm-modal-summary { grid-template-columns: 1fr; }
+          .itsm-table-head, .itsm-row { grid-template-columns: 34px minmax(160px, 1fr) 64px 64px 82px 86px; min-width: 680px; }
+          .itsm-table-body, .itsm-table-head { overflow: visible; }
+        }
+      `}</style>
+
+      <style>{`
+        :root {
+          --dash-ink: #17202a;
+          --dash-muted: #667085;
+          --dash-line: #e4e7ec;
+          --dash-soft: #f6f7f9;
+          --dash-brand: #176b5b;
+          --dash-brand-dark: #105247;
+          --dash-brand-soft: #eaf6f2;
+          --dash-coral: #dc664d;
+          --dash-yellow: #e5a930;
+        }
+        .itsm-wrap { background: #f4f5f7; color: var(--dash-ink); }
+        .itsm-header { min-height: 76px; padding: 0 28px; background: rgba(255,255,255,.96); border-bottom-color: var(--dash-line); box-shadow: none; position: relative; z-index: 5; }
+        .itsm-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .itsm-brand-mark { width: 38px; height: 38px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 8px; background: var(--dash-brand); color: #fff; font-size: 13px; font-weight: 900; letter-spacing: 0; box-shadow: 0 7px 16px rgba(23,107,91,.2); }
+        .itsm-head-title { font-size: 17px; font-weight: 800; color: var(--dash-ink); letter-spacing: 0; }
+        .itsm-head-sub { margin-top: 2px; color: #7b8492; font-size: 11px; }
+        .itsm-count-pill { height: 34px; border-radius: 7px; background: var(--dash-soft); border-color: var(--dash-line); color: #525d6b; }
+        .itsm-btn { height: 36px; border-radius: 7px; border-color: #d0d5dd; color: #344054; background: #fff; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
+        .itsm-btn:hover:not(:disabled) { border-color: #98a2b3; background: #fafafa; box-shadow: 0 2px 5px rgba(16,24,40,.08); transform: translateY(-1px); }
+        .itsm-btn.primary { background: var(--dash-brand); border-color: var(--dash-brand); box-shadow: 0 5px 12px rgba(23,107,91,.16); }
+        .itsm-btn.primary:hover { background: var(--dash-brand-dark); border-color: var(--dash-brand-dark); }
+        .itsm-layout { height: calc(100vh - 76px); grid-template-columns: 300px minmax(0, 1fr); }
+        .itsm-side { background: #fff; border-right-color: var(--dash-line); }
+        .itsm-side-head { padding: 20px 16px 14px; border-bottom: 0; gap: 12px; }
+        .itsm-side-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        .itsm-side-title { color: var(--dash-ink); font-size: 13px; text-transform: none; letter-spacing: 0; }
+        .itsm-side-count { min-width: 26px; height: 22px; padding: 0 7px; display: inline-grid; place-items: center; border-radius: 999px; background: var(--dash-brand-soft); color: var(--dash-brand); font-size: 11px; font-weight: 800; }
+        .itsm-search-wrap { position: relative; }
+        .itsm-search-wrap::before { content: ''; position: absolute; left: 12px; top: 50%; width: 12px; height: 12px; border: 1.8px solid #8b95a3; border-radius: 50%; transform: translateY(-58%); pointer-events: none; }
+        .itsm-search-wrap::after { content: ''; position: absolute; left: 22px; top: 23px; width: 6px; height: 1.8px; border-radius: 2px; background: #8b95a3; transform: rotate(45deg); pointer-events: none; }
+        .itsm-search { height: 40px; border-radius: 7px; border-color: #d0d5dd; background: #f9fafb; padding-left: 37px; }
+        .itsm-search:focus, .itsm-filter-select:focus, .itsm-filter-input:focus { border-color: var(--dash-brand); box-shadow: 0 0 0 3px rgba(23,107,91,.12); background: #fff; }
+        .itsm-loader-list { padding: 4px 10px 12px; gap: 4px; }
+        .itsm-loader-item { position: relative; padding: 12px 12px 11px 14px; border: 1px solid transparent; border-radius: 7px; box-shadow: none; background: transparent; }
+        .itsm-loader-item::before { content: ''; position: absolute; left: 0; top: 11px; bottom: 11px; width: 3px; border-radius: 3px; background: transparent; }
+        .itsm-loader-item:hover { border-color: #e4e7ec; background: #f8f9fa; box-shadow: none; }
+        .itsm-loader-item.active { border-color: #cce3dd; background: var(--dash-brand-soft); box-shadow: none; }
+        .itsm-loader-item.active::before { background: var(--dash-brand); }
+        .itsm-loader-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .itsm-loader-title { color: #27313c; font-size: 13px; }
+        .itsm-loader-item.active .itsm-loader-title { color: var(--dash-brand-dark); }
+        .itsm-loader-run { flex: 0 0 auto; color: #697586; font-size: 10px; font-weight: 700; }
+        .itsm-loader-meta-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: #7a8491; font-size: 10px; min-width: 0; }
+        .itsm-loader-meta-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .itsm-loader-meta-row i { width: 3px; height: 3px; flex: 0 0 auto; border-radius: 50%; background: #b8c0ca; }
+        .itsm-loader-actions { max-height: 0; overflow: hidden; opacity: 0; margin-top: 0; transition: max-height .18s ease, opacity .18s ease, margin .18s ease; }
+        .itsm-loader-item:hover .itsm-loader-actions, .itsm-loader-item.active .itsm-loader-actions { max-height: 30px; opacity: 1; margin-top: 9px; }
+        .itsm-mini-btn { height: 27px; border-radius: 6px; background: rgba(255,255,255,.8); color: #475467; }
+        .itsm-loader-pager { padding: 11px 12px 14px; border-top-color: var(--dash-line); }
+        .itsm-loader-page-btn, .itsm-loader-page-size select { border-radius: 6px; border-color: #d0d5dd; }
+        .itsm-main { padding: 24px 28px 40px; background: #f4f5f7; }
+        .itsm-main > * { max-width: 1500px; margin-left: auto; margin-right: auto; }
+        .itsm-panel { border-color: var(--dash-line); border-radius: 8px; box-shadow: 0 1px 2px rgba(16,24,40,.03); padding: 18px; }
+        .itsm-hero-panel { position: relative; overflow: hidden; padding: 22px 24px; border-top: 1px solid var(--dash-line); background: #fff; }
+        .itsm-hero-panel::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--dash-brand); }
+        .itsm-eyebrow { margin-bottom: 6px; color: var(--dash-brand); font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
+        .itsm-main-title { font-size: 22px; color: var(--dash-ink); letter-spacing: 0; }
+        .itsm-main-meta { color: #697586; }
+        .itsm-health { gap: 6px; height: 26px; border-radius: 6px; padding: 0 9px; }
+        .itsm-health::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        .itsm-health.ok { background: #eaf7ef; color: #177245; border-color: #cdebd9; }
+        .itsm-health.warning { background: #fff7e8; color: #9a6700; border-color: #f4dfad; }
+        .itsm-health.danger { background: #fff0ed; color: #b5422d; border-color: #f2d0c9; }
+        .itsm-stats { gap: 10px; margin: 12px 0; }
+        .itsm-stat { min-height: 116px; border-color: var(--dash-line); border-radius: 8px; padding: 15px 16px; box-shadow: none; }
+        .itsm-stat-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .itsm-stat-label { color: #667085; font-size: 11px; }
+        .itsm-stat-indicator { width: 8px; height: 8px; border-radius: 50%; background: #98a2b3; box-shadow: 0 0 0 4px #f2f4f7; }
+        .itsm-stat.info .itsm-stat-indicator { background: #3976a8; box-shadow: 0 0 0 4px #eaf2f8; }
+        .itsm-stat.success .itsm-stat-indicator { background: var(--dash-brand); box-shadow: 0 0 0 4px var(--dash-brand-soft); }
+        .itsm-stat.danger .itsm-stat-indicator { background: var(--dash-coral); box-shadow: 0 0 0 4px #fff0ed; }
+        .itsm-stat.warning .itsm-stat-indicator { background: var(--dash-yellow); box-shadow: 0 0 0 4px #fff7e8; }
+        .itsm-stat-value { margin-top: 8px; font-size: 27px; letter-spacing: 0; }
+        .itsm-stat-desc { color: #98a2b3; font-size: 10px; }
+        .itsm-grid-2 { grid-template-columns: minmax(0, 1.55fr) minmax(300px, .65fr); gap: 10px; margin-bottom: 10px; }
+        .itsm-chart-title { margin-bottom: 14px; color: #344054; font-size: 12px; }
+        .itsm-chart-title::before { width: 3px; height: 14px; border-radius: 2px; background: var(--dash-brand); }
+        .itsm-filter-row { padding: 10px 0 14px; margin-bottom: 0; border: 0; border-bottom: 1px solid #eef0f2; border-radius: 0; background: transparent; }
+        .itsm-filter-select, .itsm-filter-input { border-radius: 6px; border-color: #d0d5dd; }
+        .itsm-compare-guide { margin-top: 14px; border-color: #cce3dd; background: #f3faf7; color: #315f55; }
+        .itsm-compare-guide strong { color: var(--dash-brand-dark); }
+        .itsm-compare-step { border-color: #d5e9e4; color: var(--dash-brand); border-radius: 6px; }
+        .itsm-compare-step-num { background: var(--dash-brand); }
+        .itsm-table-head { background: #f7f8fa; border-color: var(--dash-line); color: #667085; letter-spacing: 0; }
+        .itsm-table-body { border-color: var(--dash-line); }
+        .itsm-row:hover { background: #fafbfb; }
+        .itsm-row.compare-on { background: #f0f8f5; }
+        .itsm-history-upload-id { border-color: #d7e9e5; background: #f1f8f6; color: var(--dash-brand); border-radius: 5px; }
+        .itsm-badge { border-radius: 5px; }
+        .itsm-badge.ok { background: #eaf7ef; color: #177245; }
+        .itsm-badge.err { background: #fff0ed; color: #b5422d; }
+        .itsm-snapshot-hash { border-radius: 5px; }
+        .itsm-link { color: var(--dash-brand); }
+        .itsm-empty { border-color: #d0d5dd; background: rgba(255,255,255,.7); }
+        @media (max-width: 1280px) {
+          .itsm-layout { grid-template-columns: 260px minmax(0, 1fr); }
+          .itsm-main { padding: 20px; }
+        }
+        @media (max-width: 860px) {
+          .itsm-header { padding: 12px 16px; min-height: 76px; }
+          .itsm-layout { height: auto; }
+          .itsm-side { max-height: 390px; }
+          .itsm-main { padding: 14px 12px 28px; }
+          .itsm-hero-panel { padding: 18px; }
+          .itsm-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (max-width: 520px) {
+          .itsm-top-actions { width: 100%; }
+          .itsm-count-pill { display: none; }
+          .itsm-top-actions .itsm-btn { flex: 1; }
+          .itsm-stats { grid-template-columns: 1fr; }
+        }
       `}</style>
 
       <header className="itsm-header">
-        <div>
-          <div className="itsm-head-title">Excel Loader 운영 대시보드</div>
-          <div className="itsm-head-sub">ITSM 배치 업로드 현황 모니터링</div>
+        <div className="itsm-brand">
+          <div className="itsm-brand-mark" aria-hidden="true">XL</div>
+          <div>
+            <div className="itsm-head-title">Excel Loader</div>
+            <div className="itsm-head-sub">운영 현황과 실행 품질을 한눈에 확인하세요</div>
+          </div>
         </div>
         <div className="itsm-top-actions">
-          <span style={{ fontSize: 12, color: '#6b7280' }}>로더 {fmt(loaders.length)}개 / 실행 {fmt(history.length)}회</span>
+          <span className="itsm-count-pill">로더 {fmt(loaders.length)}개 / 실행 {fmt(history.length)}회</span>
           <button className="itsm-btn primary" onClick={() => (window.location.href = '?admin=true')}>+ 새 로더</button>
         </div>
       </header>
@@ -545,13 +755,18 @@ export default function ExcelDashboard() {
       <section className="itsm-layout">
         <aside className="itsm-side">
           <div className="itsm-side-head">
-            <div className="itsm-side-title">로더 목록</div>
-            <input
-              className="itsm-search"
-              value={loaderQuery}
-              onChange={(e) => setLoaderQuery(e.target.value)}
-              placeholder="작업명 또는 ID 검색"
-            />
+            <div className="itsm-side-heading">
+              <div className="itsm-side-title">로더 목록</div>
+              <span className="itsm-side-count">{fmt(filteredLoaders.length)}</span>
+            </div>
+            <div className="itsm-search-wrap">
+              <input
+                className="itsm-search"
+                value={loaderQuery}
+                onChange={(e) => setLoaderQuery(e.target.value)}
+                placeholder="작업명 또는 ID 검색"
+              />
+            </div>
           </div>
 
           {actionMsg && (
@@ -568,24 +783,67 @@ export default function ExcelDashboard() {
             ) : filteredLoaders.length === 0 ? (
               <div className="itsm-empty" style={{ padding: 40 }}>조회된 로더가 없습니다.</div>
             ) : (
-              filteredLoaders.map((loader) => {
+              pagedLoaders.map((loader) => {
                 const runCount = history.filter((h) => h.job_name === loader.job_name).length;
                 const active = selected?.upload_id === loader.upload_id;
                 return (
                   <div key={loader.upload_id} className={`itsm-loader-item ${active ? 'active' : ''}`} onClick={() => setSelected(loader)}>
-                    <div className="itsm-loader-title">{loader.job_name || '(이름 없음)'}</div>
-                    <div className="itsm-loader-meta">실행 {fmt(runCount)}회</div>
-                    <div className="itsm-loader-meta">등록 {dt(loader.reg_dttm)}</div>
-                    <div className="itsm-loader-meta">ID {loader.upload_id?.substring(0, 14)}...</div>
+                    <div className="itsm-loader-title-row">
+                      <div className="itsm-loader-title">{loader.job_name || '(이름 없음)'}</div>
+                      <span className="itsm-loader-run">{fmt(runCount)}회</span>
+                    </div>
+                    <div className="itsm-loader-meta-row">
+                      <span>{dt(loader.reg_dttm)}</span>
+                      <i aria-hidden="true" />
+                      <span title={loader.upload_id}>ID {loader.upload_id?.substring(0, 10)}...</span>
+                    </div>
                     <div className="itsm-loader-actions" onClick={(e) => e.stopPropagation()}>
                       <button className="itsm-mini-btn" onClick={() => handleCloneLoader(loader)}>복제</button>
-                      <button className="itsm-mini-btn danger" onClick={() => handleDeleteLoader(loader)}>삭제</button>
+                      {loader.can_delete === true && (
+                        <button className="itsm-mini-btn danger" onClick={() => handleDeleteLoader(loader)}>삭제</button>
+                      )}
                     </div>
                   </div>
                 );
               })
             )}
           </div>
+          {!loading && filteredLoaders.length > 0 && (
+            <div className="itsm-loader-pager">
+              <div className="itsm-loader-pager-meta">
+                <span>{fmt(loaderVisibleStart)}-{fmt(loaderVisibleEnd)} 표시 / 전체 {fmt(filteredLoaders.length)}개</span>
+                <label className="itsm-loader-page-size">
+                  <span>보기</span>
+                  <select
+                    value={loaderPageSize}
+                    onChange={(e) => setLoaderPageSize(Number(e.target.value))}
+                    aria-label="로더 목록 페이지 표시 개수"
+                  >
+                    {LOADER_PAGE_SIZE_OPTIONS.map((size) => (
+                      <option key={size} value={size}>{size}개씩</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="itsm-loader-pager-actions">
+                <button
+                  className="itsm-loader-page-btn"
+                  onClick={() => setLoaderPage((p) => Math.max(1, p - 1))}
+                  disabled={loaderPage <= 1}
+                >
+                  이전
+                </button>
+                <span className="itsm-loader-page-now">{loaderPage} / {loaderTotalPages}</span>
+                <button
+                  className="itsm-loader-page-btn"
+                  onClick={() => setLoaderPage((p) => Math.min(loaderTotalPages, p + 1))}
+                  disabled={loaderPage >= loaderTotalPages}
+                >
+                  다음
+                </button>
+              </div>
+            </div>
+          )}
         </aside>
 
         <main className="itsm-main">
@@ -593,12 +851,16 @@ export default function ExcelDashboard() {
             <div className="itsm-empty">좌측에서 로더를 선택하세요.</div>
           ) : (
             <>
-              <div className="itsm-panel" style={{ marginBottom: 10 }}>
+              <div className="itsm-panel itsm-hero-panel" style={{ marginBottom: 10 }}>
                 <div className="itsm-main-head">
                   <div>
-                    <div className="itsm-main-title">{selected.job_name || '(이름 없음)'}</div>
+                    <div className="itsm-eyebrow">Selected loader</div>
+                    <div className="itsm-title-row">
+                      <div className="itsm-main-title">{selected.job_name || '(이름 없음)'}</div>
+                      <span className={`itsm-health ${healthTone}`}>{healthLabel}</span>
+                    </div>
                     <div className="itsm-main-meta">로더 ID: {selected.upload_id}</div>
-                    <div className="itsm-main-meta">최근 실행: {dt(selectedHistory[0]?.reg_dttm)}</div>
+                    <div className="itsm-main-meta">최근 실행: {dt(selectedHistory[0]?.reg_dttm)} / 실패율 {failPct}%</div>
                   </div>
                   <div className="itsm-head-actions">
                     {isTestUser && (
@@ -614,10 +876,10 @@ export default function ExcelDashboard() {
               </div>
 
               <div className="itsm-stats">
-                <Stat label="총 실행 횟수" value={fmt(totalRuns)} desc="선택 로더 기준" />
-                <Stat label="성공 건수" value={fmt(totalSuccess)} desc="누적 성공 처리" />
-                <Stat label="실패 건수" value={fmt(totalFail)} desc="오류 발생 건수" />
-                <Stat label="성공률" value={`${successPct}%`} desc="성공/(성공+실패)" />
+                <Stat label="총 실행 횟수" value={fmt(totalRuns)} desc="선택 로더 기준" tone="info" />
+                <Stat label="성공 건수" value={fmt(totalSuccess)} desc="누적 성공 처리" tone="success" />
+                <Stat label="실패 건수" value={fmt(totalFail)} desc="오류 발생 건수" tone={totalFail > 0 ? 'danger' : 'neutral'} />
+                <Stat label="성공률" value={`${successPct}%`} desc="성공/(성공+실패)" tone={failPct > 0 ? 'warning' : 'success'} />
               </div>
 
               <div className="itsm-grid-2">
@@ -741,12 +1003,39 @@ export default function ExcelDashboard() {
                     필터 초기화
                   </button>
                   <button className="itsm-btn" onClick={loadHistoryCompare} disabled={compareHistIds.length !== 2 || compareLoading}>
-                    {compareLoading ? '비교 중...' : '스냅샷 비교 보기'}
+                    {compareLoading ? '비교 중...' : '설정 변경 비교'}
                   </button>
                 </div>
+                <div className="itsm-compare-guide">
+                  <strong>설정 변경 비교란?</strong>
+                  <span>
+                    서로 다른 두 실행 시점에 저장된 로더 설정을 비교합니다. 테이블 구조, 컬럼 매핑, 사전/행별/사후 SQL이 바뀌었는지 확인할 수 있습니다.
+                  </span>
+                  <div className="itsm-compare-steps">
+                    <span className="itsm-compare-step"><span className="itsm-compare-step-num">1</span>이력 2개 선택</span>
+                    <span className="itsm-compare-step"><span className="itsm-compare-step-num">2</span>설정 변경 비교 클릭</span>
+                    <span className="itsm-compare-step"><span className="itsm-compare-step-num">3</span>변경 영역 확인</span>
+                  </div>
+                </div>
                 {compareHistIds.length > 0 && (
-                  <div style={{ marginBottom: 8, fontSize: 12, color: '#4b5563' }}>
-                    비교 선택: {compareHistIds.length}/2
+                  <div className="itsm-compare-selection">
+                    {[0, 1].map((slot) => {
+                      const row = compareSelectedRows[slot];
+                      return (
+                        <div key={slot} className="itsm-compare-selection-card">
+                          <div className="itsm-compare-selection-label">비교 기준 {slot === 0 ? 'A' : 'B'}</div>
+                          {row ? (
+                            <>
+                              <div className="itsm-compare-selection-main">{row.file_name || '(파일명 없음)'}</div>
+                              <div className="itsm-compare-selection-meta">{dt(row.reg_dttm)} / 성공 {fmt(row.success_cnt)} · 실패 {fmt(row.fail_cnt)}</div>
+                              <div className="itsm-compare-selection-meta">스냅샷 {row.config_snapshot_hash ? String(row.config_snapshot_hash).substring(0, 10) : '없음'}</div>
+                            </>
+                          ) : (
+                            <div className="itsm-compare-selection-meta">비교할 이력을 하나 더 선택하세요.</div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {selectedHistory.length === 0 ? (
@@ -755,7 +1044,7 @@ export default function ExcelDashboard() {
                   <>
                     <div className="itsm-table-head">
                       <span style={{ textAlign: 'center' }}>비교</span>
-                      <span>파일명 / 실행일시</span>
+                      <span>파일명 / 실행일시 / 로더 ID</span>
                       <span style={{ textAlign: 'center' }}>성공</span>
                       <span style={{ textAlign: 'center' }}>실패</span>
                       <span style={{ textAlign: 'center' }}>스냅샷</span>
@@ -774,6 +1063,9 @@ export default function ExcelDashboard() {
                           <div>
                             <div className="itsm-file">{h.file_name || '-'}</div>
                             <div className="itsm-time">{dt(h.reg_dttm)}</div>
+                            <div className="itsm-history-upload-id" title={h.upload_id || selected.upload_id || ''}>
+                              ID <span>{h.upload_id || selected.upload_id || '-'}</span>
+                            </div>
                             {h.rolled_back_yn === 'Y' && <span className="itsm-badge rollback">전체 롤백</span>}
                             {h.rolled_back_yn === 'Y' && <span className="itsm-badge attempt">시도 성공 {fmt(h.attempt_success_cnt || 0)}</span>}
                           </div>
@@ -788,7 +1080,13 @@ export default function ExcelDashboard() {
                             )}
                           </div>
                           <div style={{ textAlign: 'center', fontSize: 11, color: '#4b5563' }}>
-                            {h.config_snapshot_hash ? `${String(h.config_snapshot_hash).substring(0, 10)}...` : '-'}
+                            {h.config_snapshot_hash ? (
+                              <span className="itsm-snapshot-hash" title={h.config_snapshot_hash}>
+                                {String(h.config_snapshot_hash).substring(0, 10)}...
+                              </span>
+                            ) : (
+                              <span className="itsm-placeholder">없음</span>
+                            )}
                           </div>
                           <div style={{ textAlign: 'center' }}>
                             {h.error_file ? (
@@ -855,9 +1153,9 @@ export default function ExcelDashboard() {
           <div className="itsm-modal" onClick={(e) => e.stopPropagation()}>
             <div className="itsm-modal-head">
               <div>
-                <div className="itsm-modal-title">스냅샷 비교 결과</div>
+                <div className="itsm-modal-title">설정 변경 비교 결과</div>
                 <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
-                  {compareResult.same_hash ? '두 실행의 스냅샷이 동일합니다.' : '두 실행의 스냅샷에 변경이 있습니다.'}
+                  {compareResult.same_hash ? '두 실행은 같은 로더 설정으로 처리되었습니다.' : '두 실행 사이에 로더 설정 변경이 있습니다.'}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
@@ -866,9 +1164,40 @@ export default function ExcelDashboard() {
               </div>
             </div>
             <div className="itsm-modal-body">
-              <div style={{ fontSize: 12, color: '#374151', marginBottom: 10 }}>
-                기준 A: {dt(compareResult.left?.reg_dttm)} / 기준 B: {dt(compareResult.right?.reg_dttm)}
+              <div className={`itsm-compare-result-note ${compareResult.same_hash ? 'ok' : 'warn'}`}>
+                {compareResult.same_hash
+                  ? '결과 차이가 있다면 로더 설정 변경보다 원본 엑셀 데이터나 DB 상태 차이를 먼저 확인하세요.'
+                  : '변경된 설정 영역을 확인해 업로드 결과 차이가 설정 변경 때문인지 점검하세요.'}
               </div>
+              {(() => {
+                const sec = compareResult.section_diffs || {};
+                const sum = { added: 0, removed: 0, changed: 0 };
+                Object.values(sec).forEach((d) => {
+                  sum.added += Number(d?.added_cnt || 0);
+                  sum.removed += Number(d?.removed_cnt || 0);
+                  sum.changed += Number(d?.changed_cnt || 0);
+                });
+                return (
+                  <div className="itsm-modal-summary">
+                    <div className="itsm-modal-summary-card">
+                      <div className="itsm-modal-summary-label">기준 A 실행일</div>
+                      <div className="itsm-modal-summary-value" style={{ fontSize: 13 }}>{dt(compareResult.left?.reg_dttm)}</div>
+                    </div>
+                    <div className="itsm-modal-summary-card">
+                      <div className="itsm-modal-summary-label">기준 B 실행일</div>
+                      <div className="itsm-modal-summary-value" style={{ fontSize: 13 }}>{dt(compareResult.right?.reg_dttm)}</div>
+                    </div>
+                    <div className="itsm-modal-summary-card">
+                      <div className="itsm-modal-summary-label">추가/삭제</div>
+                      <div className="itsm-modal-summary-value">{sum.added + sum.removed}건</div>
+                    </div>
+                    <div className="itsm-modal-summary-card">
+                      <div className="itsm-modal-summary-label">값 변경</div>
+                      <div className="itsm-modal-summary-value">{sum.changed}건</div>
+                    </div>
+                  </div>
+                );
+              })()}
               <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                 <select
                   value={compareDiffTypeFilter}
@@ -887,21 +1216,6 @@ export default function ExcelDashboard() {
                   placeholder="경로/값 검색"
                 />
               </div>
-              {(() => {
-                const sec = compareResult.section_diffs || {};
-                const sum = { added: 0, removed: 0, changed: 0 };
-                Object.values(sec).forEach((d) => {
-                  sum.added += Number(d?.added_cnt || 0);
-                  sum.removed += Number(d?.removed_cnt || 0);
-                  sum.changed += Number(d?.changed_cnt || 0);
-                });
-                return (
-                  <div style={{ marginBottom: 10, fontSize: 12, color: '#334155' }}>
-                    변경 요약: 추가 {sum.added}건 · 삭제 {sum.removed}건 · 변경 {sum.changed}건
-                  </div>
-                );
-              })()}
-
               {(compareResult.changed_sections || []).length > 0 && (
                 <div className="itsm-compare-badges" style={{ marginBottom: 10 }}>
                   {(compareResult.changed_sections || []).map((s) => (

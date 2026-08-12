@@ -48,6 +48,10 @@ const rate = (success, fail) => {
 };
 const dt = (raw) => (!raw || raw === 'null' ? '-' : raw.substring(0, 16).replace('T', ' '));
 const dtShort = (raw) => (!raw || raw === 'null' ? '-' : raw.substring(5, 10));
+const parseAuditJson = (raw, fallback) => {
+  if (!raw) return fallback;
+  try { return JSON.parse(raw); } catch { return fallback; }
+};
 
 const Stat = ({ label, value, desc, tone = 'neutral' }) => (
   <div className={`itsm-stat ${tone}`}>
@@ -95,6 +99,9 @@ export default function ExcelDashboard() {
   const [compareDiffTypeFilter, setCompareDiffTypeFilter] = useState('all');
   const [compareSearch, setCompareSearch] = useState('');
   const [compareCollapsed, setCompareCollapsed] = useState({});
+  const [changeModalOpen, setChangeModalOpen] = useState(false);
+  const [changeLoadingId, setChangeLoadingId] = useState('');
+  const [changeDetail, setChangeDetail] = useState(null);
   const [detachedUploadToast, setDetachedUploadToast] = useState(null);
   const [dismissedDetachedJobId, setDismissedDetachedJobId] = useState('');
   const [capacityAdmin, setCapacityAdmin] = useState(false);
@@ -337,6 +344,22 @@ export default function ExcelDashboard() {
     }
     setCompareLoading(false);
     notify('err', `스냅샷 비교 실패: ${res.msg || '서버 오류'}`);
+  };
+
+  const loadChangeHistory = async (historyRow) => {
+    setChangeLoadingId(historyRow.hist_id);
+    const res = await post({
+      mode: 'get_history_detail',
+      hist_id: historyRow.hist_id,
+      upload_id: historyRow.upload_id || selected?.upload_id || '',
+    });
+    setChangeLoadingId('');
+    if (res.status !== 'ok' || !res.row) {
+      notify('err', `변경 이력 조회 실패: ${res.msg || '서버 오류'}`);
+      return;
+    }
+    setChangeDetail(res.row);
+    setChangeModalOpen(true);
   };
 
   const toggleCompareId = (histId) => {
@@ -607,9 +630,9 @@ export default function ExcelDashboard() {
         .itsm-tip { background: #fff; border: 1px solid #cbd5e1; border-radius: 7px; padding: 8px 10px; font-size: 12px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12); }
         .itsm-tip-title { font-weight: 700; margin-bottom: 6px; color: #111827; }
         .itsm-tip-row { display: flex; justify-content: space-between; gap: 8px; color: #4b5563; }
-        .itsm-table-head { display: grid; grid-template-columns: 40px 1fr 84px 84px 110px 100px; gap: 8px; padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 8px 8px 0 0; background: #f8fafc; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: .03em; font-weight: 800; }
+        .itsm-table-head { display: grid; grid-template-columns: 40px 1fr 84px 84px 110px 100px 86px; gap: 8px; padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 8px 8px 0 0; background: #f8fafc; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: .03em; font-weight: 800; }
         .itsm-table-body { max-height: 360px; overflow-y: auto; border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 8px 8px; }
-        .itsm-row { display: grid; grid-template-columns: 40px 1fr 84px 84px 110px 100px; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid #f1f5f9; background: #fff; }
+        .itsm-row { display: grid; grid-template-columns: 40px 1fr 84px 84px 110px 100px 86px; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid #f1f5f9; background: #fff; }
         .itsm-row:hover { background: #f8fafc; }
         .itsm-row.compare-on { background: #f0f9ff; }
         .itsm-compare-guide { margin-bottom: 12px; border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 8px; padding: 12px; font-size: 12px; color: #1e3a8a; display: flex; flex-direction: column; gap: 8px; }
@@ -643,6 +666,15 @@ export default function ExcelDashboard() {
         .itsm-modal-title { font-size: 15px; font-weight: 700; color: #111827; }
         .itsm-modal-body { padding: 12px 14px; overflow: auto; }
         .itsm-modal-close { height: 30px; padding: 0 10px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #374151; cursor: pointer; font-size: 12px; font-weight: 700; }
+        .itsm-change-list { display: flex; flex-direction: column; gap: 10px; }
+        .itsm-change-card { border: 1px solid #dbeafe; border-radius: 8px; overflow: hidden; background: #fff; }
+        .itsm-change-head { display: flex; justify-content: space-between; gap: 12px; padding: 9px 11px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 12px; }
+        .itsm-change-meta { color: #64748b; font-size: 11px; margin-top: 3px; }
+        .itsm-change-key { padding: 7px 11px; color: #475569; font-size: 11px; border-bottom: 1px solid #f1f5f9; word-break: break-all; }
+        .itsm-change-row { display: grid; grid-template-columns: minmax(120px, .7fr) 1fr 28px 1fr; gap: 8px; align-items: center; padding: 8px 11px; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
+        .itsm-change-row:last-child { border-bottom: 0; }
+        .itsm-change-column { color: #1d4ed8; font-weight: 800; word-break: break-all; }
+        .itsm-change-value { padding: 5px 7px; border-radius: 5px; background: #f8fafc; color: #334155; word-break: break-all; white-space: pre-wrap; }
         .itsm-capacity-modal { width: min(620px, 94vw); }
         .itsm-capacity-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
         .itsm-capacity-stat { border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; padding: 11px; }
@@ -694,7 +726,7 @@ export default function ExcelDashboard() {
           .itsm-head-actions { justify-content: flex-start; }
           .itsm-stats { grid-template-columns: 1fr; }
           .itsm-compare-selection, .itsm-modal-summary { grid-template-columns: 1fr; }
-          .itsm-table-head, .itsm-row { grid-template-columns: 34px minmax(160px, 1fr) 64px 64px 82px 86px; min-width: 680px; }
+          .itsm-table-head, .itsm-row { grid-template-columns: 34px minmax(160px, 1fr) 64px 64px 82px 86px 76px; min-width: 770px; }
           .itsm-table-body, .itsm-table-head { overflow: visible; }
         }
       `}</style>
@@ -1131,6 +1163,7 @@ export default function ExcelDashboard() {
                       <span style={{ textAlign: 'center' }}>실패</span>
                       <span style={{ textAlign: 'center' }}>스냅샷</span>
                       <span style={{ textAlign: 'center' }}>오류파일</span>
+                      <span style={{ textAlign: 'center' }}>변경이력</span>
                     </div>
                     <div className="itsm-table-body">
                       {selectedHistory.map((h, idx) => (
@@ -1178,6 +1211,15 @@ export default function ExcelDashboard() {
                             ) : (
                               <span className="itsm-placeholder">-</span>
                             )}
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <button
+                              className="itsm-modal-close"
+                              disabled={changeLoadingId === h.hist_id}
+                              onClick={() => loadChangeHistory(h)}
+                            >
+                              {changeLoadingId === h.hist_id ? '조회 중' : '보기'}
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -1291,6 +1333,56 @@ export default function ExcelDashboard() {
             {detachedUploadToast.lastLog && (
               <div className="itsm-floating-progress-meta">{detachedUploadToast.lastLog}</div>
             )}
+          </div>
+        </div>
+      )}
+
+      {changeModalOpen && changeDetail && (
+        <div className="itsm-modal-overlay" onClick={() => setChangeModalOpen(false)}>
+          <div className="itsm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="itsm-modal-head">
+              <div>
+                <div className="itsm-modal-title">UPDATE 변경 이력</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                  {changeDetail.file_name || '-'} · {dt(changeDetail.reg_dttm)} · {fmt(changeDetail.change_count)}건
+                </div>
+              </div>
+              <button className="itsm-modal-close" onClick={() => setChangeModalOpen(false)}>닫기</button>
+            </div>
+            <div className="itsm-modal-body">
+              {!Array.isArray(changeDetail.change_history) || changeDetail.change_history.length === 0 ? (
+                <div className="itsm-empty" style={{ padding: 36 }}>이 실행에서 변경된 UPDATE 데이터가 없습니다.</div>
+              ) : (
+                <div className="itsm-change-list">
+                  {changeDetail.change_history.map((item, index) => {
+                    const before = parseAuditJson(item.before_json, {});
+                    const after = parseAuditJson(item.after_json, {});
+                    const keys = parseAuditJson(item.key_json, {});
+                    const columns = parseAuditJson(item.changed_columns_json, Object.keys(after));
+                    return (
+                      <div className="itsm-change-card" key={item.change_id || index}>
+                        <div className="itsm-change-head">
+                          <div>
+                            <strong>{item.table_name || '-'}</strong>
+                            <div className="itsm-change-meta">엑셀 {fmt(item.excel_row_no)}행 · 수정자 {item.updated_emp_id || '-'}</div>
+                          </div>
+                          <div className="itsm-change-meta">{dt(String(item.updated_dttm || ''))}</div>
+                        </div>
+                        <div className="itsm-change-key">키: {JSON.stringify(keys)}</div>
+                        {(Array.isArray(columns) ? columns : Object.keys(after)).map((column) => (
+                          <div className="itsm-change-row" key={column}>
+                            <div className="itsm-change-column">{column}</div>
+                            <div className="itsm-change-value">{before[column] == null ? '(null)' : String(before[column])}</div>
+                            <div style={{ textAlign: 'center', color: '#2563eb', fontWeight: 800 }}>→</div>
+                            <div className="itsm-change-value">{after[column] == null ? '(null)' : String(after[column])}</div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

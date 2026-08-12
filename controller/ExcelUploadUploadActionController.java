@@ -80,7 +80,7 @@ public class ExcelUploadUploadActionController {
         boolean rollbackOnFail = isTruthy(params.get("rollback_on_fail_yn"));
         // 2026-07-07: Post-SQL 실패도 업로드 데이터와 함께 롤백할지 결정한다.
         boolean postSqlRollbackOnFail = isTruthy(params.get("post_sql_rollback_on_fail_yn"));
-        String histId = null;
+        String histId = UUID.randomUUID().toString();
         String configSnapshotHash = uploadResultSupport.sha256Hex(
                 String.valueOf(structJson == null ? "" : structJson) + "||"
                         + String.valueOf(mapJson == null ? "" : mapJson) + "||"
@@ -206,6 +206,11 @@ public class ExcelUploadUploadActionController {
         psCache.put("_LOGIN_USER_", firstValidRuntimeValue(trimParam(params.get("login_user_id")), getSessionUserValue(request, "emp_id")));
         psCache.put("_LOGIN_MTN_", firstValidRuntimeValue(trimParam(params.get("login_mtn_id")), getSessionUserValue(request, "emp_mtn_id")));
         String jobId = (String) params.get("job_id");
+        // 2026-08-12 이준혁: UPDATE 변경 이력은 요청값이 아닌 서버 세션의 사용자 ID로 남긴다.
+        psCache.put("_AUDIT_HIST_ID_", histId);
+        psCache.put("_AUDIT_UPLOAD_ID_", uploadId);
+        psCache.put("_AUDIT_JOB_ID_", jobId);
+        psCache.put("_AUDIT_UPDATED_EMP_ID_", getSessionUserValue(request, "emp_id"));
         boolean debugDetail = isTruthy(params.get("debug_detail")) || isTruthy(params.get("debug_upload_log"));
         int debugRowLimit = Math.min(Math.max(parseIntParam((String) params.get("debug_row_limit"), 20), 1), 200);
         int debugLoggedRows = 0;
@@ -280,6 +285,7 @@ public class ExcelUploadUploadActionController {
             String nowFuncU = repository.detectNowFunction(conn);
 
             repository.ensureHistoryTable(conn, nowFuncU);
+            repository.ensureUpdateAuditTable(conn);
             conn.setAutoCommit(false);
             repository.ensureTempUploadKeysTable(conn);
 
@@ -385,7 +391,7 @@ public class ExcelUploadUploadActionController {
                     log.info("[ExcelUpload] {} / {} \uCC98\uB9AC \uC911 - Batch Flush...", done, actualTotalRows);
                     addLog.accept("\uD83D\uDCCB " + done + "\uAC74 \uBC30\uCE58 \uC800\uC7A5 \uC911...");
                     int beforeFlush = errorRows.size();
-                    service.flushBatch(psCache, errorRows, errorMsgs, counters);
+                    service.flushBatch(conn, psCache, errorRows, errorMsgs, counters);
                     // flushBatch에서 새로 추가된 실패 행 → failedRowMsgMap에 등록
                     for (int ei = beforeFlush; ei < errorRows.size(); ei++) {
                         org.apache.poi.ss.usermodel.Row errRow = errorRows.get(ei);
@@ -415,7 +421,7 @@ public class ExcelUploadUploadActionController {
 
             // 잔여 배치 flush
             int beforeFinalFlush = errorRows.size();
-            service.flushBatch(psCache, errorRows, errorMsgs, counters);
+            service.flushBatch(conn, psCache, errorRows, errorMsgs, counters);
             // flushBatch에서 새로 추가된 실패 행 → failedRowMsgMap에 등록
             int unknownErrSeq = 0;
             for (int ei = beforeFinalFlush; ei < errorRows.size(); ei++) {
@@ -499,7 +505,6 @@ public class ExcelUploadUploadActionController {
 
             // 이력 저장 실패는 업로드 성공/실패를 뒤집지 않고 경고로 노출한다.
             String failTypeJson = uploadResultSupport.buildFailTypeJson(failedRowMsgMap);
-            histId = UUID.randomUUID().toString();
             // Post-SQL 실행
             if (!rolledBackOnFail && hasPostSql) {
                 log.info("[ExcelUpload] Post-SQL 실행 시작...");

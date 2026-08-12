@@ -69,6 +69,9 @@ public class ExcelUploadHistoryActionController {
                 result.put("status", "none");
                 return;
             }
+            List<Map<String, Object>> changes = repository.getUpdateAuditHistory(conn, histId.trim());
+            row.put("change_history", changes);
+            row.put("change_count", changes.size());
             result.put("status", "ok");
             result.put("row", row);
         }

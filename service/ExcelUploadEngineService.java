@@ -391,6 +391,11 @@ public class ExcelUploadEngineService {
         if (isUpsertMode) {
             recordExists = checkRecordExists(conn, tableName, upsertKeys, data, psCache);
         }
+        String cascadeRecordId = newId;
+        if (isUpsertMode && recordExists && pkCol != null && !pkCol.trim().isEmpty()) {
+            // 2026-08-12 이준혁: 기존 행 UPDATE 시 자식 FK에 신규 채번값이 넘어가지 않도록 실제 PK를 사용한다.
+            cascadeRecordId = resolveExistingRecordId(conn, tableName, pkCol, upsertKeys, data);
+        }
 
         // ?�?� 컬럼 ?�약 ?�전 검�?(DB ?�송 ??모든 ?�류 컬럼 ?��?) ?�?�?�?�?�?�?�?�?�?�?�?�?�?�
         if (!data.isEmpty()) {
@@ -477,6 +482,8 @@ public class ExcelUploadEngineService {
                         updLogParams.add(data.get(col) == null ? null : String.valueOf(data.get(col)).trim());
                     }
                     logPreparedSql(getCachedSqlText(psCache, updCacheKey), updLogParams);
+                    Map<String, Object> updateAudit = buildUpdateAudit(conn, tableName, upsertKeys,
+                            data, numericColumns, keepEmptyValues, row, psCache);
                     updPs.addBatch();
 
                     // 배치 ?�래커에 UPDATE ???�록
@@ -489,6 +496,20 @@ public class ExcelUploadEngineService {
                     List<org.apache.poi.ss.usermodel.Row> rowQueue = batchTracker.get(updCacheKey);
                     if (rowQueue == null) { rowQueue = new ArrayList<>(); batchTracker.put(updCacheKey, rowQueue); }
                     rowQueue.add(row);
+
+                    Map<String, List<Map<String, Object>>> auditTracker =
+                            (Map<String, List<Map<String, Object>>>) psCache.get("_UPDATE_AUDIT_TRACKER_");
+                    if (auditTracker == null) {
+                        auditTracker = new LinkedHashMap<>();
+                        psCache.put("_UPDATE_AUDIT_TRACKER_", auditTracker);
+                    }
+                    List<Map<String, Object>> auditQueue = auditTracker.get(updCacheKey);
+                    if (auditQueue == null) {
+                        auditQueue = new ArrayList<>();
+                        auditTracker.put(updCacheKey, auditQueue);
+                    }
+                    // 2026-08-12 이준혁: 배치 결과 순서와 맞추기 위해 변경이 없는 UPDATE도 null로 자리를 유지한다.
+                    auditQueue.add(updateAudit);
 
                     log.info("[ExcelUpload][UPDATE] ?�코???�데?�트 배치 ?�록 ?�료 (?? {})", upsertKeys);
 
@@ -518,7 +539,7 @@ public class ExcelUploadEngineService {
                 tokens.put("ALIAS",     currentAlias);
                 tokens.put("TABLE",     tableName);
                 tokens.put("PK_COL",    pkCol == null ? "" : pkCol);
-                tokens.put("NEW_ID",    newId == null ? "" : newId);
+                tokens.put("NEW_ID",    cascadeRecordId == null ? "" : cascadeRecordId);
                 tokens.put("PARENT_ID", parentId == null ? "" : parentId);
                 if (row != null) {
                     for (int ci = 0; ci < row.getLastCellNum(); ci++) {
@@ -553,9 +574,37 @@ public class ExcelUploadEngineService {
             Map<String, Object> s = (Map<String, Object>) sObj;
             if (currentAlias.equals(s.get("parent"))) {
                 cascadeExcelInsert(conn, row, structs, allMaps, (String) s.get("alias"),
-                        newId, iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr, keepEmptyValues);
+                        cascadeRecordId, iceObj, ukeyObj, metaMap, rowSqls, psCache, sqlParamOrderCache, seqMgr, keepEmptyValues);
             }
         }
+    }
+
+    private String resolveExistingRecordId(Connection conn, String tableName, String pkCol,
+            List<String> upsertKeys, Map<String, Object> data) throws Exception {
+        Object mappedPk = data.get(pkCol);
+        if (mappedPk != null && !String.valueOf(mappedPk).trim().isEmpty()) {
+            return String.valueOf(mappedPk).trim();
+        }
+
+        StringBuilder sql = new StringBuilder("SELECT ").append(pkCol)
+                .append(" FROM ").append(tableName).append(" WHERE ");
+        for (int i = 0; i < upsertKeys.size(); i++) {
+            if (i > 0) sql.append(" AND ");
+            sql.append(upsertKeys.get(i)).append(" = ?");
+        }
+        try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            for (int i = 0; i < upsertKeys.size(); i++) {
+                Object value = data.get(upsertKeys.get(i));
+                ps.setString(i + 1, value == null ? "" : String.valueOf(value).trim());
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    String existingId = rs.getString(1);
+                    if (existingId != null && !existingId.trim().isEmpty()) return existingId.trim();
+                }
+            }
+        }
+        throw new Exception("기존 행의 PK를 확인할 수 없습니다: " + tableName + "." + pkCol);
     }
 
     /**
@@ -618,6 +667,120 @@ public class ExcelUploadEngineService {
      * 존재 ?�인??PreparedStatement??"_CHK_" ?�두?�로 캐싱?�여
      * flushBatch ??배치 ?�행 ?�?�에???�외?�니??
      */
+    private Map<String, Object> buildUpdateAudit(
+            Connection conn, String tableName, List<String> upsertKeys,
+            Map<String, Object> data, Set<String> numericColumns, boolean keepEmptyValues,
+            org.apache.poi.ss.usermodel.Row row, Map<String, Object> psCache
+    ) throws Exception {
+        List<String> selectedColumns = new ArrayList<>(data.keySet());
+        if (selectedColumns.isEmpty()) return null;
+
+        StringBuilder sql = new StringBuilder("SELECT ");
+        sql.append(String.join(", ", selectedColumns)).append(" FROM ").append(tableName).append(" WHERE ");
+        for (int i = 0; i < upsertKeys.size(); i++) {
+            if (i > 0) sql.append(" AND ");
+            sql.append(upsertKeys.get(i)).append(" = ?");
+        }
+
+        Map<String, Object> existing = new LinkedHashMap<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            for (int i = 0; i < upsertKeys.size(); i++) {
+                Object keyValue = data.get(upsertKeys.get(i));
+                ps.setString(i + 1, keyValue == null ? "" : String.valueOf(keyValue).trim());
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+                for (String col : selectedColumns) existing.put(col, rs.getObject(col));
+            }
+        }
+
+        Map<String, Object> keys = new LinkedHashMap<>();
+        Map<String, Object> before = new LinkedHashMap<>();
+        Map<String, Object> after = new LinkedHashMap<>();
+        List<String> changedColumns = new ArrayList<>();
+        for (String key : upsertKeys) keys.put(key, existing.get(key));
+
+        for (String col : selectedColumns) {
+            if (upsertKeys.contains(col)) continue;
+            Object oldObject = existing.get(col);
+            String oldValue = oldObject == null ? "" : String.valueOf(oldObject);
+            String requested = data.get(col) == null ? "" : String.valueOf(data.get(col)).trim();
+            String effective = requested;
+            if (keepEmptyValues && requested.isEmpty()) effective = oldValue;
+            if (!keepEmptyValues && requested.isEmpty()
+                    && numericColumns != null && numericColumns.contains(col.toLowerCase(Locale.ROOT))) {
+                effective = "0";
+            }
+            if (!Objects.equals(oldValue, effective)) {
+                changedColumns.add(col);
+                before.put(col, oldObject);
+                after.put(col, effective);
+            }
+        }
+        if (changedColumns.isEmpty()) return null;
+
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("hist_id", contextValue(psCache, "_AUDIT_HIST_ID_"));
+        audit.put("upload_id", contextValue(psCache, "_AUDIT_UPLOAD_ID_"));
+        audit.put("job_id", contextValue(psCache, "_AUDIT_JOB_ID_"));
+        audit.put("table_name", tableName);
+        audit.put("key_json", toAuditJson(keys));
+        audit.put("before_json", toAuditJson(before));
+        audit.put("after_json", toAuditJson(after));
+        audit.put("changed_columns_json", toAuditJson(changedColumns));
+        audit.put("excel_row_no", row == null ? 0 : row.getRowNum() + 1);
+        audit.put("updated_emp_id", contextValue(psCache, "_AUDIT_UPDATED_EMP_ID_"));
+        return audit;
+    }
+
+    private String contextValue(Map<String, Object> context, String key) {
+        Object value = context == null ? null : context.get(key);
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private String toAuditJson(Object value) {
+        if (value == null) return "null";
+        if (value instanceof Number || value instanceof Boolean) return String.valueOf(value);
+        if (value instanceof Map) {
+            StringBuilder out = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
+                if (!first) out.append(',');
+                out.append(toAuditJson(String.valueOf(entry.getKey()))).append(':').append(toAuditJson(entry.getValue()));
+                first = false;
+            }
+            return out.append('}').toString();
+        }
+        if (value instanceof Iterable) {
+            StringBuilder out = new StringBuilder("[");
+            boolean first = true;
+            for (Object item : (Iterable<?>) value) {
+                if (!first) out.append(',');
+                out.append(toAuditJson(item));
+                first = false;
+            }
+            return out.append(']').toString();
+        }
+        String text = String.valueOf(value);
+        StringBuilder escaped = new StringBuilder(text.length() + 2).append('"');
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            switch (ch) {
+                case '"': escaped.append("\\\""); break;
+                case '\\': escaped.append("\\\\"); break;
+                case '\b': escaped.append("\\b"); break;
+                case '\f': escaped.append("\\f"); break;
+                case '\n': escaped.append("\\n"); break;
+                case '\r': escaped.append("\\r"); break;
+                case '\t': escaped.append("\\t"); break;
+                default:
+                    if (ch < 0x20) escaped.append(String.format("\\u%04x", (int) ch));
+                    else escaped.append(ch);
+            }
+        }
+        return escaped.append('"').toString();
+    }
+
     @SuppressWarnings("unchecked")
     private boolean checkRecordExists(
             Connection conn, String tableName,
@@ -838,13 +1001,16 @@ public class ExcelUploadEngineService {
 
     @SuppressWarnings("unchecked")
     public void flushBatch(
+            Connection conn,
             Map<String, Object> psCache,
             List<org.apache.poi.ss.usermodel.Row> errorRows,
             List<String> errorMsgs,
             int[] counters  // [0]=?�공 증분, [1]=?�패 증분
-    ) {
+    ) throws Exception {
         Map<String, List<org.apache.poi.ss.usermodel.Row>> batchTracker =
             (Map<String, List<org.apache.poi.ss.usermodel.Row>>) psCache.get("_BATCH_TRACKER_");
+        Map<String, List<Map<String, Object>>> auditTracker =
+            (Map<String, List<Map<String, Object>>>) psCache.get("_UPDATE_AUDIT_TRACKER_");
 
         for (Map.Entry<String, Object> entry : psCache.entrySet()) {
             String key = entry.getKey();
@@ -857,6 +1023,7 @@ public class ExcelUploadEngineService {
 
             Object obj = entry.getValue();
             List<org.apache.poi.ss.usermodel.Row> trackedRows = (batchTracker != null) ? batchTracker.get(key) : null;
+            List<Map<String, Object>> trackedAudits = (auditTracker != null) ? auditTracker.get(key) : null;
 
             if (obj instanceof PreparedStatement) {
                 PreparedStatement ps = (PreparedStatement) obj;
@@ -876,6 +1043,7 @@ public class ExcelUploadEngineService {
                 try {
                     int[] updateCounts = ps.executeBatch();
                     counters[0] += (trackedRows != null) ? trackedRows.size() : updateCounts.length;
+                    if (isUpdateBatch) persistSuccessfulUpdateAudits(conn, trackedAudits, updateCounts);
                     if (isUpdateBatch) log.info("[ExcelUpload] UPDATE 배치 {}�??�료", updateCounts.length);
 
                 } catch (java.sql.BatchUpdateException bue) {
@@ -912,7 +1080,10 @@ public class ExcelUploadEngineService {
                         errorMsgs.add("배치 ?�패 (???�정 불�?): " + bue.getMessage());
                         log.error("[ExcelUpload] ??배치 ?�류 (Row 추적 ?�음): {}", bue.getMessage());
                     }
+                    if (isUpdateBatch) persistSuccessfulUpdateAudits(conn, trackedAudits, updateCounts);
 
+                } catch (UpdateAuditPersistenceException e) {
+                    throw e;
                 } catch (Throwable e) {
                     String errMsg = (e.getMessage() != null) ? e.getMessage() : e.toString();
                     log.error("[ExcelUpload] ??executeBatch() 미분�??�류 [{}]: {}", key, errMsg);
@@ -944,6 +1115,32 @@ public class ExcelUploadEngineService {
             }
 
             if (batchTracker != null) batchTracker.remove(key);
+            if (auditTracker != null) auditTracker.remove(key);
+        }
+    }
+
+    private void persistSuccessfulUpdateAudits(Connection conn, List<Map<String, Object>> audits,
+            int[] updateCounts) throws UpdateAuditPersistenceException {
+        if (audits == null || audits.isEmpty() || updateCounts == null) return;
+        List<Map<String, Object>> successful = new ArrayList<>();
+        int count = Math.min(audits.size(), updateCounts.length);
+        for (int i = 0; i < count; i++) {
+            int result = updateCounts[i];
+            if (result != Statement.EXECUTE_FAILED && result != 0 && audits.get(i) != null) {
+                successful.add(audits.get(i));
+            }
+        }
+        if (successful.isEmpty()) return;
+        try {
+            repository.insertUpdateAudits(conn, successful);
+        } catch (Exception e) {
+            throw new UpdateAuditPersistenceException("업데이트 변경 이력 저장에 실패했습니다: " + e.getMessage(), e);
+        }
+    }
+
+    private static final class UpdateAuditPersistenceException extends Exception {
+        private UpdateAuditPersistenceException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 

@@ -887,6 +887,102 @@ public class ExcelUploadEngineRepository {
         return getHistoryDetailById(conn, histId);
     }
 
+    public void ensureUpdateAuditTable(Connection conn) throws Exception {
+        DatabaseMetaData meta = conn.getMetaData();
+        if (tableExists(meta, "ESO_EXCEL_UPLOAD_CHANGE_HIST")) {
+            return;
+        }
+        String[] tryDdls = new String[]{
+                "CREATE TABLE ESO_EXCEL_UPLOAD_CHANGE_HIST (" +
+                        "CHANGE_ID VARCHAR2(64) PRIMARY KEY, HIST_ID VARCHAR2(64), UPLOAD_ID VARCHAR2(64), " +
+                        "JOB_ID VARCHAR2(64), TABLE_NAME VARCHAR2(128), KEY_JSON CLOB, BEFORE_JSON CLOB, " +
+                        "AFTER_JSON CLOB, CHANGED_COLUMNS_JSON CLOB, EXCEL_ROW_NO NUMBER(10), " +
+                        "UPDATED_EMP_ID VARCHAR2(64), UPDATED_DTTM TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+                "CREATE TABLE ESO_EXCEL_UPLOAD_CHANGE_HIST (" +
+                        "CHANGE_ID VARCHAR(64) PRIMARY KEY, HIST_ID VARCHAR(64), UPLOAD_ID VARCHAR(64), " +
+                        "JOB_ID VARCHAR(64), TABLE_NAME VARCHAR(128), KEY_JSON LONGTEXT, BEFORE_JSON LONGTEXT, " +
+                        "AFTER_JSON LONGTEXT, CHANGED_COLUMNS_JSON LONGTEXT, EXCEL_ROW_NO INT, " +
+                        "UPDATED_EMP_ID VARCHAR(64), UPDATED_DTTM DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        };
+        Exception last = null;
+        for (String ddl : tryDdls) {
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(ddl);
+                try {
+                    stmt.execute("CREATE INDEX IDX_EXCEL_CHANGE_HIST_ID ON ESO_EXCEL_UPLOAD_CHANGE_HIST (HIST_ID)");
+                } catch (Throwable ignore) {
+                }
+                return;
+            } catch (Exception e) {
+                last = e;
+                // 2026-08-12 이준혁: 동시 업로드가 테이블을 먼저 생성한 경우는 성공으로 처리한다.
+                if (tableExists(conn.getMetaData(), "ESO_EXCEL_UPLOAD_CHANGE_HIST")) return;
+            }
+        }
+        if (last != null) throw last;
+    }
+
+    public void insertUpdateAudits(Connection conn, List<Map<String, Object>> audits) throws Exception {
+        if (audits == null || audits.isEmpty()) {
+            return;
+        }
+        String sql = "INSERT INTO ESO_EXCEL_UPLOAD_CHANGE_HIST " +
+                "(CHANGE_ID, HIST_ID, UPLOAD_ID, JOB_ID, TABLE_NAME, KEY_JSON, BEFORE_JSON, AFTER_JSON, " +
+                "CHANGED_COLUMNS_JSON, EXCEL_ROW_NO, UPDATED_EMP_ID, UPDATED_DTTM) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (Map<String, Object> audit : audits) {
+                ps.setString(1, UUID.randomUUID().toString());
+                ps.setString(2, str(audit.get("hist_id")));
+                ps.setString(3, str(audit.get("upload_id")));
+                ps.setString(4, str(audit.get("job_id")));
+                ps.setString(5, str(audit.get("table_name")));
+                ps.setString(6, str(audit.get("key_json")));
+                ps.setString(7, str(audit.get("before_json")));
+                ps.setString(8, str(audit.get("after_json")));
+                ps.setString(9, str(audit.get("changed_columns_json")));
+                ps.setInt(10, intValue(audit.get("excel_row_no"), 0));
+                ps.setString(11, str(audit.get("updated_emp_id")));
+                ps.addBatch();
+            }
+            ps.executeBatch();
+        }
+    }
+
+    public List<Map<String, Object>> getUpdateAuditHistory(Connection conn, String histId) throws Exception {
+        if (histId == null || histId.trim().isEmpty()
+                || !tableExists(conn.getMetaData(), "ESO_EXCEL_UPLOAD_CHANGE_HIST")) {
+            return Collections.emptyList();
+        }
+        List<Map<String, Object>> list = new ArrayList<>();
+        String sql = "SELECT CHANGE_ID, HIST_ID, UPLOAD_ID, JOB_ID, TABLE_NAME, KEY_JSON, BEFORE_JSON, " +
+                "AFTER_JSON, CHANGED_COLUMNS_JSON, EXCEL_ROW_NO, UPDATED_EMP_ID, UPDATED_DTTM " +
+                "FROM ESO_EXCEL_UPLOAD_CHANGE_HIST WHERE HIST_ID = ? " +
+                "ORDER BY UPDATED_DTTM, EXCEL_ROW_NO, TABLE_NAME";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, histId.trim());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next() && list.size() < 2000) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("change_id", rs.getString("CHANGE_ID"));
+                    row.put("hist_id", rs.getString("HIST_ID"));
+                    row.put("upload_id", rs.getString("UPLOAD_ID"));
+                    row.put("job_id", rs.getString("JOB_ID"));
+                    row.put("table_name", rs.getString("TABLE_NAME"));
+                    row.put("key_json", rs.getString("KEY_JSON"));
+                    row.put("before_json", rs.getString("BEFORE_JSON"));
+                    row.put("after_json", rs.getString("AFTER_JSON"));
+                    row.put("changed_columns_json", rs.getString("CHANGED_COLUMNS_JSON"));
+                    row.put("excel_row_no", rs.getInt("EXCEL_ROW_NO"));
+                    row.put("updated_emp_id", rs.getString("UPDATED_EMP_ID"));
+                    row.put("updated_dttm", rs.getObject("UPDATED_DTTM"));
+                    list.add(row);
+                }
+            }
+        }
+        return list;
+    }
+
     private Map<String, Object> getHistoryDetailByIdAndUploadId(Connection conn, String histId, String uploadId) throws Exception {
         if (histId == null || histId.trim().isEmpty()) {
             return null;

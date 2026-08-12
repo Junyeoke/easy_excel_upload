@@ -1757,7 +1757,9 @@ function ExcelApp() {
       if (tid) toast.update(tid, options);
     };
     try {
-      const res = await post(API_URL, fd);
+      // 2026-08-12 이준혁: 서버가 multipart 본문을 읽기 전에 전용 업로드 Queue 수용 여부를 판단하도록 힌트를 전달한다.
+      const uploadRequestUrl = `${API_URL}?mode=upload&job_id=${encodeURIComponent(jobId)}`;
+      const res = await post(uploadRequestUrl, fd);
       // ── SSE 스트림 정리 ──
       if (esRef.current) { esRef.current.close(); esRef.current = null; }
       stopUploadWatchdog();
@@ -1766,6 +1768,28 @@ function ExcelApp() {
       setUploadJobId('');
       try { sessionStorage.removeItem('excel_active_job_id'); } catch {}
       stopSharedStateHeartbeat();
+      // 2026-08-12 이준혁: 업로드 Queue 포화는 결과 화면으로 넘기지 않고 즉시 안내한다.
+      if (res.status === 'busy') {
+        setUploadResult(null);
+        setFailedRows({});
+        setProgress({ current: 0, total: 0, percent: 0 });
+        publishSharedUploadState({
+          job_id: jobId,
+          upload_id: uploadId || '',
+          status: 'busy',
+          uploader_alive: false,
+          heartbeat_at: new Date().toISOString(),
+          last_log: res.msg || '현재 업로드 작업이 많습니다. 잠시 후 다시 시도해 주세요.',
+        });
+        await Swal.fire({
+          title: '업로드 대기열이 가득 찼습니다',
+          text: res.msg || '현재 업로드 작업이 많습니다. 잠시 후 다시 시도해 주세요.',
+          icon: 'warning',
+          confirmButtonColor: '#6366f1',
+          confirmButtonText: '확인',
+        });
+        return;
+      }
       if (res.status === 'ok' || res.status === 'partial') {
         setProgress(p => ({ ...p, current: p.total, percent: 100 }));
         setUploadLogs(prev => [...prev, '🎉 업로드 완료!']);

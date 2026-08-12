@@ -97,6 +97,13 @@ export default function ExcelDashboard() {
   const [compareCollapsed, setCompareCollapsed] = useState({});
   const [detachedUploadToast, setDetachedUploadToast] = useState(null);
   const [dismissedDetachedJobId, setDismissedDetachedJobId] = useState('');
+  const [capacityAdmin, setCapacityAdmin] = useState(false);
+  const [capacityModalOpen, setCapacityModalOpen] = useState(false);
+  const [capacityLoading, setCapacityLoading] = useState(false);
+  const [capacitySaving, setCapacitySaving] = useState(false);
+  const [capacityError, setCapacityError] = useState('');
+  const [capacityConfig, setCapacityConfig] = useState(null);
+  const [capacityDraft, setCapacityDraft] = useState({ worker_count: 2, queue_capacity: 8 });
   const detachedPollLockRef = useRef(false);
 
   const isTestUser = (() => {
@@ -106,6 +113,57 @@ export default function ExcelDashboard() {
       return false;
     }
   })();
+
+  const applyCapacityResponse = (res) => {
+    setCapacityConfig(res);
+    setCapacityDraft({
+      worker_count: Number(res.worker_count) || 2,
+      queue_capacity: Number(res.queue_capacity) || 8,
+    });
+  };
+
+  const loadCapacityConfig = async (openModal = false) => {
+    setCapacityLoading(true);
+    setCapacityError('');
+    try {
+      const res = await post({ mode: 'get_upload_capacity' });
+      const isAdmin = res.status === 'ok' && res.is_admin === true;
+      setCapacityAdmin(isAdmin);
+      if (isAdmin) {
+        applyCapacityResponse(res);
+        if (openModal) setCapacityModalOpen(true);
+      } else if (openModal) {
+        setCapacityError(res.msg || '관리자 권한을 확인할 수 없습니다.');
+      }
+    } catch (e) {
+      if (openModal) setCapacityError(e.message || '설정을 불러오지 못했습니다.');
+    } finally {
+      setCapacityLoading(false);
+    }
+  };
+
+  const saveCapacityConfig = async () => {
+    setCapacitySaving(true);
+    setCapacityError('');
+    try {
+      const res = await post({
+        mode: 'save_upload_capacity',
+        worker_count: String(capacityDraft.worker_count),
+        queue_capacity: String(capacityDraft.queue_capacity),
+      });
+      if (res.status !== 'ok') {
+        setCapacityError(res.msg || '설정을 저장하지 못했습니다.');
+        return;
+      }
+      applyCapacityResponse(res);
+      notify('ok', res.msg || '업로드 처리 설정을 저장했습니다.');
+      setCapacityModalOpen(false);
+    } catch (e) {
+      setCapacityError(e.message || '설정 저장 중 오류가 발생했습니다.');
+    } finally {
+      setCapacitySaving(false);
+    }
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -138,6 +196,11 @@ export default function ExcelDashboard() {
   useEffect(() => {
     loadAll();
   }, [histPeriod, histStatus, histKeyword]);
+
+  useEffect(() => {
+    // 2026-08-12 이준혁: 서버가 확인한 관리자에게만 업로드 처리 설정 기능을 노출한다.
+    loadCapacityConfig(false);
+  }, []);
 
   useEffect(() => {
     setCompareHistIds([]);
@@ -580,6 +643,20 @@ export default function ExcelDashboard() {
         .itsm-modal-title { font-size: 15px; font-weight: 700; color: #111827; }
         .itsm-modal-body { padding: 12px 14px; overflow: auto; }
         .itsm-modal-close { height: 30px; padding: 0 10px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #374151; cursor: pointer; font-size: 12px; font-weight: 700; }
+        .itsm-capacity-modal { width: min(620px, 94vw); }
+        .itsm-capacity-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
+        .itsm-capacity-stat { border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; padding: 11px; }
+        .itsm-capacity-stat span { display: block; color: #64748b; font-size: 11px; font-weight: 700; }
+        .itsm-capacity-stat strong { display: block; margin-top: 4px; color: #0f172a; font-size: 20px; }
+        .itsm-capacity-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .itsm-capacity-field { display: flex; flex-direction: column; gap: 6px; }
+        .itsm-capacity-field label { color: #334155; font-size: 12px; font-weight: 800; }
+        .itsm-capacity-field input { height: 40px; border: 1px solid #cbd5e1; border-radius: 7px; padding: 0 11px; font-size: 14px; }
+        .itsm-capacity-field input:disabled { background: #f1f5f9; color: #64748b; }
+        .itsm-capacity-help { margin-top: 6px; color: #64748b; font-size: 11px; line-height: 1.5; }
+        .itsm-capacity-warning { margin-top: 14px; border: 1px solid #fde68a; border-radius: 7px; background: #fffbeb; color: #92400e; padding: 10px 12px; font-size: 12px; line-height: 1.5; }
+        .itsm-capacity-error { margin-top: 12px; border: 1px solid #fecaca; border-radius: 7px; background: #fef2f2; color: #b91c1c; padding: 10px 12px; font-size: 12px; }
+        .itsm-capacity-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
         .itsm-file { font-size: 13px; color: #1f2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .itsm-time { margin-top: 3px; font-size: 11px; color: #6b7280; }
         .itsm-history-upload-id { margin-top: 4px; display: inline-flex; max-width: 100%; align-items: center; gap: 4px; border: 1px solid #dbeafe; border-radius: 999px; background: #eff6ff; color: #1d4ed8; padding: 2px 7px; font-size: 11px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
@@ -748,6 +825,11 @@ export default function ExcelDashboard() {
         </div>
         <div className="itsm-top-actions">
           <span className="itsm-count-pill">로더 {fmt(loaders.length)}개 / 실행 {fmt(history.length)}회</span>
+          {capacityAdmin && (
+            <button className="itsm-btn" disabled={capacityLoading} onClick={() => loadCapacityConfig(true)}>
+              ⚙ 업로드 처리 설정
+            </button>
+          )}
           <button className="itsm-btn primary" onClick={() => (window.location.href = '?admin=true')}>+ 새 로더</button>
         </div>
       </header>
@@ -1107,6 +1189,71 @@ export default function ExcelDashboard() {
           )}
         </main>
       </section>
+
+      {capacityModalOpen && capacityConfig && (
+        <div className="itsm-modal-overlay" onClick={() => !capacitySaving && setCapacityModalOpen(false)}>
+          <div className="itsm-modal itsm-capacity-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="itsm-modal-head">
+              <div>
+                <div className="itsm-modal-title">업로드 처리 설정</div>
+                <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>Worker와 대기 Queue의 최대 수용량을 관리합니다.</div>
+              </div>
+              <button className="itsm-modal-close" disabled={capacitySaving} onClick={() => setCapacityModalOpen(false)}>닫기</button>
+            </div>
+            <div className="itsm-modal-body">
+              <div className="itsm-capacity-grid">
+                <div className="itsm-capacity-stat"><span>현재 실행</span><strong>{fmt(capacityConfig.active_workers)}</strong></div>
+                <div className="itsm-capacity-stat"><span>현재 대기</span><strong>{fmt(capacityConfig.queue_size)}</strong></div>
+                <div className="itsm-capacity-stat"><span>Worker</span><strong>{fmt(capacityConfig.worker_count)}</strong></div>
+                <div className="itsm-capacity-stat"><span>최대 수용</span><strong>{fmt(capacityConfig.max_capacity)}</strong></div>
+              </div>
+
+              <div className="itsm-capacity-fields">
+                <div className="itsm-capacity-field">
+                  <label>Worker 수</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="32"
+                    disabled={capacityConfig.worker_jvm_locked}
+                    value={capacityDraft.worker_count}
+                    onChange={(e) => setCapacityDraft((prev) => ({ ...prev, worker_count: Number(e.target.value) }))}
+                  />
+                  <div className="itsm-capacity-help">동시에 실행할 업로드 수 (1~32){capacityConfig.worker_jvm_locked ? ' · JVM 옵션으로 잠김' : ''}</div>
+                </div>
+                <div className="itsm-capacity-field">
+                  <label>Queue 크기</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    disabled={capacityConfig.queue_jvm_locked}
+                    value={capacityDraft.queue_capacity}
+                    onChange={(e) => setCapacityDraft((prev) => ({ ...prev, queue_capacity: Number(e.target.value) }))}
+                  />
+                  <div className="itsm-capacity-help">실행 전 대기할 업로드 수 (1~100){capacityConfig.queue_jvm_locked ? ' · JVM 옵션으로 잠김' : ''}</div>
+                </div>
+              </div>
+
+              <div className="itsm-capacity-warning">
+                실행 또는 대기 중인 업로드가 있으면 설정을 변경할 수 없습니다. JVM 옵션이 지정된 항목은 운영자 설정이 우선 적용됩니다.
+              </div>
+              {capacityError && <div className="itsm-capacity-error">{capacityError}</div>}
+
+              <div className="itsm-capacity-actions">
+                <button className="itsm-btn" disabled={capacitySaving} onClick={() => loadCapacityConfig(false)}>새로고침</button>
+                <button
+                  className="itsm-btn primary"
+                  disabled={capacitySaving || Number(capacityConfig.active_workers) > 0 || Number(capacityConfig.queue_size) > 0}
+                  onClick={saveCapacityConfig}
+                >
+                  {capacitySaving ? '저장 중...' : '저장 및 즉시 적용'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {detachedUploadToast && (
         <div className="itsm-floating-progress">

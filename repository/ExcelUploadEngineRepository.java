@@ -1260,6 +1260,83 @@ public String cloneConfig(Connection conn, String sourceId, String newId, String
     // 6. 공통 유틸
     // =====================================================================
 
+    public void ensureUploadPoolConfigTable(Connection conn, String nowFunc) throws Exception {
+        DatabaseMetaData meta = conn.getMetaData();
+        if (tableExists(meta, "ESO_EXCEL_UPLOAD_POOL_CONFIG")) {
+            return;
+        }
+        String[] tryDdls = new String[]{
+                "CREATE TABLE ESO_EXCEL_UPLOAD_POOL_CONFIG (" +
+                        "CONFIG_ID VARCHAR2(32) PRIMARY KEY, " +
+                        "WORKER_COUNT NUMBER(5) NOT NULL, " +
+                        "QUEUE_CAPACITY NUMBER(5) NOT NULL, " +
+                        "UPDATED_EMP_ID VARCHAR2(64), " +
+                        "UPDATED_DTTM " + ("SYSDATE".equals(nowFunc) ? "DATE" : "DATETIME") +
+                        ")",
+                "CREATE TABLE ESO_EXCEL_UPLOAD_POOL_CONFIG (" +
+                        "CONFIG_ID VARCHAR(32) PRIMARY KEY, " +
+                        "WORKER_COUNT INT NOT NULL, " +
+                        "QUEUE_CAPACITY INT NOT NULL, " +
+                        "UPDATED_EMP_ID VARCHAR(64), " +
+                        "UPDATED_DTTM DATETIME" +
+                        ")"
+        };
+        Exception last = null;
+        for (String ddl : tryDdls) {
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(ddl);
+                return;
+            } catch (Exception e) {
+                last = e;
+            }
+        }
+        if (last != null) throw last;
+    }
+
+    public Map<String, Object> getUploadPoolConfig(Connection conn) throws Exception {
+        String sql = "SELECT WORKER_COUNT, QUEUE_CAPACITY, UPDATED_EMP_ID, UPDATED_DTTM " +
+                "FROM ESO_EXCEL_UPLOAD_POOL_CONFIG WHERE CONFIG_ID = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, "DEFAULT");
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (!rs.next()) {
+                    return new LinkedHashMap<>();
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("worker_count", rs.getInt("WORKER_COUNT"));
+                out.put("queue_capacity", rs.getInt("QUEUE_CAPACITY"));
+                out.put("updated_emp_id", rs.getString("UPDATED_EMP_ID"));
+                out.put("updated_dttm", rs.getObject("UPDATED_DTTM"));
+                return out;
+            }
+        }
+    }
+
+    public void saveUploadPoolConfig(Connection conn, int workerCount, int queueCapacity,
+            String updatedEmpId, String nowFunc) throws Exception {
+        String updateSql = "UPDATE ESO_EXCEL_UPLOAD_POOL_CONFIG SET WORKER_COUNT=?, QUEUE_CAPACITY=?, " +
+                "UPDATED_EMP_ID=?, UPDATED_DTTM=" + nowFunc + " WHERE CONFIG_ID=?";
+        try (PreparedStatement up = conn.prepareStatement(updateSql)) {
+            up.setInt(1, workerCount);
+            up.setInt(2, queueCapacity);
+            up.setString(3, updatedEmpId);
+            up.setString(4, "DEFAULT");
+            if (up.executeUpdate() > 0) {
+                return;
+            }
+        }
+        String insertSql = "INSERT INTO ESO_EXCEL_UPLOAD_POOL_CONFIG " +
+                "(CONFIG_ID, WORKER_COUNT, QUEUE_CAPACITY, UPDATED_EMP_ID, UPDATED_DTTM) " +
+                "VALUES (?, ?, ?, ?, " + nowFunc + ")";
+        try (PreparedStatement ins = conn.prepareStatement(insertSql)) {
+            ins.setString(1, "DEFAULT");
+            ins.setInt(2, workerCount);
+            ins.setInt(3, queueCapacity);
+            ins.setString(4, updatedEmpId);
+            ins.executeUpdate();
+        }
+    }
+
     public void ensureAlertConfigTable(Connection conn, String nowFunc) throws Exception {
         DatabaseMetaData meta = conn.getMetaData();
         if (tableExists(meta, "ESO_EXCEL_ALERT_CONFIG")) {

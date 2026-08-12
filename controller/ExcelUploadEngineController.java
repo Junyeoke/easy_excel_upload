@@ -4,6 +4,7 @@ package com.steg.lit.controller;
 import com.steg.lit.service.ExcelUploadEngineService;        // 추가
 import com.steg.lit.repository.ExcelUploadEngineRepository;  // 추가
 import com.steg.lit.util.ProgressStore;                      // SSE 진행률 저장소
+import com.steg.lit.util.ExcelUploadTaskExecutor;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,11 +13,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 
 import jakarta.servlet.annotation.MultipartConfig;
+import jakarta.servlet.AsyncContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import javax.sql.DataSource;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * =====================================================================
@@ -44,17 +49,20 @@ public class ExcelUploadEngineController {
     private final ExcelUploadJsonResponseWriter jsonResponseWriter;
     private final ExcelUploadDataSourceProvider dataSourceProvider;
     private final ExcelUploadEngineModeDispatcher modeDispatcher;
+    private final ExcelUploadTaskExecutor uploadTaskExecutor;
 
     public ExcelUploadEngineController(ExcelUploadProgressStreamController progressStreamController,
             ExcelUploadMultipartParser multipartParser,
             ExcelUploadJsonResponseWriter jsonResponseWriter,
             ExcelUploadDataSourceProvider dataSourceProvider,
-            ExcelUploadEngineModeDispatcher modeDispatcher) {
+            ExcelUploadEngineModeDispatcher modeDispatcher,
+            ExcelUploadTaskExecutor uploadTaskExecutor) {
         this.progressStreamController = progressStreamController;
         this.multipartParser = multipartParser;
         this.jsonResponseWriter = jsonResponseWriter;
         this.dataSourceProvider = dataSourceProvider;
         this.modeDispatcher = modeDispatcher;
+        this.uploadTaskExecutor = uploadTaskExecutor;
     }
 
     // =====================================================================
@@ -83,6 +91,16 @@ public class ExcelUploadEngineController {
     // =====================================================================
     @RequestMapping(value = "/engine", method = {RequestMethod.GET, RequestMethod.POST})
     public void processEngine(HttpServletRequest request, HttpServletResponse response) {
+        // 2026-08-12 이준혁: 대용량 업로드를 웹 요청 스레드와 분리하고 제한된 전용 Queue에서 처리한다.
+        if ("upload".equals(getQueryParameter(request, "mode"))) {
+            submitUploadRequest(request, response);
+            return;
+        }
+        processEngineInternal(request, response, true);
+    }
+
+    private void processEngineInternal(HttpServletRequest request, HttpServletResponse response,
+            boolean allowDeferredUpload) {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
             request.setCharacterEncoding("UTF-8");
@@ -126,6 +144,13 @@ public class ExcelUploadEngineController {
             // ── DataSource 획득 ────────────────────────────────────────────
             DataSource ds = dataSourceProvider.getDataSource();
 
+            // Query string에 mode를 넣지 않은 기존 클라이언트도 DB 작업만큼은 전용 Worker로 분리한다.
+            if (allowDeferredUpload && "upload".equals(mode)) {
+                submitParsedUpload(request, response, ds, params, fileBytes,
+                        sampleFileBytes, sampleFileOrgName);
+                return;
+            }
+
             boolean writeJson = modeDispatcher.dispatch(ds, mode, params, fileBytes,
                     sampleFileBytes, sampleFileOrgName, request, response, result);
             if (!writeJson) {
@@ -151,6 +176,155 @@ public class ExcelUploadEngineController {
             } catch (Exception ex) {
             }
         }
+    }
+
+    private void submitUploadRequest(HttpServletRequest request, HttpServletResponse response) {
+        final String jobId = getQueryParameter(request, "job_id");
+        try {
+            uploadTaskExecutor.ensureConfigured(dataSourceProvider.getDataSource());
+        } catch (Throwable e) {
+            log.warn("[ExcelUpload] persisted pool configuration could not be loaded; current safe values are used: {}",
+                    e.getMessage());
+        }
+        final AsyncContext asyncContext;
+        try {
+            asyncContext = request.startAsync();
+            asyncContext.setTimeout(0L);
+        } catch (IllegalStateException e) {
+            writeAsyncUnavailable(response, e);
+            return;
+        }
+
+        markQueued(jobId);
+        try {
+            uploadTaskExecutor.execute(() -> {
+                try {
+                    processEngineInternal((HttpServletRequest) asyncContext.getRequest(),
+                            (HttpServletResponse) asyncContext.getResponse(), false);
+                } finally {
+                    asyncContext.complete();
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            rejectBusy(asyncContext, jobId);
+        }
+    }
+
+    private void submitParsedUpload(HttpServletRequest request, HttpServletResponse response,
+            DataSource ds, Map<String, Object> params, byte[] fileBytes,
+            byte[] sampleFileBytes, String sampleFileOrgName) {
+        final String jobId = params.get("job_id") == null ? null : String.valueOf(params.get("job_id"));
+        try {
+            uploadTaskExecutor.ensureConfigured(ds);
+        } catch (Throwable e) {
+            log.warn("[ExcelUpload] persisted pool configuration could not be loaded; current safe values are used: {}",
+                    e.getMessage());
+        }
+        final AsyncContext asyncContext;
+        try {
+            asyncContext = request.startAsync();
+            asyncContext.setTimeout(0L);
+        } catch (IllegalStateException e) {
+            writeAsyncUnavailable(response, e);
+            return;
+        }
+
+        markQueued(jobId);
+        try {
+            uploadTaskExecutor.execute(() -> {
+                Map<String, Object> result = new LinkedHashMap<>();
+                HttpServletRequest asyncRequest = (HttpServletRequest) asyncContext.getRequest();
+                HttpServletResponse asyncResponse = (HttpServletResponse) asyncContext.getResponse();
+                try {
+                    boolean writeJson = modeDispatcher.dispatch(ds, "upload", params, fileBytes,
+                            sampleFileBytes, sampleFileOrgName, asyncRequest, asyncResponse, result);
+                    if (writeJson && !asyncResponse.isCommitted()) {
+                        asyncResponse.setContentType("application/json; charset=UTF-8");
+                        asyncResponse.getWriter().write(jsonResponseWriter.jsonToString(result));
+                    }
+                } catch (Throwable e) {
+                    writeWorkerError(asyncResponse, result, e);
+                } finally {
+                    asyncContext.complete();
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            rejectBusy(asyncContext, jobId);
+        }
+    }
+
+    private void markQueued(String jobId) {
+        if (jobId == null || jobId.trim().isEmpty()) {
+            return;
+        }
+        ProgressStore.init(jobId, 0);
+        ProgressStore.addLog(jobId, "업로드 작업이 대기열에 등록되었습니다.");
+    }
+
+    private void rejectBusy(AsyncContext asyncContext, String jobId) {
+        String message = "현재 업로드 작업이 많습니다. 잠시 후 다시 시도해 주세요.";
+        if (jobId != null && !jobId.trim().isEmpty()) {
+            ProgressStore.error(jobId, message);
+        }
+        HttpServletResponse response = (HttpServletResponse) asyncContext.getResponse();
+        try {
+            response.setStatus(429);
+            response.setContentType("application/json; charset=UTF-8");
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("status", "busy");
+            result.put("msg", message);
+            result.put("active_workers", uploadTaskExecutor.getActiveCount());
+            result.put("worker_count", uploadTaskExecutor.getWorkerCount());
+            result.put("queue_size", uploadTaskExecutor.getQueueSize());
+            result.put("queue_capacity", uploadTaskExecutor.getQueueCapacity());
+            response.getWriter().write(jsonResponseWriter.jsonToString(result));
+        } catch (Exception writeError) {
+            log.warn("[ExcelUpload] busy response write failed: {}", writeError.getMessage());
+        } finally {
+            asyncContext.complete();
+        }
+    }
+
+    private void writeAsyncUnavailable(HttpServletResponse response, Throwable cause) {
+        log.error("[ExcelUpload] servlet async processing is not available", cause);
+        try {
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            response.setContentType("application/json; charset=UTF-8");
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("status", "err");
+            result.put("msg", "업로드 비동기 처리를 사용할 수 없습니다. 서버의 async-supported 설정을 확인해 주세요.");
+            response.getWriter().write(jsonResponseWriter.jsonToString(result));
+        } catch (Exception ignore) {
+        }
+    }
+
+    private void writeWorkerError(HttpServletResponse response, Map<String, Object> result, Throwable e) {
+        log.error("[ExcelUpload] upload worker failed: {}", e.getMessage(), e);
+        try {
+            response.setStatus(HttpServletResponse.SC_OK);
+            result.clear();
+            result.put("status", "err");
+            result.put("msg", "서버 오류: " + (e.getMessage() != null ? e.getMessage() : e.toString()));
+            response.setContentType("application/json; charset=UTF-8");
+            response.getWriter().write(jsonResponseWriter.jsonToString(result));
+        } catch (Exception ignore) {
+        }
+    }
+
+    private String getQueryParameter(HttpServletRequest request, String name) {
+        String query = request.getQueryString();
+        if (query == null || query.isEmpty()) {
+            return null;
+        }
+        for (String pair : query.split("&")) {
+            int separator = pair.indexOf('=');
+            String rawName = separator >= 0 ? pair.substring(0, separator) : pair;
+            if (name.equals(URLDecoder.decode(rawName, StandardCharsets.UTF_8))) {
+                String rawValue = separator >= 0 ? pair.substring(separator + 1) : "";
+                return URLDecoder.decode(rawValue, StandardCharsets.UTF_8);
+            }
+        }
+        return null;
     }
 
     // =====================================================================

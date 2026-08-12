@@ -52,3 +52,21 @@ If `ESO_EXCEL_UPLOAD_HISTORY` does not yet have `UPLOAD_ID`, apply the SQL in:
 - The Java code assumes an existing eGene runtime, Spring MVC wiring, and JNDI datasource named `egene`.
 - Frontend projects should be built separately and then copied into the deployed webapp path.
 - This repository is best treated as a source snapshot for extension features, not as a standalone bootable app.
+
+## Upload concurrency limits
+
+Excel uploads run on a dedicated fixed-size worker pool with a bounded queue, so long-running uploads do not occupy the web request thread pool. Defaults:
+
+- Workers: `2`
+- Waiting queue: `8`
+
+Override them with JVM system properties when starting the application server:
+
+```text
+-Dexcel.upload.worker.count=2
+-Dexcel.upload.queue.capacity=8
+```
+
+When both the workers and queue are full, the API returns HTTP `429` with `status: "busy"` and asks the user to retry later. Servlet async processing must be enabled for the Spring DispatcherServlet and every filter in the upload request chain.
+
+Administrators (`egene.user.emp_admin_yn = "1"`) can also change these values from the dashboard's **업로드 처리 설정** dialog. The values are stored in `ESO_EXCEL_UPLOAD_POOL_CONFIG` and are applied immediately only when there are no running or queued uploads. JVM system properties take precedence and lock the corresponding dashboard field.

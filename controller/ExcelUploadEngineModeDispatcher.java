@@ -22,6 +22,7 @@ public class ExcelUploadEngineModeDispatcher {
     private final ExcelUploadAlertActionController alertActionController;
     private final ExcelUploadValidateActionController validateActionController;
     private final ExcelUploadUploadActionController uploadActionController;
+    private final ExcelUploadCapacityActionController capacityActionController;
 
     public ExcelUploadEngineModeDispatcher(ExcelUploadProgressActionController progressActionController,
             ExcelUploadConfigActionController configActionController,
@@ -29,7 +30,8 @@ public class ExcelUploadEngineModeDispatcher {
             ExcelUploadHistoryActionController historyActionController,
             ExcelUploadAlertActionController alertActionController,
             ExcelUploadValidateActionController validateActionController,
-            ExcelUploadUploadActionController uploadActionController) {
+            ExcelUploadUploadActionController uploadActionController,
+            ExcelUploadCapacityActionController capacityActionController) {
         this.progressActionController = progressActionController;
         this.configActionController = configActionController;
         this.queryActionController = queryActionController;
@@ -37,6 +39,7 @@ public class ExcelUploadEngineModeDispatcher {
         this.alertActionController = alertActionController;
         this.validateActionController = validateActionController;
         this.uploadActionController = uploadActionController;
+        this.capacityActionController = capacityActionController;
     }
 
     public boolean dispatch(DataSource ds,
@@ -82,6 +85,10 @@ public class ExcelUploadEngineModeDispatcher {
             alertActionController.handleSaveAlertConfig(ds, params, result);
         } else if ("send_alert".equals(mode)) {
             alertActionController.handleSendAlert(ds, params, result);
+        } else if ("get_upload_capacity".equals(mode)) {
+            capacityActionController.handleGet(ds, request, result);
+        } else if ("save_upload_capacity".equals(mode)) {
+            capacityActionController.handleSave(ds, params, request, result);
         } else if ("progress".equals(mode)) {
             progressActionController.handleProgress(request, params, result);
         } else if ("cancel".equals(mode)) {

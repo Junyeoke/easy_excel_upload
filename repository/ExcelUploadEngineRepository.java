@@ -949,6 +949,57 @@ public class ExcelUploadEngineRepository {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    public void insertEntityHistoryAudits(Connection conn, List<Map<String, Object>> audits) throws Exception {
+        if (audits == null || audits.isEmpty()) return;
+        for (Map<String, Object> audit : audits) {
+            String historyTable = str(audit.get("entity_history_table"));
+            List<Map<String, Object>> fieldRows = (List<Map<String, Object>>) audit.get("entity_history_rows");
+            if (historyTable.isEmpty() || fieldRows == null || fieldRows.isEmpty()) continue;
+            if (!isValidSqlIdentifier(historyTable)) {
+                throw new Exception("Invalid entity history table name: " + historyTable);
+            }
+
+            Set<String> columns = (Set<String>) audit.get("entity_history_columns");
+            boolean hasMtnId = columns != null && columns.contains("his_mtn_id");
+
+            // 2026-08-14 이준혁: 새 이력을 넣기 전에 동일 원본의 기존 현재 이력을 종료한다.
+            String updateSql = "UPDATE " + historyTable +
+                    " SET HIS_CURRENT = '' WHERE HIS_SRC_ID = ? AND HIS_CURRENT = '1'";
+            try (PreparedStatement ps = conn.prepareStatement(updateSql)) {
+                ps.setString(1, str(audit.get("entity_history_src_id")));
+                ps.executeUpdate();
+            }
+
+            String insertSql = "INSERT INTO " + historyTable + " (" +
+                    "HIS_ID, HIS_SRC_ID, HIS_USR_ID, HIS_REG_DTTM, HIS_INFO, HIS_TAS_ID, " +
+                    "HIS_DPT_ID, HIS_EMP_ID, HIS_CURRENT, HIS_FLD_ID, HIS_FLD_NAME, " +
+                    "HIS_FLD_OVAL, HIS_FLD_NVAL" + (hasMtnId ? ", HIS_MTN_ID" : "") +
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?" + (hasMtnId ? ", ?" : "") + ")";
+            try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
+                for (Map<String, Object> fieldRow : fieldRows) {
+                    int idx = 1;
+                    ps.setString(idx++, str(audit.get("entity_history_id")));
+                    ps.setString(idx++, str(audit.get("entity_history_src_id")));
+                    ps.setString(idx++, str(audit.get("entity_history_usr_id")));
+                    ps.setString(idx++, str(audit.get("entity_history_reg_dttm")));
+                    ps.setString(idx++, str(fieldRow.get("info_json")));
+                    ps.setString(idx++, str(audit.get("entity_history_tas_id")));
+                    ps.setString(idx++, str(audit.get("entity_history_dpt_id")));
+                    ps.setString(idx++, str(audit.get("entity_history_emp_id")));
+                    ps.setString(idx++, "1");
+                    ps.setString(idx++, str(fieldRow.get("field_id")));
+                    ps.setString(idx++, str(fieldRow.get("field_name")));
+                    ps.setString(idx++, str(fieldRow.get("old_value")));
+                    ps.setString(idx++, str(fieldRow.get("new_value")));
+                    if (hasMtnId) ps.setString(idx, str(audit.get("entity_history_mtn_id")));
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+        }
+    }
+
     public List<Map<String, Object>> getUpdateAuditHistory(Connection conn, String histId) throws Exception {
         if (histId == null || histId.trim().isEmpty()
                 || !tableExists(conn.getMetaData(), "ESO_EXCEL_UPLOAD_CHANGE_HIST")) {
@@ -1132,6 +1183,119 @@ public class ExcelUploadEngineRepository {
             }
         } catch (Exception e) {}
         return null;
+    }
+
+    public Set<String> getTableColumnNamesIfExists(Connection conn, String tableName) throws Exception {
+        Set<String> columns = new LinkedHashSet<>();
+        if (!isValidSqlIdentifier(tableName)) return columns;
+
+        String schema = null;
+        String plainTable = tableName;
+        int dot = tableName.lastIndexOf('.');
+        if (dot >= 0) {
+            schema = tableName.substring(0, dot);
+            plainTable = tableName.substring(dot + 1);
+        }
+        String currentSchema = null;
+        String currentCatalog = null;
+        try { currentSchema = conn.getSchema(); } catch (Throwable ignore) {}
+        try { currentCatalog = conn.getCatalog(); } catch (Throwable ignore) {}
+
+        List<String> tableCandidates = Arrays.asList(
+                plainTable, plainTable.toUpperCase(Locale.ROOT), plainTable.toLowerCase(Locale.ROOT));
+        List<String> schemaCandidates = new ArrayList<>();
+        addMetadataCandidate(schemaCandidates, schema);
+        addMetadataCandidate(schemaCandidates, schema == null ? null : schema.toUpperCase(Locale.ROOT));
+        addMetadataCandidate(schemaCandidates, schema == null ? null : schema.toLowerCase(Locale.ROOT));
+        addMetadataCandidate(schemaCandidates, currentSchema);
+        addMetadataCandidate(schemaCandidates, currentSchema == null ? null : currentSchema.toUpperCase(Locale.ROOT));
+        addMetadataCandidate(schemaCandidates, currentSchema == null ? null : currentSchema.toLowerCase(Locale.ROOT));
+        addMetadataCandidate(schemaCandidates, null);
+
+        List<String> catalogCandidates = new ArrayList<>();
+        addMetadataCandidate(catalogCandidates, schema);
+        addMetadataCandidate(catalogCandidates, currentCatalog);
+        addMetadataCandidate(catalogCandidates, null);
+
+        DatabaseMetaData dbMeta = conn.getMetaData();
+        for (String catalog : catalogCandidates) {
+            for (String schemaName : schemaCandidates) {
+                for (String candidate : tableCandidates) {
+                    try (ResultSet rs = dbMeta.getColumns(catalog, schemaName, candidate, null)) {
+                        while (rs.next()) {
+                            String column = rs.getString("COLUMN_NAME");
+                            if (column != null) columns.add(column.toLowerCase(Locale.ROOT));
+                        }
+                    }
+                    if (!columns.isEmpty()) return columns;
+                }
+            }
+        }
+        return columns;
+    }
+
+    private void addMetadataCandidate(List<String> candidates, String value) {
+        if (!candidates.contains(value)) candidates.add(value);
+    }
+
+    public Map<String, Map<String, String>> getEntityFieldMetadata(Connection conn, String tableName) {
+        Map<String, Map<String, String>> result = new LinkedHashMap<>();
+        String entityId = getEntityIdByTableName(conn, tableName);
+        if (entityId == null || entityId.trim().isEmpty()) return result;
+        String sql = "SELECT FLD_NAME, FLD_LABEL, FLD_ID FROM EFC_FIELD WHERE FLD_ENT_ID = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, entityId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String name = rs.getString("FLD_NAME");
+                    if (name == null || name.trim().isEmpty()) continue;
+                    Map<String, String> field = new LinkedHashMap<>();
+                    field.put("field_id", nullToDefault(rs.getString("FLD_ID"),
+                            normalizeEntityTableName(tableName).toUpperCase(Locale.ROOT) + "/" + name.toUpperCase(Locale.ROOT)));
+                    field.put("field_name", nullToDefault(rs.getString("FLD_LABEL"), name));
+                    result.put(name.toLowerCase(Locale.ROOT), field);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[ExcelUpload] 엔터티 필드 메타데이터 조회 실패: table={}, err={}", tableName, e.getMessage());
+        }
+        return result;
+    }
+
+    public String findExistingTaskId(Connection conn, String tableName, List<String> upsertKeys,
+                                     Map<String, Object> data) throws Exception {
+        if (!isValidSqlIdentifier(tableName) || upsertKeys == null || upsertKeys.isEmpty()) return "";
+        Set<String> columns = getTableColumnNamesIfExists(conn, tableName);
+        String normalized = normalizeEntityTableName(tableName);
+        String prefix = normalized.startsWith("eso_") ? normalized.substring(4) : normalized;
+        String preferred = prefix + "_tas_id";
+        String taskColumn = columns.contains(preferred) ? preferred : null;
+        if (taskColumn == null) {
+            for (String column : columns) {
+                if (column.endsWith("_tas_id")) {
+                    taskColumn = column;
+                    break;
+                }
+            }
+        }
+        if (taskColumn == null) return "";
+
+        StringBuilder sql = new StringBuilder("SELECT ").append(taskColumn)
+                .append(" FROM ").append(tableName).append(" WHERE ");
+        for (int i = 0; i < upsertKeys.size(); i++) {
+            String key = upsertKeys.get(i);
+            if (!isValidSqlIdentifier(key)) throw new Exception("Invalid upsert key column: " + key);
+            if (i > 0) sql.append(" AND ");
+            sql.append(key).append(" = ?");
+        }
+        try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            for (int i = 0; i < upsertKeys.size(); i++) {
+                ps.setString(i + 1, str(data.get(upsertKeys.get(i))).trim());
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? nullToDefault(rs.getString(1), "") : "";
+            }
+        }
     }
 
     private String normalizeEntityTableName(String tableName) {

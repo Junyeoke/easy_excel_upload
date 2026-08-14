@@ -77,26 +77,46 @@ public class ExcelUploadQueryActionController {
 
     public void handleGetTables(DataSource ds, HttpServletResponse response) throws Exception {
         try (Connection conn = ds.getConnection()) {
-            String sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name";
-            try {
-                String dbProd = conn.getMetaData().getDatabaseProductName();
-                if (dbProd != null && (dbProd.toLowerCase().contains("oracle") || dbProd.toLowerCase().contains("tibero"))) {
-                    sql = "SELECT table_name FROM user_tables ORDER BY table_name";
-                }
-            } catch (Throwable ignore) {
-            }
             List<Map<String, String>> list = new ArrayList<>();
-            try (PreparedStatement pstmt = conn.prepareStatement(sql); ResultSet rs = pstmt.executeQuery()) {
-                while (rs.next()) {
-                    Map<String, String> o = new LinkedHashMap<>();
-                    o.put("value", rs.getString(1));
-                    o.put("label", rs.getString(1));
-                    list.add(o);
+            String dbProduct = getDatabaseProduct(conn);
+            String sql = null;
+            if (isOracleFamily(dbProduct)) {
+                sql = "SELECT table_name FROM user_tables ORDER BY table_name";
+            } else if (isPostgreSql(dbProduct)) {
+                sql = "SELECT table_name FROM information_schema.tables " +
+                        "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' ORDER BY table_name";
+            } else if (isMySqlFamily(dbProduct)) {
+                sql = "SELECT table_name FROM information_schema.tables " +
+                        "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' ORDER BY table_name";
+            }
+
+            if (sql != null) {
+                try (PreparedStatement pstmt = conn.prepareStatement(sql); ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) addTableOption(list, rs.getString(1));
                 }
+            } else {
+                // 2026-08-12 이준혁: 미식별 DBMS는 표준 JDBC 메타데이터로 현재 catalog/schema의 테이블을 조회한다.
+                DatabaseMetaData meta = conn.getMetaData();
+                String catalog = null;
+                String schema = null;
+                try { catalog = conn.getCatalog(); } catch (Throwable ignore) {}
+                try { schema = conn.getSchema(); } catch (Throwable ignore) {}
+                try (ResultSet rs = meta.getTables(catalog, schema, "%", new String[]{"TABLE"})) {
+                    while (rs.next()) addTableOption(list, rs.getString("TABLE_NAME"));
+                }
+                list.sort((left, right) -> left.get("value").compareToIgnoreCase(right.get("value")));
             }
             response.setContentType("application/json; charset=UTF-8");
             response.getWriter().write(jsonToString(list));
         }
+    }
+
+    private void addTableOption(List<Map<String, String>> list, String tableName) {
+        if (tableName == null || tableName.trim().isEmpty()) return;
+        Map<String, String> option = new LinkedHashMap<>();
+        option.put("value", tableName);
+        option.put("label", tableName);
+        list.add(option);
     }
 
     public void handleGetColumns(DataSource ds, HttpServletRequest request,
@@ -140,13 +160,31 @@ public class ExcelUploadQueryActionController {
 
     private Set<String> loadPrimaryKeyColumns(Connection conn, String tableName) {
         Set<String> columns = new HashSet<>();
+        String dbProduct = getDatabaseProduct(conn);
+        String schemaName = null;
+        String catalogName = null;
+        String simpleTableName = tableName;
+        int separator = tableName == null ? -1 : tableName.lastIndexOf('.');
+        if (separator > 0 && separator < tableName.length() - 1) {
+            schemaName = tableName.substring(0, separator);
+            simpleTableName = tableName.substring(separator + 1);
+        }
+        try {
+            if (isPostgreSql(dbProduct) || isOracleFamily(dbProduct)) {
+                if (schemaName == null || schemaName.trim().isEmpty()) schemaName = conn.getSchema();
+            } else if (isMySqlFamily(dbProduct)) {
+                catalogName = conn.getCatalog();
+                schemaName = null;
+            }
+        } catch (Throwable ignore) {
+        }
         String[] candidates = {
-                tableName,
-                tableName.toUpperCase(Locale.ROOT),
-                tableName.toLowerCase(Locale.ROOT)
+                simpleTableName,
+                simpleTableName.toUpperCase(Locale.ROOT),
+                simpleTableName.toLowerCase(Locale.ROOT)
         };
         for (String candidate : candidates) {
-            try (ResultSet pkRs = conn.getMetaData().getPrimaryKeys(null, null, candidate)) {
+            try (ResultSet pkRs = conn.getMetaData().getPrimaryKeys(catalogName, schemaName, candidate)) {
                 while (pkRs.next()) {
                     String columnName = pkRs.getString("COLUMN_NAME");
                     if (columnName != null && !columnName.trim().isEmpty()) {
@@ -292,6 +330,8 @@ public class ExcelUploadQueryActionController {
         String lowerProd = dbProd == null ? "" : dbProd.toLowerCase();
         if (lowerProd.contains("oracle") || lowerProd.contains("tibero")) {
             loadOracleColumnComments(conn, tableName, comments);
+        } else if (lowerProd.contains("postgresql")) {
+            loadPostgreSqlColumnComments(conn, tableName, comments);
         } else {
             loadMysqlColumnComments(conn, tableName, comments);
         }
@@ -331,6 +371,63 @@ public class ExcelUploadQueryActionController {
             }
         } catch (Throwable ignore) {
         }
+    }
+
+    private void loadPostgreSqlColumnComments(Connection conn, String tableName, Map<String, String> comments) {
+        String schemaName = null;
+        String simpleTableName = tableName;
+        int separator = tableName == null ? -1 : tableName.lastIndexOf('.');
+        if (separator > 0 && separator < tableName.length() - 1) {
+            schemaName = tableName.substring(0, separator);
+            simpleTableName = tableName.substring(separator + 1);
+        }
+        try {
+            if (schemaName == null || schemaName.trim().isEmpty()) schemaName = conn.getSchema();
+        } catch (Throwable ignore) {
+        }
+        if (schemaName == null || schemaName.trim().isEmpty()) schemaName = "public";
+
+        String sql = "SELECT a.attname AS column_name, d.description AS column_comment " +
+                "FROM pg_catalog.pg_attribute a " +
+                "JOIN pg_catalog.pg_class c ON c.oid = a.attrelid " +
+                "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace " +
+                "LEFT JOIN pg_catalog.pg_description d ON d.objoid = c.oid AND d.objsubid = a.attnum " +
+                "WHERE n.nspname = ? AND c.relname = ? AND a.attnum > 0 AND NOT a.attisdropped";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, schemaName);
+            ps.setString(2, simpleTableName);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String col = rs.getString("column_name");
+                    String comment = rs.getString("column_comment");
+                    if (col != null && comment != null && !comment.trim().isEmpty()) {
+                        comments.put(col.toLowerCase(Locale.ROOT), comment.trim());
+                    }
+                }
+            }
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private String getDatabaseProduct(Connection conn) {
+        try {
+            String product = conn.getMetaData().getDatabaseProductName();
+            return product == null ? "" : product.toLowerCase(Locale.ROOT);
+        } catch (Throwable ignore) {
+            return "";
+        }
+    }
+
+    private boolean isOracleFamily(String product) {
+        return product.contains("oracle") || product.contains("tibero");
+    }
+
+    private boolean isPostgreSql(String product) {
+        return product.contains("postgresql");
+    }
+
+    private boolean isMySqlFamily(String product) {
+        return product.contains("mysql") || product.contains("mariadb");
     }
 
     private File resolveSampleFile(String storedValue) throws Exception {

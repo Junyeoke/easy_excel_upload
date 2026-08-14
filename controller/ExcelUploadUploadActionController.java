@@ -211,6 +211,11 @@ public class ExcelUploadUploadActionController {
         psCache.put("_AUDIT_UPLOAD_ID_", uploadId);
         psCache.put("_AUDIT_JOB_ID_", jobId);
         psCache.put("_AUDIT_UPDATED_EMP_ID_", getSessionUserValue(request, "emp_id"));
+        // 2026-08-14 이준혁: 솔루션 엔터티 HISTORY 테이블의 부서/테넌트 문맥으로 사용한다.
+        psCache.put("_AUDIT_DPT_ID_", firstValidRuntimeValue(
+                getSessionUserValue(request, "emp_dpt_id"), getSessionUserValue(request, "dpt_id")));
+        psCache.put("_AUDIT_MTN_ID_", firstValidRuntimeValue(
+                getSessionUserValue(request, "emp_mtn_id"), getSessionUserValue(request, "mtn_id")));
         boolean debugDetail = isTruthy(params.get("debug_detail")) || isTruthy(params.get("debug_upload_log"));
         int debugRowLimit = Math.min(Math.max(parseIntParam((String) params.get("debug_row_limit"), 20), 1), 200);
         int debugLoggedRows = 0;

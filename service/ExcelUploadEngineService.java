@@ -483,7 +483,7 @@ public class ExcelUploadEngineService {
                     }
                     logPreparedSql(getCachedSqlText(psCache, updCacheKey), updLogParams);
                     Map<String, Object> updateAudit = buildUpdateAudit(conn, tableName, upsertKeys,
-                            data, numericColumns, keepEmptyValues, row, psCache);
+                            data, numericColumns, keepEmptyValues, row, psCache, cascadeRecordId, ukeyObj);
                     updPs.addBatch();
 
                     // 배치 ?�래커에 UPDATE ???�록
@@ -670,7 +670,8 @@ public class ExcelUploadEngineService {
     private Map<String, Object> buildUpdateAudit(
             Connection conn, String tableName, List<String> upsertKeys,
             Map<String, Object> data, Set<String> numericColumns, boolean keepEmptyValues,
-            org.apache.poi.ss.usermodel.Row row, Map<String, Object> psCache
+            org.apache.poi.ss.usermodel.Row row, Map<String, Object> psCache,
+            String recordId, Object ukeyObj
     ) throws Exception {
         List<String> selectedColumns = new ArrayList<>(data.keySet());
         if (selectedColumns.isEmpty()) return null;
@@ -730,7 +731,111 @@ public class ExcelUploadEngineService {
         audit.put("changed_columns_json", toAuditJson(changedColumns));
         audit.put("excel_row_no", row == null ? 0 : row.getRowNum() + 1);
         audit.put("updated_emp_id", contextValue(psCache, "_AUDIT_UPDATED_EMP_ID_"));
+        attachEntityHistory(conn, tableName, upsertKeys, data, existing, before, after,
+                changedColumns, recordId, ukeyObj, psCache, audit);
         return audit;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void attachEntityHistory(
+            Connection conn, String tableName, List<String> upsertKeys, Map<String, Object> data,
+            Map<String, Object> existing, Map<String, Object> before, Map<String, Object> after,
+            List<String> changedColumns, String recordId, Object ukeyObj,
+            Map<String, Object> psCache, Map<String, Object> audit
+    ) throws Exception {
+        String historyTable = historyTableName(tableName);
+        String historyColumnCacheKey = "_ENTITY_HISTORY_COLUMNS_:" + historyTable.toLowerCase(Locale.ROOT);
+        Set<String> historyColumns = (Set<String>) psCache.get(historyColumnCacheKey);
+        if (historyColumns == null) {
+            historyColumns = repository.getTableColumnNamesIfExists(conn, historyTable);
+            psCache.put(historyColumnCacheKey, historyColumns);
+        }
+        // 2026-08-14 이준혁: 엔터티 HISTORY 테이블이 없는 환경은 기존 업로드 방식 그대로 처리한다.
+        if (historyColumns.isEmpty()) return;
+
+        Set<String> required = new LinkedHashSet<>(Arrays.asList(
+                "his_id", "his_src_id", "his_usr_id", "his_reg_dttm", "his_info",
+                "his_tas_id", "his_dpt_id", "his_emp_id", "his_current", "his_fld_id",
+                "his_fld_name", "his_fld_oval", "his_fld_nval"));
+        if (!historyColumns.containsAll(required)) {
+            Set<String> missing = new LinkedHashSet<>(required);
+            missing.removeAll(historyColumns);
+            throw new Exception(historyTable + " HISTORY 필수 컬럼이 없습니다: " + missing);
+        }
+
+        java.lang.reflect.Method fetchNewKey = (java.lang.reflect.Method) psCache.get("_UKEY_METHOD_");
+        if (fetchNewKey == null || ukeyObj == null) {
+            throw new Exception(historyTable + " 이력 HIS_ID 채번을 위한 UniqueKey를 사용할 수 없습니다.");
+        }
+        String historyId;
+        try {
+            historyId = String.valueOf(fetchNewKey.invoke(ukeyObj));
+        } catch (Throwable e) {
+            throw new Exception(historyTable + " 이력 HIS_ID 채번 실패: " + e.getMessage(), e);
+        }
+        if (historyId.trim().isEmpty() || "null".equalsIgnoreCase(historyId)) {
+            throw new Exception(historyTable + " 이력 HIS_ID가 생성되지 않았습니다.");
+        }
+
+        String fieldCacheKey = "_ENTITY_HISTORY_FIELDS_:" + tableName.toLowerCase(Locale.ROOT);
+        Map<String, Map<String, String>> fieldMetadata =
+                (Map<String, Map<String, String>>) psCache.get(fieldCacheKey);
+        if (fieldMetadata == null) {
+            fieldMetadata = repository.getEntityFieldMetadata(conn, tableName);
+            psCache.put(fieldCacheKey, fieldMetadata);
+        }
+
+        String sourceId = recordId == null ? "" : recordId.trim();
+        if (sourceId.isEmpty() && !upsertKeys.isEmpty()) {
+            Object key = existing.get(upsertKeys.get(0));
+            sourceId = key == null ? "" : String.valueOf(key).trim();
+        }
+        List<Map<String, Object>> fieldRows = new ArrayList<>();
+        String tablePart = tableName;
+        int dot = tablePart.lastIndexOf('.');
+        if (dot >= 0) tablePart = tablePart.substring(dot + 1);
+        for (String column : changedColumns) {
+            Map<String, String> meta = fieldMetadata.get(column.toLowerCase(Locale.ROOT));
+            String fieldId = meta == null ? "" : nullToEmpty(meta.get("field_id"));
+            if (fieldId.isEmpty()) fieldId = tablePart.toUpperCase(Locale.ROOT) + "/" + column.toUpperCase(Locale.ROOT);
+            String fieldName = meta == null ? "" : nullToEmpty(meta.get("field_name"));
+            if (fieldName.isEmpty()) fieldName = column;
+
+            Map<String, Object> fieldRow = new LinkedHashMap<>();
+            fieldRow.put("field_id", fieldId);
+            fieldRow.put("field_name", fieldName);
+            fieldRow.put("old_value", before.get(column) == null ? "" : String.valueOf(before.get(column)));
+            fieldRow.put("new_value", after.get(column) == null ? "" : String.valueOf(after.get(column)));
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("id", fieldId);
+            info.put("name", fieldName);
+            info.put("oval", fieldRow.get("old_value"));
+            info.put("nval", fieldRow.get("new_value"));
+            fieldRow.put("info_json", toAuditJson(Collections.singletonList(info)));
+            fieldRows.add(fieldRow);
+        }
+
+        audit.put("entity_history_table", historyTable);
+        audit.put("entity_history_columns", historyColumns);
+        audit.put("entity_history_id", historyId);
+        audit.put("entity_history_src_id", sourceId);
+        audit.put("entity_history_usr_id", contextValue(psCache, "_AUDIT_UPDATED_EMP_ID_"));
+        audit.put("entity_history_reg_dttm", new java.text.SimpleDateFormat("yyyyMMddHHmmss").format(new java.util.Date()));
+        audit.put("entity_history_tas_id", repository.findExistingTaskId(conn, tableName, upsertKeys, data));
+        audit.put("entity_history_dpt_id", contextValue(psCache, "_AUDIT_DPT_ID_"));
+        audit.put("entity_history_emp_id", contextValue(psCache, "_AUDIT_UPDATED_EMP_ID_"));
+        audit.put("entity_history_mtn_id", contextValue(psCache, "_AUDIT_MTN_ID_"));
+        audit.put("entity_history_rows", fieldRows);
+    }
+
+    private String historyTableName(String tableName) {
+        int dot = tableName.lastIndexOf('.');
+        return dot < 0 ? tableName + "_history"
+                : tableName.substring(0, dot + 1) + tableName.substring(dot + 1) + "_history";
+    }
+
+    private String nullToEmpty(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private String contextValue(Map<String, Object> context, String key) {
@@ -1133,6 +1238,7 @@ public class ExcelUploadEngineService {
         if (successful.isEmpty()) return;
         try {
             repository.insertUpdateAudits(conn, successful);
+            repository.insertEntityHistoryAudits(conn, successful);
         } catch (Exception e) {
             throw new UpdateAuditPersistenceException("업데이트 변경 이력 저장에 실패했습니다: " + e.getMessage(), e);
         }

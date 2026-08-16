@@ -69,4 +69,14 @@ Override them with JVM system properties when starting the application server:
 
 When both the workers and queue are full, the API returns HTTP `429` with `status: "busy"` and asks the user to retry later. Servlet async processing must be enabled for the Spring DispatcherServlet and every filter in the upload request chain.
 
+Multipart upload streams are copied directly into an application-owned spool directory before they are queued. Queued jobs keep only the temporary file path, and the file is removed after success, failure, or queue rejection. Stale files are removed at startup and periodically. Optional JVM settings:
+
+```text
+-Dexcel.upload.temp.dir=D:/app/temp/excel-upload
+-Dexcel.upload.temp.max.age.hours=24
+-Dexcel.upload.temp.cleanup.interval.minutes=30
+```
+
+When `excel.upload.temp.dir` is omitted, `${java.io.tmpdir}/egene-excel-upload` is used.
+
 Administrators (`egene.user.emp_admin_yn = "1"`) can also change these values from the dashboard's **업로드 처리 설정** dialog. The values are stored in `ESO_EXCEL_UPLOAD_POOL_CONFIG` and are applied immediately only when there are no running or queued uploads. JVM system properties take precedence and lock the corresponding dashboard field.

@@ -5,6 +5,7 @@ import com.steg.lit.service.ExcelUploadEngineService;        // 추가
 import com.steg.lit.repository.ExcelUploadEngineRepository;  // 추가
 import com.steg.lit.util.ProgressStore;                      // SSE 진행률 저장소
 import com.steg.lit.util.ExcelUploadTaskExecutor;
+import com.steg.lit.util.ExcelUploadTempFileStore;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,8 +19,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import javax.sql.DataSource;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.RejectedExecutionException;
 
@@ -50,19 +50,22 @@ public class ExcelUploadEngineController {
     private final ExcelUploadDataSourceProvider dataSourceProvider;
     private final ExcelUploadEngineModeDispatcher modeDispatcher;
     private final ExcelUploadTaskExecutor uploadTaskExecutor;
+    private final ExcelUploadTempFileStore tempFileStore;
 
     public ExcelUploadEngineController(ExcelUploadProgressStreamController progressStreamController,
             ExcelUploadMultipartParser multipartParser,
             ExcelUploadJsonResponseWriter jsonResponseWriter,
             ExcelUploadDataSourceProvider dataSourceProvider,
             ExcelUploadEngineModeDispatcher modeDispatcher,
-            ExcelUploadTaskExecutor uploadTaskExecutor) {
+            ExcelUploadTaskExecutor uploadTaskExecutor,
+            ExcelUploadTempFileStore tempFileStore) {
         this.progressStreamController = progressStreamController;
         this.multipartParser = multipartParser;
         this.jsonResponseWriter = jsonResponseWriter;
         this.dataSourceProvider = dataSourceProvider;
         this.modeDispatcher = modeDispatcher;
         this.uploadTaskExecutor = uploadTaskExecutor;
+        this.tempFileStore = tempFileStore;
     }
 
     // =====================================================================
@@ -92,16 +95,15 @@ public class ExcelUploadEngineController {
     @RequestMapping(value = "/engine", method = {RequestMethod.GET, RequestMethod.POST})
     public void processEngine(HttpServletRequest request, HttpServletResponse response) {
         // 2026-08-12 이준혁: 대용량 업로드를 웹 요청 스레드와 분리하고 제한된 전용 Queue에서 처리한다.
-        if ("upload".equals(getQueryParameter(request, "mode"))) {
-            submitUploadRequest(request, response);
-            return;
-        }
+        // 2026-08-16 이준혁: multipart 임시 Part가 정리되기 전에 요청 스레드에서 파일을 확보한다.
         processEngineInternal(request, response, true);
     }
 
     private void processEngineInternal(HttpServletRequest request, HttpServletResponse response,
             boolean allowDeferredUpload) {
         Map<String, Object> result = new LinkedHashMap<>();
+        Path parsedUploadTempFile = null;
+        Path parsedSampleTempFile = null;
         try {
             request.setCharacterEncoding("UTF-8");
 
@@ -118,10 +120,13 @@ public class ExcelUploadEngineController {
 
             // ── Multipart 파싱 ─────────────────────────────────────────────
             if (contentType != null && contentType.toLowerCase().startsWith("multipart/")) {
-                ExcelUploadMultipartParser.ParsedMultipart parsed = multipartParser.parse(request);
+                ExcelUploadMultipartParser.ParsedMultipart parsed = multipartParser.parse(
+                        request, allowDeferredUpload && "upload".equals(mode));
                 params = parsed.params;
                 fileBytes = parsed.fileBytes;
                 sampleFileBytes = parsed.sampleFileBytes;
+                parsedUploadTempFile = parsed.fileTempPath;
+                parsedSampleTempFile = parsed.sampleFileTempPath;
                 sampleFileOrgName = parsed.sampleFileOrgName;
                 if (mode.isEmpty() && params.containsKey("mode")) {
                     mode = (String) params.get("mode");
@@ -146,8 +151,10 @@ public class ExcelUploadEngineController {
 
             // Query string에 mode를 넣지 않은 기존 클라이언트도 DB 작업만큼은 전용 Worker로 분리한다.
             if (allowDeferredUpload && "upload".equals(mode)) {
-                submitParsedUpload(request, response, ds, params, fileBytes,
-                        sampleFileBytes, sampleFileOrgName);
+                submitParsedUpload(request, response, ds, params, fileBytes, sampleFileBytes,
+                        parsedUploadTempFile, parsedSampleTempFile, sampleFileOrgName);
+                parsedUploadTempFile = null;
+                parsedSampleTempFile = null;
                 return;
             }
 
@@ -175,44 +182,16 @@ public class ExcelUploadEngineController {
                 response.getWriter().write(jsonResponseWriter.jsonToString(result));
             } catch (Exception ex) {
             }
-        }
-    }
-
-    private void submitUploadRequest(HttpServletRequest request, HttpServletResponse response) {
-        final String jobId = getQueryParameter(request, "job_id");
-        try {
-            uploadTaskExecutor.ensureConfigured(dataSourceProvider.getDataSource());
-        } catch (Throwable e) {
-            log.warn("[ExcelUpload] persisted pool configuration could not be loaded; current safe values are used: {}",
-                    e.getMessage());
-        }
-        final AsyncContext asyncContext;
-        try {
-            asyncContext = request.startAsync();
-            asyncContext.setTimeout(0L);
-        } catch (IllegalStateException e) {
-            writeAsyncUnavailable(response, e);
-            return;
-        }
-
-        markQueued(jobId);
-        try {
-            uploadTaskExecutor.execute(() -> {
-                try {
-                    processEngineInternal((HttpServletRequest) asyncContext.getRequest(),
-                            (HttpServletResponse) asyncContext.getResponse(), false);
-                } finally {
-                    asyncContext.complete();
-                }
-            });
-        } catch (RejectedExecutionException e) {
-            rejectBusy(asyncContext, jobId);
+        } finally {
+            tempFileStore.delete(parsedUploadTempFile);
+            tempFileStore.delete(parsedSampleTempFile);
         }
     }
 
     private void submitParsedUpload(HttpServletRequest request, HttpServletResponse response,
             DataSource ds, Map<String, Object> params, byte[] fileBytes,
-            byte[] sampleFileBytes, String sampleFileOrgName) {
+            byte[] sampleFileBytes, Path parsedUploadTempFile,
+            Path parsedSampleTempFile, String sampleFileOrgName) {
         final String jobId = params.get("job_id") == null ? null : String.valueOf(params.get("job_id"));
         try {
             uploadTaskExecutor.ensureConfigured(ds);
@@ -220,11 +199,32 @@ public class ExcelUploadEngineController {
             log.warn("[ExcelUpload] persisted pool configuration could not be loaded; current safe values are used: {}",
                     e.getMessage());
         }
+        Path preparedUploadTempFile = parsedUploadTempFile;
+        Path preparedSampleTempFile = parsedSampleTempFile;
+        try {
+            if (preparedUploadTempFile == null) {
+                preparedUploadTempFile = tempFileStore.store(fileBytes, ".xlsx");
+            }
+            if (preparedSampleTempFile == null) {
+                preparedSampleTempFile = tempFileStore.store(sampleFileBytes, ".sample.xlsx");
+            }
+        } catch (Exception e) {
+            deleteUploadTempFile(preparedUploadTempFile);
+            deleteUploadTempFile(preparedSampleTempFile);
+            writeWorkerError(response, new LinkedHashMap<>(),
+                    new Exception("업로드 임시파일 저장에 실패했습니다: " + e.getMessage(), e));
+            return;
+        }
+        final Path uploadTempFile = preparedUploadTempFile;
+        final Path sampleTempFile = preparedSampleTempFile;
+
         final AsyncContext asyncContext;
         try {
             asyncContext = request.startAsync();
             asyncContext.setTimeout(0L);
         } catch (IllegalStateException e) {
+            deleteUploadTempFile(uploadTempFile);
+            deleteUploadTempFile(sampleTempFile);
             writeAsyncUnavailable(response, e);
             return;
         }
@@ -236,8 +236,10 @@ public class ExcelUploadEngineController {
                 HttpServletRequest asyncRequest = (HttpServletRequest) asyncContext.getRequest();
                 HttpServletResponse asyncResponse = (HttpServletResponse) asyncContext.getResponse();
                 try {
-                    boolean writeJson = modeDispatcher.dispatch(ds, "upload", params, fileBytes,
-                            sampleFileBytes, sampleFileOrgName, asyncRequest, asyncResponse, result);
+                    byte[] workerFileBytes = readUploadTempFile(uploadTempFile);
+                    byte[] workerSampleFileBytes = readUploadTempFile(sampleTempFile);
+                    boolean writeJson = modeDispatcher.dispatch(ds, "upload", params, workerFileBytes,
+                            workerSampleFileBytes, sampleFileOrgName, asyncRequest, asyncResponse, result);
                     if (writeJson && !asyncResponse.isCommitted()) {
                         asyncResponse.setContentType("application/json; charset=UTF-8");
                         asyncResponse.getWriter().write(jsonResponseWriter.jsonToString(result));
@@ -245,12 +247,24 @@ public class ExcelUploadEngineController {
                 } catch (Throwable e) {
                     writeWorkerError(asyncResponse, result, e);
                 } finally {
+                    deleteUploadTempFile(uploadTempFile);
+                    deleteUploadTempFile(sampleTempFile);
                     asyncContext.complete();
                 }
             });
         } catch (RejectedExecutionException e) {
+            deleteUploadTempFile(uploadTempFile);
+            deleteUploadTempFile(sampleTempFile);
             rejectBusy(asyncContext, jobId);
         }
+    }
+
+    private byte[] readUploadTempFile(Path tempFile) throws Exception {
+        return tempFile == null ? null : tempFileStore.read(tempFile);
+    }
+
+    private void deleteUploadTempFile(Path tempFile) {
+        tempFileStore.delete(tempFile);
     }
 
     private void markQueued(String jobId) {
@@ -309,22 +323,6 @@ public class ExcelUploadEngineController {
             response.getWriter().write(jsonResponseWriter.jsonToString(result));
         } catch (Exception ignore) {
         }
-    }
-
-    private String getQueryParameter(HttpServletRequest request, String name) {
-        String query = request.getQueryString();
-        if (query == null || query.isEmpty()) {
-            return null;
-        }
-        for (String pair : query.split("&")) {
-            int separator = pair.indexOf('=');
-            String rawName = separator >= 0 ? pair.substring(0, separator) : pair;
-            if (name.equals(URLDecoder.decode(rawName, StandardCharsets.UTF_8))) {
-                String rawValue = separator >= 0 ? pair.substring(separator + 1) : "";
-                return URLDecoder.decode(rawValue, StandardCharsets.UTF_8);
-            }
-        }
-        return null;
     }
 
     // =====================================================================

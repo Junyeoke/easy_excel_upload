@@ -1757,7 +1757,7 @@ function ExcelApp() {
       if (tid) toast.update(tid, options);
     };
     try {
-      // 2026-08-12 이준혁: 서버가 multipart 본문을 읽기 전에 전용 업로드 Queue 수용 여부를 판단하도록 힌트를 전달한다.
+      // 2026-08-16 이준혁: 서버가 파일을 안전한 임시 경로에 보관한 뒤 전용 Queue에서 처리한다.
       const uploadRequestUrl = `${API_URL}?mode=upload&job_id=${encodeURIComponent(jobId)}`;
       const res = await post(uploadRequestUrl, fd);
       // ── SSE 스트림 정리 ──

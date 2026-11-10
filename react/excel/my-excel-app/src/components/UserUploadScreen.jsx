@@ -5,7 +5,7 @@ import StepIndicator from './StepIndicator';
 const showFileTypeAlert = () => {
   Swal.fire({
     icon: 'warning',
-    title: '.xls/.xlsx 파일만 업로드할 수 있습니다.',
+    title: '매크로가 없는 .xlsx 파일만 업로드할 수 있습니다.',
     confirmButtonColor: '#6366f1',
   });
 };
@@ -37,7 +37,7 @@ const UserGuideModal = ({ instructions, sampleFileName, downloadSampleFile, onCl
         <div className="user-guide-section">
           <div className="user-guide-title">공통 주의사항</div>
           <ul className="user-guide-list">
-            <li>.xls 또는 .xlsx 형식만 지원합니다.</li>
+            <li>매크로가 없는 .xlsx 형식만 지원합니다.</li>
             <li>DRM(보안) 해제된 파일만 업로드 가능합니다.</li>
             <li>업로드 완료 전 브라우저를 닫지 마세요.</li>
           </ul>
@@ -447,7 +447,7 @@ const UserWorkbenchStep = ({
                 </div>
                 <div className="focus-hero-metric">
                   <span className="focus-hero-metric-label">데이터</span>
-                  <strong>{hasFile ? `${totalRows.toLocaleString()}건` : '.xls / .xlsx'}</strong>
+                  <strong>{hasFile ? `${totalRows.toLocaleString()}건` : '.xlsx'}</strong>
                 </div>
                 <div className="focus-hero-metric">
                   <span className="focus-hero-metric-label">현재 상태</span>
@@ -479,16 +479,15 @@ const UserWorkbenchStep = ({
                     e.preventDefault();
                     setIsDragging(false);
                     const dropped = e.dataTransfer.files[0];
-                    if (dropped && (dropped.name.endsWith('.xlsx') || dropped.name.endsWith('.xls'))) processSelectedFile(dropped);
+                    if (dropped && dropped.name.toLowerCase().endsWith('.xlsx')) processSelectedFile(dropped);
                     else if (dropped) showFileTypeAlert();
                   }}
                 >
-                  <input type="file" id="fileInput" accept=".xls,.xlsx" style={{ display: 'none' }} onChange={e => { const selected = e.target.files[0]; if (selected) processSelectedFile(selected); }} />
+                  <input type="file" id="fileInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: 'none' }} onChange={e => { const selected = e.target.files[0]; if (selected?.name.toLowerCase().endsWith('.xlsx')) processSelectedFile(selected); else if (selected) showFileTypeAlert(); }} />
                   <div className="redesign-dropzone-icon">{isDragging ? '📂' : '📤'}</div>
                   <div className="redesign-dropzone-title">{isDragging ? '여기에 놓아주세요' : '파일을 드래그하거나 클릭해 선택하세요'}</div>
                   <div className="redesign-dropzone-desc">업로드 전 자동으로 헤더와 데이터 건수를 점검합니다.</div>
                   <div className="summary-chip-list centered">
-                    <span className="summary-chip">.xls</span>
                     <span className="summary-chip">.xlsx</span>
                     <span className="summary-chip">DRM 해제</span>
                   </div>

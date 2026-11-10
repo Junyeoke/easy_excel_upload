@@ -3,6 +3,8 @@ package com.steg.lit.controller;
 
 import com.steg.lit.repository.ExcelUploadEngineRepository;
 import com.steg.lit.service.ExcelUploadEngineService;
+import com.steg.lit.util.ExcelUploadFileValidator;
+import com.steg.lit.util.ExcelUploadSampleFileStore;
 
 import org.springframework.stereotype.Component;
 
@@ -11,8 +13,11 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import javax.sql.DataSource;
 import java.io.BufferedOutputStream;
-import java.io.File;
 import java.io.FileInputStream;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
@@ -36,11 +41,17 @@ public class ExcelUploadQueryActionController {
 
     private final ExcelUploadEngineService service;
     private final ExcelUploadEngineRepository repository;
+    private final ExcelUploadSampleFileStore sampleFileStore;
+    private final ExcelUploadFileValidator fileValidator;
 
     public ExcelUploadQueryActionController(ExcelUploadEngineService service,
-            ExcelUploadEngineRepository repository) {
+            ExcelUploadEngineRepository repository,
+            ExcelUploadSampleFileStore sampleFileStore,
+            ExcelUploadFileValidator fileValidator) {
         this.service = service;
         this.repository = repository;
+        this.sampleFileStore = sampleFileStore;
+        this.fileValidator = fileValidator;
     }
 
     public void handleDownloadSample(DataSource ds, Map<String, Object> params,
@@ -48,20 +59,22 @@ public class ExcelUploadQueryActionController {
         try (Connection conn = ds.getConnection()) {
             String[] info = repository.getSampleFileInfo(conn, (String) params.get("upload_id"));
             if (info != null && info[0] != null && !info[0].trim().isEmpty()) {
-                // 2026-06-17: 저장된 샘플 파일 경로가 절대경로면 그대로 따라가고, 아니면 기본 폴더를 사용한다.
-                File sampleFile = resolveSampleFile(info[0]);
-                if (sampleFile.exists() && sampleFile.isFile()) {
-                    String downloadName = (info[1] != null && !info[1].trim().isEmpty())
-                            ? info[1]
-                            : sampleFile.getName();
+                Path sampleFile = sampleFileStore.resolveForRead(info[0]);
+                if (Files.isRegularFile(sampleFile, LinkOption.NOFOLLOW_LINKS)) {
+                    String downloadName = sampleFileStore.sanitizeDownloadName(
+                            info[1] != null ? info[1] : sampleFile.getFileName().toString());
+                    fileValidator.validate(downloadName, sampleFile);
                     response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+                    response.setHeader("X-Content-Type-Options", "nosniff");
+                    response.setHeader("Cache-Control", "private, no-store");
                     response.setHeader("Content-Disposition",
-                            "attachment; filename=\"" + java.net.URLEncoder.encode(downloadName, "UTF-8").replace("+", "%20") + "\"");
+                            "attachment; filename*=UTF-8''"
+                                    + java.net.URLEncoder.encode(downloadName, "UTF-8").replace("+", "%20"));
                     try {
-                        response.setHeader("Content-Length", String.valueOf(sampleFile.length()));
+                        response.setHeader("Content-Length", String.valueOf(Files.size(sampleFile)));
                     } catch (Throwable ignore) {
                     }
-                    try (FileInputStream fis = new FileInputStream(sampleFile);
+                    try (InputStream fis = Files.newInputStream(sampleFile, LinkOption.NOFOLLOW_LINKS);
                          BufferedOutputStream bos = new BufferedOutputStream(response.getOutputStream())) {
                         byte[] buffer = new byte[8192];
                         int n;
@@ -428,18 +441,6 @@ public class ExcelUploadQueryActionController {
 
     private boolean isMySqlFamily(String product) {
         return product.contains("mysql") || product.contains("mariadb");
-    }
-
-    private File resolveSampleFile(String storedValue) throws Exception {
-        String value = storedValue == null ? null : storedValue.trim();
-        if (value == null || value.isEmpty()) {
-            return new File(service.getSampleFileDir());
-        }
-        File direct = new File(value);
-        if (direct.isAbsolute() || value.contains("/") || value.contains("\\")) {
-            return direct;
-        }
-        return new File(service.getSampleFileDir(), value);
     }
 
     private String jsonToString(Object obj) {

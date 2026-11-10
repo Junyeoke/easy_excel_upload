@@ -5,7 +5,7 @@ import StepIndicator from './StepIndicator';
 const showFileTypeAlert = () => {
   Swal.fire({
     icon: 'warning',
-    title: '.xls/.xlsx 파일만 업로드할 수 있습니다.',
+    title: '매크로가 없는 .xlsx 파일만 업로드할 수 있습니다.',
     confirmButtonColor: '#6366f1',
   });
 };
@@ -76,8 +76,6 @@ const AdminStep0 = ({
   setSampleFileName,
   sampleFileDownloadName,
   setSampleFileDownloadName,
-  sampleFilePath,
-  setSampleFilePath,
   upsertKeepEmptyYn,
   setUpsertKeepEmptyYn,
   rollbackOnFailYn,
@@ -166,18 +164,21 @@ const AdminStep0 = ({
       </div>
 
       {openModal === 'sample' && (
-        <AdminConfigModal title="샘플 파일 설정" desc="사용자가 내려받을 엑셀 양식과 저장 경로를 관리합니다." onClose={() => setOpenModal(null)}>
+        <AdminConfigModal title="샘플 파일 설정" desc="사용자가 내려받을 안전한 .xlsx 양식을 관리합니다." onClose={() => setOpenModal(null)}>
           <div className="admin-sample-row">
             <input
               type="file"
               id="sampleFileInput"
-              accept=".xls,.xlsx"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               onChange={e => {
                 const selected = e.target.files[0];
-                if (selected) {
+                if (selected?.name.toLowerCase().endsWith('.xlsx')) {
                   setSampleFile(selected);
                   setSampleFileName(selected.name);
                   setSampleFileDownloadName(prev => prev?.trim() ? prev : selected.name);
+                } else if (selected) {
+                  showFileTypeAlert();
+                  e.target.value = '';
                 }
               }}
               className="admin-sample-file"
@@ -185,8 +186,7 @@ const AdminStep0 = ({
             {uploadId && sampleFileName && <button className="side-action-btn" onClick={downloadSampleFile}>테스트 다운로드</button>}
           </div>
           {(sampleFile || sampleFileName) && <div className="admin-basic-help">{sampleFile ? `업로드 대기: ${sampleFile.name}` : `서버 보관: ${sampleFileName}`}</div>}
-          {/* 2026-06-19: 샘플 파일 저장 경로 입력을 추가한다. */}
-          <input type="text" value={sampleFilePath} onChange={e => setSampleFilePath(e.target.value)} placeholder="샘플 파일 저장 경로" className="wiz-input" />
+          <div className="admin-basic-help">저장 위치와 서버 파일명은 보안을 위해 서버가 자동으로 지정합니다.</div>
           <input type="text" value={sampleFileDownloadName} onChange={e => setSampleFileDownloadName(e.target.value)} placeholder="사용자에게 보일 다운로드 파일명" className="wiz-input" />
         </AdminConfigModal>
       )}
@@ -457,7 +457,7 @@ const AdminStep2 = ({
     e.preventDefault();
     setIsDragging(false);
     const dropped = e.dataTransfer.files[0];
-    if (dropped && (dropped.name.endsWith('.xlsx') || dropped.name.endsWith('.xls'))) {
+    if (dropped && dropped.name.toLowerCase().endsWith('.xlsx')) {
       processSelectedFile(dropped);
     } else if (dropped) {
       showFileTypeAlert();
@@ -498,10 +498,10 @@ const AdminStep2 = ({
           <span className="admin-mapping-file-icon">{isDragging ? '📥' : '📂'}</span>
           <span className="admin-mapping-file-text">
             {file ? <strong>{file.name} ({formatFileSize(file.size)})</strong> : <strong>{isDragging ? '여기에 놓아주세요' : '엑셀 파일을 드래그하거나 클릭하여 선택'}</strong>}
-            <small>.xls, .xlsx 파일만 사용할 수 있습니다.</small>
+            <small>매크로가 없는 .xlsx 파일만 사용할 수 있습니다.</small>
           </span>
         </label>
-        <input id="mappingFileInput" type="file" accept=".xls,.xlsx" style={{ display: 'none' }} onChange={e => { const selected = e.target.files[0]; if (selected) processSelectedFile(selected); }} />
+        <input id="mappingFileInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: 'none' }} onChange={e => { const selected = e.target.files[0]; if (selected?.name.toLowerCase().endsWith('.xlsx')) processSelectedFile(selected); else if (selected) showFileTypeAlert(); }} />
         {file && <span style={{ fontSize: '0.8rem', color: '#10b981', fontWeight: 600, whiteSpace: 'nowrap' }}>헤더 {excelHeaders.length}개 인식</span>}
       </div>
     </div>
@@ -510,7 +510,7 @@ const AdminStep2 = ({
         <div className="admin-mapping-locked-icon">📂</div>
         <div>
           <div className="admin-mapping-locked-title">샘플 엑셀 파일을 먼저 업로드하세요</div>
-          <div className="admin-mapping-locked-desc">엑셀 헤더를 읽어야 DB 컬럼과 엑셀 값을 정확히 매핑할 수 있습니다. 위 영역에서 .xls 또는 .xlsx 파일을 선택하면 매핑 화면이 열립니다.</div>
+          <div className="admin-mapping-locked-desc">엑셀 헤더를 읽어야 DB 컬럼과 엑셀 값을 정확히 매핑할 수 있습니다. 위 영역에서 .xlsx 파일을 선택하면 매핑 화면이 열립니다.</div>
         </div>
       </div>
     )}
@@ -979,12 +979,12 @@ const AdminStep3 = (props) => {
                 <button onClick={() => { setFile(null); setPreviewData([]); setTotalRows(0); setEditedCells({}); setFailedRows({}); const input = document.getElementById('adminUploadFileInput'); if (input) input.value = ''; }} style={{ height: '28px', padding: '0 10px', borderRadius: '7px', border: '1px solid #fca5a5', background: 'white', color: '#ef4444', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer' }}>✕</button>
               </div>
             ) : (
-              <label className="admin-file-dropzone" htmlFor="adminUploadFileInput" onDragOver={e => { e.preventDefault(); setIsDragging(true); }} onDragLeave={e => { e.preventDefault(); setIsDragging(false); }} onDrop={e => { e.preventDefault(); setIsDragging(false); const dropped = e.dataTransfer.files[0]; if (dropped && (dropped.name.endsWith('.xlsx') || dropped.name.endsWith('.xls'))) processSelectedFile(dropped); else if (dropped) showFileTypeAlert(); }} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px 20px', borderRadius: '12px', cursor: 'pointer', border: isDragging ? '2px solid #6366f1' : '2px dashed #cbd5e1', background: isDragging ? '#eef2ff' : '#f9fafb', transition: 'all 0.18s', marginBottom: '12px' }}>
-                <input id="adminUploadFileInput" type="file" accept=".xls,.xlsx" style={{ display: 'none' }} onChange={e => { const selected = e.target.files[0]; if (selected) processSelectedFile(selected); }} />
+              <label className="admin-file-dropzone" htmlFor="adminUploadFileInput" onDragOver={e => { e.preventDefault(); setIsDragging(true); }} onDragLeave={e => { e.preventDefault(); setIsDragging(false); }} onDrop={e => { e.preventDefault(); setIsDragging(false); const dropped = e.dataTransfer.files[0]; if (dropped?.name.toLowerCase().endsWith('.xlsx')) processSelectedFile(dropped); else if (dropped) showFileTypeAlert(); }} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px 20px', borderRadius: '12px', cursor: 'pointer', border: isDragging ? '2px solid #6366f1' : '2px dashed #cbd5e1', background: isDragging ? '#eef2ff' : '#f9fafb', transition: 'all 0.18s', marginBottom: '12px' }}>
+                <input id="adminUploadFileInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: 'none' }} onChange={e => { const selected = e.target.files[0]; if (selected?.name.toLowerCase().endsWith('.xlsx')) processSelectedFile(selected); else if (selected) showFileTypeAlert(); }} />
                 <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: isDragging ? '#6366f1' : 'white', border: isDragging ? 'none' : '1.5px solid #e5e8eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem', flexShrink: 0 }}>{isDragging ? '📂' : '📤'}</div>
                 <div>
                   <div style={{ fontWeight: 700, color: isDragging ? '#6366f1' : '#333d4b', fontSize: '0.9rem' }}>{isDragging ? '여기에 놓아주세요!' : '업로드할 엑셀 파일을 드래그하거나 클릭하여 선택'}</div>
-                  <div style={{ marginTop: '3px', display: 'flex', gap: '5px' }}>{['.xls', '.xlsx'].map(ext => <span key={ext} style={{ background: '#eef2ff', color: '#6366f1', fontSize: '0.68rem', fontWeight: 700, padding: '1px 7px', borderRadius: '4px' }}>{ext}</span>)}</div>
+                  <div style={{ marginTop: '3px', display: 'flex', gap: '5px' }}>{['.xlsx'].map(ext => <span key={ext} style={{ background: '#eef2ff', color: '#6366f1', fontSize: '0.68rem', fontWeight: 700, padding: '1px 7px', borderRadius: '4px' }}>{ext}</span>)}</div>
                 </div>
               </label>
             )}

@@ -2,6 +2,7 @@
 package com.steg.lit.controller;
 
 import com.steg.lit.service.ExcelUploadEngineService;
+import com.steg.lit.util.ExcelUploadFileValidator;
 import com.steg.lit.util.ExcelUploadTempFileStore;
 
 import org.slf4j.Logger;
@@ -12,6 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 
 import java.io.InputStream;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -28,11 +30,14 @@ public class ExcelUploadMultipartParser {
 
     private final ExcelUploadEngineService service;
     private final ExcelUploadTempFileStore tempFileStore;
+    private final ExcelUploadFileValidator fileValidator;
 
     public ExcelUploadMultipartParser(ExcelUploadEngineService service,
-            ExcelUploadTempFileStore tempFileStore) {
+            ExcelUploadTempFileStore tempFileStore,
+            ExcelUploadFileValidator fileValidator) {
         this.service = service;
         this.tempFileStore = tempFileStore;
+        this.fileValidator = fileValidator;
     }
     public static class ParsedMultipart {
 
@@ -41,6 +46,7 @@ public class ExcelUploadMultipartParser {
         byte[] sampleFileBytes;
         Path fileTempPath;
         Path sampleFileTempPath;
+        String fileOrgName;
         String sampleFileOrgName;
     }
 
@@ -91,6 +97,7 @@ public class ExcelUploadMultipartParser {
                 if (fileObj != null) {
                     InputStream input = (InputStream) fileClass.getMethod("getInputStream").invoke(fileObj);
                     receiveFile(out, input, false, spoolFiles);
+                    out.fileOrgName = (String) fileClass.getMethod("getOriginalFilename").invoke(fileObj);
                 }
                 Object sampleFileObj = multiReqClass.getMethod("getFile", String.class).invoke(multipartReqObj, "sample_file");
                 if (sampleFileObj != null) {
@@ -120,11 +127,12 @@ public class ExcelUploadMultipartParser {
                         if ("file".equals(pName)) {
                             receiveFile(out, (InputStream) p.getClass().getMethod("getInputStream").invoke(p),
                                     false, spoolFiles);
+                            out.fileOrgName = submittedFileName(p, "upload.xlsx");
                         } else if ("sample_file".equals(pName)) {
                             receiveFile(out, (InputStream) p.getClass().getMethod("getInputStream").invoke(p),
                                     true, spoolFiles);
                             try {
-                                out.sampleFileOrgName = (String) p.getClass().getMethod("getSubmittedFileName").invoke(p);
+                                out.sampleFileOrgName = submittedFileName(p, "sample.xlsx");
                             } catch (Throwable ex) {
                                 out.sampleFileOrgName = "sample.xlsx";
                             }
@@ -178,10 +186,10 @@ public class ExcelUploadMultipartParser {
                                 InputStream is = (InputStream) item.getClass().getMethod("getInputStream").invoke(item);
                                 if ("file".equals(fieldName)) {
                                     receiveFile(out, is, false, spoolFiles);
+                                    out.fileOrgName = itemFilename(item, "upload.xlsx");
                                 }else if ("sample_file".equals(fieldName)) {
                                     receiveFile(out, is, true, spoolFiles);
-                                    String n = (String) item.getClass().getMethod("getName").invoke(item);
-                                    out.sampleFileOrgName = (n != null && n.contains("\\")) ? n.substring(n.lastIndexOf("\\") + 1) : n;
+                                    out.sampleFileOrgName = itemFilename(item, "sample.xlsx");
                                 }
                             }
                         }
@@ -277,10 +285,11 @@ public class ExcelUploadMultipartParser {
                             if ("file".equals(fieldName)) {
                                 if (spoolFiles) out.fileTempPath = tempFileStore.store(bodyPart, ".xlsx");
                                 else out.fileBytes = bodyPart;
+                                out.fileOrgName = cleanFilename(fileName, "upload.xlsx");
                             }else if ("sample_file".equals(fieldName)) {
                                 if (spoolFiles) out.sampleFileTempPath = tempFileStore.store(bodyPart, ".sample.xlsx");
                                 else out.sampleFileBytes = bodyPart;
-                                out.sampleFileOrgName = fileName.contains("\\") ? fileName.substring(fileName.lastIndexOf("\\") + 1) : fileName;
+                                out.sampleFileOrgName = cleanFilename(fileName, "sample.xlsx");
                             }
                         } else {
                             out.params.put(fieldName, new String(bodyPart, "UTF-8"));
@@ -298,7 +307,13 @@ public class ExcelUploadMultipartParser {
             }
         }
 
-        return out;
+        try {
+            validateReceivedFiles(out);
+            return out;
+        } catch (Exception e) {
+            clearStoredFiles(out);
+            throw e;
+        }
     }
 
     private boolean isSuccessfulParse(ParsedMultipart parsed) {
@@ -335,6 +350,68 @@ public class ExcelUploadMultipartParser {
         parsed.sampleFileTempPath = null;
         parsed.fileBytes = null;
         parsed.sampleFileBytes = null;
+    }
+
+    private void validateReceivedFiles(ParsedMultipart parsed) throws Exception {
+        if ((parsed.fileBytes != null && parsed.fileBytes.length > 0)
+                || tempFileStore.existsAndNotEmpty(parsed.fileTempPath)) {
+            String name = firstNonBlank(parsed.fileOrgName, parsed.params.get("file_name"));
+            if (parsed.fileTempPath != null) fileValidator.validate(name, parsed.fileTempPath);
+            else fileValidator.validate(name, parsed.fileBytes);
+        }
+        if ((parsed.sampleFileBytes != null && parsed.sampleFileBytes.length > 0)
+                || tempFileStore.existsAndNotEmpty(parsed.sampleFileTempPath)) {
+            long sampleSize = parsed.sampleFileTempPath != null
+                    ? Files.size(parsed.sampleFileTempPath)
+                    : parsed.sampleFileBytes.length;
+            long maxSampleBytes = positiveLongProperty(
+                    "excel.upload.sample.max.bytes", 20L * 1024L * 1024L);
+            if (sampleSize > maxSampleBytes) {
+                throw new Exception("샘플 파일은 최대 "
+                        + (maxSampleBytes / 1024L / 1024L) + "MB까지 업로드할 수 있습니다.");
+            }
+            if (parsed.sampleFileTempPath != null) {
+                fileValidator.validate(parsed.sampleFileOrgName, parsed.sampleFileTempPath);
+            } else {
+                fileValidator.validate(parsed.sampleFileOrgName, parsed.sampleFileBytes);
+            }
+        }
+    }
+
+    private String submittedFileName(Object part, String fallback) {
+        try {
+            return cleanFilename((String) part.getClass().getMethod("getSubmittedFileName").invoke(part), fallback);
+        } catch (Throwable ignore) {
+            return fallback;
+        }
+    }
+
+    private String itemFilename(Object item, String fallback) {
+        try {
+            return cleanFilename((String) item.getClass().getMethod("getName").invoke(item), fallback);
+        } catch (Throwable ignore) {
+            return fallback;
+        }
+    }
+
+    private String cleanFilename(String name, String fallback) {
+        if (name == null || name.trim().isEmpty()) return fallback;
+        String normalized = name.replace('\\', '/');
+        return normalized.substring(normalized.lastIndexOf('/') + 1);
+    }
+
+    private String firstNonBlank(String preferred, Object fallback) {
+        if (preferred != null && !preferred.trim().isEmpty()) return preferred;
+        return fallback == null ? null : String.valueOf(fallback);
+    }
+
+    private long positiveLongProperty(String key, long fallback) {
+        try {
+            long value = Long.parseLong(System.getProperty(key, String.valueOf(fallback)));
+            return value > 0L ? value : fallback;
+        } catch (Exception e) {
+            return fallback;
+        }
     }
 
 

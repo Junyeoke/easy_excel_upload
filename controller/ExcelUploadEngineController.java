@@ -10,6 +10,7 @@ import com.steg.lit.util.ExcelUploadTempFileStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 
@@ -172,11 +173,14 @@ public class ExcelUploadEngineController {
         } catch (Throwable e) {
             log.error("[ExcelUpload] 서버 최상단 에러 캡처: {}", e.getMessage(), e);
             try {
-                response.setStatus(200);
+                response.setStatus(e instanceof AccessDeniedException
+                        ? HttpServletResponse.SC_FORBIDDEN : HttpServletResponse.SC_OK);
             } catch (Throwable ignore) {
             }
             result.put("status", "err");
-            result.put("msg", "서버 오류: " + (e.getMessage() != null ? e.getMessage() : e.toString()));
+            result.put("msg", e instanceof AccessDeniedException
+                    ? "관리자 권한이 필요합니다."
+                    : "서버 오류: " + (e.getMessage() != null ? e.getMessage() : e.toString()));
             try {
                 response.setContentType("application/json; charset=UTF-8");
                 response.getWriter().write(jsonResponseWriter.jsonToString(result));

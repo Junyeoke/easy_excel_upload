@@ -3,6 +3,7 @@ package com.steg.lit.controller;
 
 import com.steg.lit.repository.ExcelUploadEngineRepository;
 import com.steg.lit.service.ExcelUploadEngineService;
+import com.steg.lit.util.ExcelUploadSampleFileStore;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,9 +12,6 @@ import org.springframework.stereotype.Component;
 import jakarta.servlet.http.HttpServletRequest;
 
 import javax.sql.DataSource;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.nio.file.Files;
 import java.sql.Connection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,17 +27,21 @@ public class ExcelUploadConfigActionController {
 
     private final ExcelUploadEngineService service;
     private final ExcelUploadEngineRepository repository;
+    private final ExcelUploadSampleFileStore sampleFileStore;
 
     public ExcelUploadConfigActionController(ExcelUploadEngineService service,
-            ExcelUploadEngineRepository repository) {
+            ExcelUploadEngineRepository repository,
+            ExcelUploadSampleFileStore sampleFileStore) {
         this.service = service;
         this.repository = repository;
+        this.sampleFileStore = sampleFileStore;
     }
 
     public void handleSave(DataSource ds, Map<String, Object> params,
             byte[] sampleFileBytes, String sampleFileOrgName,
             HttpServletRequest request,
             Map<String, Object> result) throws Exception {
+        requireAdmin(request);
         Connection conn = null;
         try {
             conn = ds.getConnection();
@@ -68,27 +70,25 @@ public class ExcelUploadConfigActionController {
             String savedSampleFileName = null;
             String savedSampleFileOrgName = null;
             if (sampleFileBytes != null && sampleFileBytes.length > 0) {
-                // 2026-06-19: 샘플 파일 저장 위치를 요청 파라미터로 지정할 수 있도록 처리한다.
                 String requestedDownloadName = (String) params.get("sample_file_download_name");
-                savedSampleFileOrgName = (requestedDownloadName != null && !requestedDownloadName.trim().isEmpty())
+                String downloadName = (requestedDownloadName != null && !requestedDownloadName.trim().isEmpty())
                         ? requestedDownloadName.trim()
                         : (sampleFileOrgName != null && !sampleFileOrgName.trim().isEmpty() ? sampleFileOrgName : "sample.xlsx");
-                File targetFile = resolveSampleFileTarget(params, uploadId, savedSampleFileOrgName);
-                File parentDir = targetFile.getParentFile();
-                if (parentDir != null && !parentDir.exists()) {
-                    Files.createDirectories(parentDir.toPath());
-                }
-                savedSampleFileName = targetFile.getAbsolutePath();
-                try (FileOutputStream fos = new FileOutputStream(targetFile)) {
-                    fos.write(sampleFileBytes);
-                } catch (Throwable fex) {
-                    throw new Exception("샘플 파일 저장 실패: " + fex.getMessage());
-                }
+                ExcelUploadSampleFileStore.StoredSample stored =
+                        sampleFileStore.store(uploadId, downloadName, sampleFileBytes);
+                savedSampleFileName = stored.getStoredName();
+                savedSampleFileOrgName = stored.getDownloadName();
             } else if (isUpdate) {
                 String[] info = repository.getSampleFileInfo(conn, uploadId);
                 if (info != null) {
-                    savedSampleFileName = info[0];
-                    savedSampleFileOrgName = info[1];
+                    try {
+                        savedSampleFileName = sampleFileStore.normalizeStoredReference(info[0]);
+                        savedSampleFileOrgName = sampleFileStore.sanitizeDownloadName(info[1]);
+                    } catch (SecurityException unsafeLegacyReference) {
+                        log.warn("[ExcelUpload] unsafe legacy sample reference removed (Upload ID: {})", uploadId);
+                        savedSampleFileName = null;
+                        savedSampleFileOrgName = null;
+                    }
                 }
             }
 
@@ -154,6 +154,11 @@ public class ExcelUploadConfigActionController {
         try (Connection conn = ds.getConnection()) {
             Map<String, Object> row = repository.getConfigDetail(conn, (String) params.get("upload_id"));
             if (row != null) {
+                Object storedSampleName = row.get("sample_file_name");
+                row.put("sample_file_available", storedSampleName != null
+                        && !String.valueOf(storedSampleName).trim().isEmpty());
+                // Never expose an absolute or server-side storage path to the browser.
+                row.put("sample_file_name", row.get("sample_file_org_name"));
                 row.put("can_delete", canDelete(getSessionUserValue(request, "emp_id"),
                         isAdminUser(request), row.get("reg_emp_id")));
                 result.put("status", "ok");
@@ -280,7 +285,38 @@ public class ExcelUploadConfigActionController {
     }
 
     private boolean isAdminUser(HttpServletRequest request) {
-        return "1".equals(getSessionUserValue(request, "emp_admin_yn"));
+        if (request == null) {
+            return false;
+        }
+        try {
+            if (request.isUserInRole("ADMIN") || request.isUserInRole("ROLE_ADMIN")) {
+                return true;
+            }
+        } catch (Throwable ignore) {
+        }
+        String value = getSessionUserValue(request, "emp_admin_yn");
+        if (value == null) {
+            value = getSessionUserValue(request, "admin_yn");
+        }
+        if (value == null && request.getSession(false) != null) {
+            Object sessionUser = request.getSession(false).getAttribute("egene.user");
+            if (sessionUser != null && !(sessionUser instanceof Map)) {
+                try {
+                    Object fieldValue = sessionUser.getClass().getField("admin_yn").get(sessionUser);
+                    value = fieldValue == null ? null : String.valueOf(fieldValue).trim();
+                } catch (Throwable ignore) {
+                }
+            }
+        }
+        return "1".equals(value) || "Y".equalsIgnoreCase(value)
+                || "true".equalsIgnoreCase(value);
+    }
+
+    private void requireAdmin(HttpServletRequest request) {
+        if (!isAdminUser(request)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "관리자만 Excel 로더 설정과 샘플 파일을 저장할 수 있습니다.");
+        }
     }
 
     private boolean canDelete(String currentEmpId, boolean isAdmin, Object creatorEmpId) {
@@ -313,27 +349,6 @@ public class ExcelUploadConfigActionController {
             value = request.getSession(false).getAttribute(key);
         }
         return value == null ? null : trimToNull(String.valueOf(value));
-    }
-
-    private File resolveSampleFileTarget(Map<String, Object> params, String uploadId, String downloadName) throws Exception {
-        String filePath = trimToNull((String) params.get("sample_file_path"));
-        if (filePath != null) {
-            return new File(filePath);
-        }
-
-        String fileDir = trimToNull((String) params.get("sample_file_dir"));
-        String fileExt = ".xlsx";
-        if (downloadName != null && downloadName.contains(".")) {
-            fileExt = downloadName.substring(downloadName.lastIndexOf("."));
-        }
-        String fileName = uploadId + "_sample" + fileExt;
-
-        if (fileDir != null) {
-            // 2026-06-19: sample_file_dir 는 디렉터리로 해석한다.
-            return new File(new File(fileDir), fileName);
-        }
-
-        return new File(service.getSampleFileDir(), fileName);
     }
 
     private String trimToNull(String value) {

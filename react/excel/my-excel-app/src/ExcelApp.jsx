@@ -675,8 +675,6 @@ function ExcelApp() {
   const [sampleFile, setSampleFile] = useState(null);
   const [sampleFileName, setSampleFileName] = useState('');
   const [sampleFileDownloadName, setSampleFileDownloadName] = useState('');
-  // 2026-06-19: 샘플 파일 저장 경로를 운영자가 직접 지정할 수 있도록 추가한다.
-  const [sampleFilePath, setSampleFilePath] = useState('');
   // 2026-06-19: UPSERT 빈 칸 유지 옵션을 화면 상태로 둔다.
   const [upsertKeepEmptyYn, setUpsertKeepEmptyYn] = useState('N');
   // 2026-07-07: 업로드 실패 시 전체 트랜잭션을 롤백할지 설정한다.
@@ -692,14 +690,6 @@ function ExcelApp() {
 
   const formatFileSize = b => !b ? '' : b < 1024 ? b + ' B' : b < 1024*1024 ? (b/1024).toFixed(1)+' KB' : (b/(1024*1024)).toFixed(2)+' MB';
   const encodeSafeBase64 = str => btoa(encodeURIComponent(str || '').replace(/%([0-9A-F]{2})/g, (m, p1) => String.fromCharCode('0x' + p1)));
-  const isLikelyDirectoryPath = (value) => {
-    const text = String(value || '').trim();
-    if (!text) return false;
-    if (/[\\/]$/.test(text)) return true;
-    const lastSlash = Math.max(text.lastIndexOf('\\'), text.lastIndexOf('/'));
-    const lastPart = lastSlash >= 0 ? text.slice(lastSlash + 1) : text;
-    return lastPart && !lastPart.includes('.');
-  };
   const classifyFailTypeClient = (rawMsg) => {
     const m = (rawMsg || '').toLowerCase();
     if (!m) return '기타';
@@ -1148,7 +1138,6 @@ function ExcelApp() {
         setPostSqls(safeJsonParse(res.post_sql_json, [{ sql: '' }]));
         setRowSqls(safeJsonParse(res.row_sql_json, [{ sql: '' }]));
         setSampleFileName(res.sample_file_name || '');
-        setSampleFilePath((res.sample_file_name || '').includes('\\') || (res.sample_file_name || '').includes('/') ? res.sample_file_name : '');
         setSampleFileDownloadName(res.sample_file_org_name || '');
         setUpsertKeepEmptyYn((res.upsert_keep_empty_yn || 'N') === 'Y' ? 'Y' : 'N');
         setRollbackOnFailYn((res.rollback_on_fail_yn || 'N') === 'Y' ? 'Y' : 'N');
@@ -1304,12 +1293,6 @@ function ExcelApp() {
     fd.append('row_sql_json_b64', encodeSafeBase64(JSON.stringify(rowSqls)));
     fd.append('instructions_b64', encodeSafeBase64(instructions));
     if (sampleFile) fd.append('sample_file', sampleFile);
-    if (sampleFilePath?.trim()) {
-      const normalizedSamplePath = sampleFilePath.trim();
-      // 2026-06-19: 입력값이 폴더 경로면 sample_file_dir 로, 파일 경로면 sample_file_path 로 보낸다.
-      if (isLikelyDirectoryPath(normalizedSamplePath)) fd.append('sample_file_dir', normalizedSamplePath);
-      else fd.append('sample_file_path', normalizedSamplePath);
-    }
     fd.append('upsert_keep_empty_yn', upsertKeepEmptyYn);
     fd.append('rollback_on_fail_yn', rollbackOnFailYn);
     fd.append('post_sql_rollback_on_fail_yn', postSqlRollbackOnFailYn);
@@ -2301,8 +2284,6 @@ function ExcelApp() {
     setSampleFileName,
     sampleFileDownloadName,
     setSampleFileDownloadName,
-    sampleFilePath,
-    setSampleFilePath,
     upsertKeepEmptyYn,
     setUpsertKeepEmptyYn,
     rollbackOnFailYn,

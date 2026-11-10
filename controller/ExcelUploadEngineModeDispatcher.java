@@ -7,13 +7,23 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import javax.sql.DataSource;
+import java.lang.reflect.Field;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+
+import org.springframework.security.access.AccessDeniedException;
 
 /**
  * Dispatches legacy /api/excel/engine modes to focused action components.
  */
 @Component
 public class ExcelUploadEngineModeDispatcher {
+
+    private static final Set<String> ADMIN_ONLY_MODES = new HashSet<>(Arrays.asList(
+            "save", "get_tables", "get_columns", "get_alert_config",
+            "save_alert_config", "send_alert", "save_upload_capacity", "clone"));
 
     private final ExcelUploadProgressActionController progressActionController;
     private final ExcelUploadConfigActionController configActionController;
@@ -51,6 +61,9 @@ public class ExcelUploadEngineModeDispatcher {
             HttpServletRequest request,
             HttpServletResponse response,
             Map<String, Object> result) throws Exception {
+        if (ADMIN_ONLY_MODES.contains(mode) && !isAdmin(request)) {
+            throw new AccessDeniedException("관리자 권한이 필요한 Excel 관리 기능입니다.");
+        }
         if ("save".equals(mode)) {
             configActionController.handleSave(ds, params, sampleFileBytes, sampleFileOrgName, request, result);
         } else if ("get_list".equals(mode)) {
@@ -104,5 +117,37 @@ public class ExcelUploadEngineModeDispatcher {
             result.put("msg", "Unknown mode: " + mode);
         }
         return true;
+    }
+
+    private boolean isAdmin(HttpServletRequest request) {
+        if (request == null) return false;
+        try {
+            if (request.isUserInRole("ADMIN") || request.isUserInRole("ROLE_ADMIN")) return true;
+        } catch (Throwable ignore) {
+        }
+        if (request.getSession(false) == null) return false;
+        Object user = request.getSession(false).getAttribute("egene.user");
+        Object value = null;
+        if (user instanceof Map) {
+            value = ((Map<?, ?>) user).get("emp_admin_yn");
+            if (value == null) value = ((Map<?, ?>) user).get("admin_yn");
+        } else if (user != null) {
+            try {
+                value = user.getClass().getMethod("get", String.class)
+                        .invoke(user, "emp_admin_yn");
+            } catch (Throwable ignore) {
+            }
+            if (value == null) {
+                try {
+                    Field field = user.getClass().getField("admin_yn");
+                    value = field.get(user);
+                } catch (Throwable ignore) {
+                }
+            }
+        }
+        if (value == null) value = request.getSession(false).getAttribute("emp_admin_yn");
+        return Boolean.TRUE.equals(value) || "1".equals(String.valueOf(value))
+                || "Y".equalsIgnoreCase(String.valueOf(value))
+                || "true".equalsIgnoreCase(String.valueOf(value));
     }
 }

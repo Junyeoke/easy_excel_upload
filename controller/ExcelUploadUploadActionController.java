@@ -204,7 +204,8 @@ public class ExcelUploadUploadActionController {
         Map<String, List<String>> sqlParamOrderCache = new HashMap<>();
         // 2026-06-20: 컬럼 매핑 특수값(현재 로그인 사용자/MTN) 치환에 사용할 런타임 값을 캐시에 보관한다.
         psCache.put("_LOGIN_USER_", firstValidRuntimeValue(trimParam(params.get("login_user_id")), getSessionUserValue(request, "emp_id")));
-        psCache.put("_LOGIN_MTN_", firstValidRuntimeValue(trimParam(params.get("login_mtn_id")), getSessionUserValue(request, "emp_mtn_id")));
+        psCache.put("_LOGIN_MTN_", firstValidRuntimeValue(
+                getSessionUserValue(request, "emp_mtn_id"), getSessionUserValue(request, "mtn_id")));
         String jobId = (String) params.get("job_id");
         // 2026-08-12 이준혁: UPDATE 변경 이력은 요청값이 아닌 서버 세션의 사용자 ID로 남긴다.
         psCache.put("_AUDIT_HIST_ID_", histId);
@@ -353,7 +354,8 @@ public class ExcelUploadUploadActionController {
                     int debugDataRowNum = row.getRowNum() - headerIdx;
                     addLog.accept("🔍 [" + debugDataRowNum + "행] 상세 업로드 계획 시작");
                     try {
-                        uploadDebugLogger.debugCascadePlan(row, structs, allMaps, "ROOT", null, rowSqls, metaMap, keepEmptyValues, addLog, debugDataRowNum);
+                        uploadDebugLogger.debugCascadePlan(row, structs, allMaps, "ROOT", null, rowSqls, metaMap,
+                                keepEmptyValues, String.valueOf(psCache.get("_LOGIN_MTN_")), addLog, debugDataRowNum);
                     } catch (Throwable debugEx) {
                         addLog.accept("⚠️ [" + debugDataRowNum + "행] 상세 로그 생성 실패: " + debugEx.getMessage());
                         log.info("[ExcelUpload][Debug] {}행 상세 로그 생성 실패: {}", debugDataRowNum, debugEx.getMessage());

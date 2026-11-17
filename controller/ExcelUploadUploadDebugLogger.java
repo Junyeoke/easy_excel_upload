@@ -35,6 +35,7 @@ public class ExcelUploadUploadDebugLogger {
             List<?> rowSqls,
             Map<String, Set<String>> metaMap,
             boolean keepEmptyValues,
+            String loginMtnId,
             Consumer<String> addLog,
             int dataRowNum
     ) throws Exception {
@@ -171,6 +172,7 @@ public class ExcelUploadUploadDebugLogger {
             for (Map.Entry<String, Object> de : data.entrySet()) {
                 tokens.put(de.getKey(), de.getValue() == null ? "" : String.valueOf(de.getValue()));
             }
+            tokens.put("mtn_id", loginMtnId == null ? "" : loginMtnId);
             int rowSqlIdx = 1;
             for (Object obj : rowSqls) {
                 if (!(obj instanceof Map)) {
@@ -198,6 +200,7 @@ public class ExcelUploadUploadDebugLogger {
                         rowSqls,
                         metaMap,
                         keepEmptyValues,
+                        loginMtnId,
                         addLog,
                         dataRowNum
                 );

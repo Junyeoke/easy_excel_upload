@@ -556,6 +556,9 @@ public class ExcelUploadEngineService {
                 for (Map.Entry<String, Object> de : data.entrySet()) {
                     tokens.put(de.getKey(), de.getValue() == null ? "" : String.valueOf(de.getValue()));
                 }
+                // A reserved Row-SQL token sourced only from the authenticated user's session context.
+                // Add it last so a mapped DB column named mtn_id cannot override the login MTN value.
+                tokens.put("mtn_id", getRuntimeMappingValue(psCache, "_LOGIN_MTN_"));
                 try {
                     Statement rowStmt = (Statement) psCache.get("_ROW_SQL_STMT_");
                     if (rowStmt == null) { rowStmt = conn.createStatement(); psCache.put("_ROW_SQL_STMT_", rowStmt); }

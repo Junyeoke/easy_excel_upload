@@ -325,6 +325,7 @@ const AdminStep1 = ({
                 { token: '${PK_COL}', badge: '메타', badgeColor: '#64748b', desc: '현재 테이블의 PK 컬럼명 (문자열)', ex: '-- PK 컬럼명: ${PK_COL}' },
                 { token: '${ALIAS}', badge: '메타', badgeColor: '#64748b', desc: '현재 처리 중인 테이블 Alias (예: ROOT)', ex: '-- Alias: ${ALIAS}' },
                 { token: '${TABLE}', badge: '메타', badgeColor: '#64748b', desc: '현재 처리 중인 실제 테이블명', ex: '-- Table: ${TABLE}' },
+                { token: '${mtn_id}', badge: '로그인', badgeColor: '#0ea5e9', desc: '현재 로그인 사용자의 MTN 값', ex: "SET mtn_id = '${mtn_id}'" },
               ].map(({ token, badge, badgeColor, desc, ex }) => (
                 <div key={token} style={{ background: 'white', border: '1px solid #e8ecf0', borderRadius: '8px', padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
